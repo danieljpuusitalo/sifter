@@ -65,3 +65,7 @@ usually one selector in its adapter, plus a fixture case that shows the change.
 
 `CLAUDE.md` has the working rules, `BRIEF.md` the original spec, `CHECKPOINT.md` the
 current state and `docs/VISION.md` the longer-term architecture.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).

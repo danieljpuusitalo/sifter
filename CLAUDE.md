@@ -19,6 +19,7 @@ Use `pnpm` (installed globally). On this Windows machine, run from Git Bash or P
 | `pnpm eval:mock` | runs the pipeline over `fixtures/public`, prints precision/recall, fails on any false hide or missed ad; writes `evals/results/` |
 | `pnpm test:e2e` | builds, then Playwright against the built extension with fixtures served at the real site URLs; all other network is aborted |
 | `pnpm bench:scroll` | builds, then scrolls a synthetic 600-card LinkedIn feed with the extension off vs on (4x CPU throttle); frame, layout and scanner counters. Args: `--start --seconds --runs --cpu` |
+| `pnpm store:assets` | builds, then renders the store screenshots and promo tile into `docs/store/` from the fixtures |
 | `pnpm verify` | typecheck + test + eval:mock (what CI runs) |
 
 First e2e run on a new machine: `pnpm exec playwright install chromium`.

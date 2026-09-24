@@ -74,8 +74,8 @@ Not fixed, noted:
 ## Next
 
 1. **Daniel:** in `pnpm dev`, log in and check Facebook, Threads and the suggested words on each site. Re-check Google.
-2. **Daniel:** decide the licence. `package.json` says MIT, but there's no LICENSE file.
-3. **Store assets** (`docs/STORE_LISTING.md`): screenshots from the synthetic fixtures, a 440×280 promo tile, and a hosted privacy policy URL (`PRIVACY.md` can be served from GitHub Pages once the repo is public, or from danieluusitalo.com).
+2. **Licence:** MIT (`LICENSE`), done.
+3. **Store assets:** the screenshots and promo tile are done (`pnpm store:assets` writes them to `docs/store/`). **Daniel** still has to choose where the privacy policy is hosted: GitHub Pages needs the repo public, or it can go on danieluusitalo.com. After that, the store submission itself is his: a developer account ($5 one-off) and uploading `.output/sifter-1.0.0-chrome.zip`.
 4. M2 (tier-1 model classification, BRIEF.md §9) has not started. `http://localhost/*` stays in `optional_host_permissions` for its local providers.
 
 ## Deviations from BRIEF.md (deliberate)

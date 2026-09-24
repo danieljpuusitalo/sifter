@@ -115,7 +115,7 @@ Not fixed, noted:
    - **Per-rule switches** (commit 46434ef): live-checked only for Facebook "Groups you're not in". Still to click live: the Reels switch (no Reels unit appeared that session), and the Instagram and LinkedIn switches. `scratchpad`-style CDP check: open popup.html in its own window with `chrome.tabs.query` patched to return the site tab, click `label.sub`, count units by header button.
    - **Store screenshots predate the per-rule switches and the live count.** Re-run `pnpm store:assets` before submitting if the popup shot should show them.
 2. **Licence:** MIT (`LICENSE`), done.
-3. **Privacy policy URL** is the Pages URL (`https://danieljpuusitalo.github.io/sifter/privacy/`); it needs the repo public before it serves. Submission steps are in `docs/ROADMAP.md` Phase 4.
+3. **Privacy policy URL** is live: `https://danieljpuusitalo.github.io/sifter/privacy/` (repo made public 2026-09-24, Pages deploys from `pages.yml`). Submission steps are in `docs/ROADMAP.md` Phase 4; they are Daniel's.
 4. M2 (tier-1 model classification, BRIEF.md §9) has not started. `http://localhost/*` was removed from `optional_host_permissions` on 2026-09-24 (an unused permission is a review question); M2 re-adds it for its local providers.
 
 ## Deviations from BRIEF.md (deliberate)

@@ -29,6 +29,25 @@ export type PageState = {
   units: number;
   counts: Partial<Record<HideCategory, number>>;
   hiddenNow: number;
+  /** Scanner self-cost on this page (hard rule 7), for the popup and the scroll bench. */
+  perf: ScanPerf;
+};
+
+export type ScanPerf = {
+  scans: number;
+  /** Scans that re-collected the whole page (start, settings change, or a flood of mutations). */
+  fullScans: number;
+  /** processUnit calls, including ones the change signature skipped. */
+  unitsExamined: number;
+  /** Units that went through marker detection. */
+  unitsDecided: number;
+  slices: number;
+  totalMs: number;
+  maxSliceMs: number;
+  /** Slices that ran past 1.5x the 8 ms budget: each one is a frame at risk. */
+  slicesOverBudget: number;
+  /** Units still queued for a decision right now. */
+  pending: number;
 };
 
 export function isBgRequest(m: unknown): m is BgRequest {

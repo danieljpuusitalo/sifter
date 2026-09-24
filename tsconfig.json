@@ -9,5 +9,5 @@
     "jsxImportSource": "preact",
     "skipLibCheck": true
   },
-  "include": [".wxt/wxt.d.ts", "entrypoints", "src", "tests", "evals", "wxt.config.ts", "vitest.config.ts", "playwright.config.ts"]
+  "include": [".wxt/wxt.d.ts", "entrypoints", "src", "tests", "evals", "bench", "wxt.config.ts", "vitest.config.ts", "playwright.config.ts"]
 }

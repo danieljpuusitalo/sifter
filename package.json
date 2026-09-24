@@ -15,7 +15,8 @@
     "test:e2e": "wxt build && playwright test",
     "eval:mock": "tsx evals/run.ts --provider mock",
     "verify": "pnpm typecheck && pnpm test && pnpm eval:mock",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare",
+    "bench:scroll": "wxt build && tsx bench/scroll.ts"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",

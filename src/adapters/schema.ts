@@ -19,6 +19,12 @@ export const AdapterSchema = z.object({
    */
   labelNodeLimit: z.number().int().positive().optional(),
   adSelectors: z.array(z.string()).default([]),
+  /**
+   * Containers that hold only ads, often with a "Sponsored" header of their own
+   * (Google's #tads). A unit inside one is hidden as the outermost container, so
+   * the header goes with it. List only containers that never hold organic results.
+   */
+  adContainerSelector: z.string().optional(),
   feedRootSelector: z.string().optional(),
   /** Free-text provenance: when and how the selectors were last checked against the live site. */
   verified: z.string().optional(),

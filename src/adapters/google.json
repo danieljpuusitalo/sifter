@@ -21,13 +21,17 @@
     "google.ca",
     "google.com.au"
   ],
-  "unitSelector": "#tads, [data-dsktp-pla], #rso [data-text-ad], #rso .MjjYud",
+  "unitSelector": "#tads, #tadsb, #bottomads, [data-dsktp-pla], #rso [data-text-ad], #rso .MjjYud",
   "labelSelectors": [],
   "adSelectors": [
+    "#tads",
+    "#tadsb",
+    "#bottomads",
     "[data-text-ad]",
     "[data-dsktp-pla]",
     "a[id^=\"plap_\"]"
   ],
+  "adContainerSelector": "#tads, #tadsb, #bottomads, [data-dsktp-pla]",
   "feedRootSelector": "#rcnt",
-  "verified": "2026-09-24 live DOM, queries \"car insurance\" and \"running shoes\": ad blocks move between #tads (under #tvcap) and [data-dsktp-pla] (under #cnt); a second ad block sits inside #rso. Per-ad text carries no Sponsored label, so detection is structural. #rso .MjjYud nests (one wrapper held 11 results): the scanner keeps innermost units only. Selector avoids complex :not() (happy-dom ignores it). Known gap: a [data-dsktp-pla] block placed inside #rso would lose to its inner [data-text-ad] under the innermost rule, leaving its carousel shown (a miss, not a false hide)."
+  "verified": "2026-09-24 live DOM, queries \"car insurance\" and \"running shoes\", All and Shopping (udm=28) tabs. Ad blocks sit in #tads (under #tvcap), [data-dsktp-pla] (under #cnt, or as a data-dsktp-pla=false wrapper inside #rso with its own \"Sponsored results\" header), and #bottomads > #tadsb. On the Shopping tab the \"Sponsored products\" carousel is #tads holding [data-pla] items and no [data-text-ad], so #tads itself is the marker. These containers hold only ads, so adContainerSelector hides the outermost one and its header goes with it. Per-ad text carries no Sponsored label, so detection is structural. #rso .MjjYud nests (one wrapper held 11 results): the scanner keeps innermost units only. [data-pla] is deliberately not a marker on its own: only seen inside #tads, and an organic product module using it would be hidden whole. Selector avoids complex :not() (happy-dom ignores it)."
 }

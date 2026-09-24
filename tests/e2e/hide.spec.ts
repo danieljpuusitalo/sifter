@@ -58,12 +58,14 @@ test('hides sponsored units and leaves organic ones on all three sites', async (
   for (const [host, file] of Object.entries(FIXTURES)) {
     await page.goto(`https://${host}/`);
     await expect(page.locator('.sifter-hidden').first(), file).toBeAttached();
-    const wrong = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('[data-gold]'))
-        .filter((el) => el.classList.contains('sifter-hidden') !== (el.getAttribute('data-gold') === 'sponsored'))
-        .map((el) => (el.textContent ?? '').trim().slice(0, 50)),
-    );
-    expect(wrong, file).toEqual([]);
+    // Decisions land in idle slices, so the page converges rather than flipping at once.
+    const wrong = () =>
+      page.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-gold]'))
+          .filter((el) => el.classList.contains('sifter-hidden') !== (el.getAttribute('data-gold') === 'sponsored'))
+          .map((el) => (el.textContent ?? '').trim().slice(0, 50)),
+      );
+    await expect.poll(wrong, { message: file, timeout: 5000 }).toEqual([]);
   }
 });
 

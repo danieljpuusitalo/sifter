@@ -6,15 +6,17 @@ import { z } from 'zod';
 //  - `adSelectors` names structural ad markers (a dedicated element or attribute
 //    such as Reddit's <shreddit-ad-post>). Some of these carry their label inside
 //    a shadow root, where neither innerText nor querySelector can see it.
-export const SuggestRuleSchema = z.object({
-  /** Stable key for the user's per-site setting. Renaming it resets that setting. */
-  id: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
-  /** What the popup's switch says. */
-  label: z.string().min(1),
-  selectors: z.array(z.string()).default([]),
-  words: z.array(z.string()).default([]),
-  lineEndings: z.array(z.string()).optional(),
-});
+export const SuggestRuleSchema = z
+  .object({
+    /** Stable key for the user's per-site setting. Renaming it resets that setting. */
+    id: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
+    /** What the popup's switch says. */
+    label: z.string().min(1),
+    selectors: z.array(z.string()).default([]),
+    words: z.array(z.string()).default([]),
+    lineEndings: z.array(z.string()).optional(),
+  })
+  .strict();
 export type SuggestRule = z.infer<typeof SuggestRuleSchema>;
 
 export const AdapterSchema = z.object({
@@ -66,6 +68,7 @@ export const AdapterSchema = z.object({
        */
       rules: z.array(SuggestRuleSchema).default([]),
     })
+    .strict()
     .optional(),
   /**
    * Whole page modules to hide under a category, outside the feed's units: X's
@@ -73,23 +76,37 @@ export const AdapterSchema = z.object({
    */
   blocks: z
     .array(
-      z.object({
-        selector: z.string().min(1),
-        category: z.enum(['sponsored', 'suggested']),
-        /**
-         * Keep only matches with no matching descendant. A selector built from
-         * `:has()` also matches every ancestor of the module, up to the whole
-         * column, so without this the rail's Contacts would go with its ad.
-         */
-        innermost: z.boolean().optional(),
-        /** A suggested rule's id: the module goes when that rule is switched off. */
-        rule: z.string().optional(),
-      }),
+      z
+        .object({
+          selector: z.string().min(1),
+          category: z.enum(['sponsored', 'suggested']),
+          /**
+           * Keep only matches with no matching descendant. A selector built from
+           * `:has()` also matches every ancestor of the module, up to the whole
+           * column, so without this the rail's Contacts would go with its ad.
+           */
+          innermost: z.boolean().optional(),
+          /**
+           * A cheap selector (no `:has()`) that matches something inside the
+           * module, such as the advertiser link. With an anchor the scanner never
+           * evaluates `selector` document-wide: it finds anchors, climbs to the
+           * nearest ancestor `selector` matches, and treats that as the module. A
+           * mutation inside a feed post then costs nothing on this rule. Keep it
+           * one compound selector with no ancestor part: the scope comes from
+           * `selector` during the climb, and a query scoped to an added subtree
+           * cannot see ancestors in every engine (happy-dom returns nothing).
+           */
+          anchor: z.string().min(1).optional(),
+          /** A suggested rule's id: the module goes when that rule is switched off. */
+          rule: z.string().optional(),
+        })
+        .strict(),
     )
     .default([]),
   feedRootSelector: z.string().optional(),
   /** Free-text provenance: when and how the selectors were last checked against the live site. */
   verified: z.string().optional(),
-});
+})
+  .strict();
 
 export type Adapter = z.infer<typeof AdapterSchema>;

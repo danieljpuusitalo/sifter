@@ -15,6 +15,7 @@ declare const chrome: {
     query(q: { url: string }): Promise<Array<{ id?: number }>>;
     sendMessage(tabId: number, message: unknown): Promise<unknown>;
   };
+  runtime: { sendMessage(message: unknown): Promise<unknown> };
 };
 
 const EXT = resolve('.output/chrome-mv3');
@@ -168,7 +169,9 @@ test('muted words and element rules hide as "custom"', async ({ context, page })
 test('"Hide this post" from the context menu hides the unit and remembers it', async ({ context, page }) => {
   await page.goto('https://www.linkedin.com/');
   await expect(card(page, '1002')).toBeHidden();
-  await card(page, '1001').locator('span').first().dispatchEvent('contextmenu');
+  // A real right-click, not dispatchEvent: the content script now ignores an
+  // untrusted contextmenu event, and dispatchEvent's is never trusted.
+  await card(page, '1001').locator('span').first().click({ button: 'right' });
   const [sw] = context.serviceWorkers();
   const res = await sw!.evaluate(async () => {
     const tabs = await chrome.tabs.query({ url: 'https://www.linkedin.com/*' });
@@ -209,6 +212,24 @@ test('options page: global category, per-site override and rule validation reach
   await options.getByRole('button', { name: 'Save filters' }).click();
   await expect(options.getByRole('status')).toContainText('1 rule');
   await expect(card(page, '1005')).toBeHidden();
+});
+
+test('sifter:setOverride rejects a malformed fingerprint or action instead of storing it', async ({ context, page }) => {
+  // A service worker can't message itself, so send from an extension page, which
+  // the background trusts the same way it trusts the popup and options page.
+  const [sw] = context.serviceWorkers();
+  const id = new URL(sw!.url()).host;
+  await page.goto(`chrome-extension://${id}/popup.html`);
+  const send = (msg: unknown) => page.evaluate((m) => chrome.runtime.sendMessage(m), msg);
+  await expect(send({ type: 'sifter:setOverride', hostname: 'linkedin.com', fp: 'abc123', action: 'hide' })).resolves.toEqual({ ok: true });
+  await expect(send({ type: 'sifter:setOverride', hostname: 'linkedin.com', fp: '../../etc/passwd', action: 'hide' })).resolves.toEqual({
+    error: 'invalid override',
+  });
+  await expect(send({ type: 'sifter:setOverride', hostname: 'linkedin.com', fp: 'abc123', action: 'delete-everything' })).resolves.toEqual({
+    error: 'invalid override',
+  });
+  const stored = await sw!.evaluate(async () => chrome.storage.local.get('overrides'));
+  expect(Object.keys((stored['overrides'] as Record<string, Record<string, unknown>>)['linkedin.com'] ?? {})).toEqual(['abc123']);
 });
 
 test('switching a site off shows everything on it', async ({ context, page }) => {

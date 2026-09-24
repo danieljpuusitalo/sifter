@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { isPaused, isSiteEnabled, parseOverrides, parseSettings, siteKey } from '../../src/storage/settings';
+import { browser } from 'wxt/browser';
+import { isPaused, isSiteEnabled, loadOverrides, parseOverrides, parseSettings, setOverride, siteKey } from '../../src/storage/settings';
 
 describe('settings', () => {
   it('fills defaults', () =>
@@ -44,5 +45,57 @@ describe('settings', () => {
     expect(siteKey('twitter.com')).toBe('x.com');
     expect(siteKey('www.google.nl')).toBe('google.com');
     expect(siteKey('www.threads.net')).toBe('threads.com');
+  });
+  it('site key does not fall through to Object.prototype members', () => {
+    expect(siteKey('constructor')).toBe('constructor');
+    expect(siteKey('toString')).toBe('tostring');
+    expect(siteKey('hasOwnProperty')).toBe('hasownproperty');
+  });
+  it('a bad entry costs only itself, not its site or the whole record', () => {
+    expect(parseOverrides({ 'x.com': { abc: 'not-ad', bad: 'nuke' }, 'y.com': 'not an object' })).toEqual({
+      'x.com': { abc: 'not-ad' },
+    });
+  });
+  it('an old plain-string override entry is tolerated', () => {
+    expect(parseOverrides({ 'x.com': { abc: 'hide' } })).toEqual({ 'x.com': { abc: 'hide' } });
+  });
+
+  describe('override caps', () => {
+    // Write the raw, timestamped shape straight into storage (one call) rather than
+    // driving 2000+ individual setOverride writes through the serial queue, which
+    // is realistic but far too slow for a test.
+    it('caps a single site at 2000 entries, dropping the oldest first', async () => {
+      const entries: Record<string, { action: 'not-ad'; t: number }> = {};
+      for (let i = 0; i < 2005; i++) entries[`fp${i}`] = { action: 'not-ad', t: i };
+      await browser.storage.local.set({ overrides: { 'x.com': entries } });
+      const stored = await loadOverrides();
+      expect(Object.keys(stored['x.com']!)).toHaveLength(2000);
+      // The lowest timestamps are the oldest, so they're the ones dropped.
+      expect(stored['x.com']!['fp0']).toBeUndefined();
+      expect(stored['x.com']!['fp2004']).toBe('not-ad');
+    });
+
+    it('caps the total across every site at 10000, dropping the oldest whole site first', async () => {
+      const bySite: Record<string, Record<string, { action: 'not-ad'; t: number }>> = {};
+      for (let site = 0; site < 6; site++) {
+        const entries: Record<string, { action: 'not-ad'; t: number }> = {};
+        for (let i = 0; i < 2000; i++) entries[`fp${i}`] = { action: 'not-ad', t: site * 10_000 + i };
+        bySite[`site${site}.example`] = entries;
+      }
+      await browser.storage.local.set({ overrides: bySite });
+      const stored = await loadOverrides();
+      const total = Object.values(stored).reduce((n, site) => n + Object.keys(site).length, 0);
+      expect(total).toBe(10_000);
+      // site0 has the lowest timestamps, so it's the whole site dropped.
+      expect(stored['site0.example']).toBeUndefined();
+      expect(Object.keys(stored['site5.example']!)).toHaveLength(2000);
+    });
+
+    it('setOverride stamps a fresh entry with a timestamp newer than existing ones', async () => {
+      await browser.storage.local.set({ overrides: { 'x.com': { old: { action: 'not-ad', t: 0 } } } });
+      await setOverride('x.com', 'new', 'hide');
+      const stored = await loadOverrides();
+      expect(stored['x.com']).toEqual({ old: 'not-ad', new: 'hide' });
+    });
   });
 });

@@ -1,7 +1,7 @@
 import { findGenericUnits, innermost } from '../adapters/generic';
 import type { Adapter } from '../adapters/schema';
 import { detectMarker, unitText } from '../extract';
-import { fingerprint } from '../fingerprint';
+import { changeSignature, fingerprint } from '../fingerprint';
 import type { PageState, ScanPerf, SiteContext } from '../messages';
 import { mutedWordHit, mutedWordPattern } from '../rules/filters';
 import { decideTier0 } from '../rules/tier0';
@@ -14,10 +14,13 @@ import { Hider, PLACEHOLDER_ATTR } from './hider';
 // Scrolling must stay smooth (hard rule 7), so the scanner:
 //  - looks only at units a mutation touched, never re-walks the whole feed
 //    (the old full rescan grew with the page: 600 cards meant 600 checks per scan);
-//  - does its work in idle callbacks, after a frame is painted, in slices of at
-//    most 8 ms;
+//  - does all of its DOM work, the collect step included, in idle callbacks after
+//    a frame is painted, in slices of at most 8 ms, and stops a slice before the
+//    unit that would overrun it rather than after;
 //  - decides a slice with DOM reads only, then applies its hides in one write pass,
-//    so a hide never forces the next unit's read to lay the page out again.
+//    so a hide never forces the next unit's read to lay the page out again;
+//  - never evaluates a `:has()` block rule against feed posts: anchored blocks are
+//    found from a cheap anchor inside the module and a walk up its ancestors.
 // `pnpm bench:scroll` measures frames with the extension off and on.
 
 const DEBOUNCE_MS = 250; // hard rule 7
@@ -29,6 +32,10 @@ const STARVED_BUDGET_MS = 3;
 const IDLE_TIMEOUT_MS = 200;
 /** Past this many dirty nodes, one full collection is cheaper than mapping each. */
 const MAX_DIRTY = 1500;
+/** Distinct units counted for the popup; past this the count stops growing (memory). */
+const MAX_UNITS_SEEN = 5000;
+/** How far up from an anchor a module may sit before the walk gives up. */
+const MAX_ANCHOR_CLIMB = 24;
 
 export type ScannerDeps = {
   doc: Document;
@@ -46,8 +53,23 @@ export type ScannerDeps = {
 
 type Seen = { sig: string; fp: string };
 /** A whole page module hidden by rule: an adapter block, or one of the user's element rules. */
-type Block = { selector: string; category: BlockCategory; innermost?: boolean };
+type Block = { selector: string; category: BlockCategory; innermost?: boolean; anchor?: string };
 type Decision = { unit: Element; fp: string; hide: HideCategory | null; block?: boolean };
+
+const EMPTY_PERF: Omit<ScanPerf, 'pending'> = {
+  scans: 0,
+  fullScans: 0,
+  unitsExamined: 0,
+  unitsDecided: 0,
+  slices: 0,
+  totalMs: 0,
+  maxSliceMs: 0,
+  collectMs: 0,
+  maxCollectMs: 0,
+  maxDecideMs: 0,
+  worstSlice: null,
+  slicesOverBudget: 0,
+};
 
 export class Scanner {
   private hider: Hider;
@@ -60,19 +82,30 @@ export class Scanner {
   private pending: Element[] = [];
   private queued = new Set<Element>();
   private running = false;
+  /** A scan was requested: the next slice starts by collecting units. */
+  private needCollect = false;
+  /** Hides a slice decided but ran out of budget to write; applied first thing next slice. */
+  private carried: Decision[] = [];
+  /** Running cost of one fully decided unit (a moving average), the slice's stopping estimate. */
+  private decideCostMs = 0;
   private settleWaiters: (() => void)[] = [];
   /** Elements hidden because a block rule matched them, which may not be feed units at all. */
   private blockHidden = new WeakMap<Element, string>();
+  /** The rule each collected module was collected for, so decide() never re-matches posts against block rules. */
+  private blockFor = new WeakMap<Element, Block>();
   // What changed since the last scan. `touched` nodes changed in place, so the
   // unit around them is dirty; `added` subtrees may also hold whole new units.
   private touched = new Set<Node>();
   private added = new Set<Element>();
   private needFull = true;
-  private perf: Omit<ScanPerf, 'pending'> = { scans: 0, fullScans: 0, unitsExamined: 0, unitsDecided: 0, slices: 0, totalMs: 0, maxSliceMs: 0, slicesOverBudget: 0 };
+  private perf: Omit<ScanPerf, 'pending'> = { ...EMPTY_PERF };
   private ctx: SiteContext;
-  /** Blocks in force for the current context, and one joined selector to find them with. */
+  /** Blocks in force for the current context. */
   private blocks: Block[] = [];
-  private blockSelector: string | null = null;
+  /** Blocks found from an anchor, and blocks found by their own selector (joined into one). */
+  private anchored: Block[] = [];
+  private plain: Block[] = [];
+  private plainSelector: string | null = null;
   private muted: RegExp | null = null;
   private offRules: ReadonlySet<string> = new Set();
   private readonly now: () => number;
@@ -99,10 +132,13 @@ export class Scanner {
       if (categories[b.category] && !(b.rule && this.offRules.has(b.rule))) blocks.push(b);
     }
     if (categories.custom) {
+      // Syntax check against an empty fragment: a whole-document query here would
+      // cost a page walk per rule at start.
+      const probe = this.deps.doc.createDocumentFragment();
       for (const selector of customSelectors) {
         // The options page validates rules, but storage is data: re-check before use (hard rule 2).
         try {
-          this.deps.doc.querySelector(selector);
+          probe.querySelector(selector);
           blocks.push({ selector, category: 'custom' });
         } catch {
           /* invalid selector: skip it */
@@ -110,7 +146,10 @@ export class Scanner {
       }
     }
     this.blocks = blocks;
-    this.blockSelector = blocks.length ? blocks.map((b) => b.selector).join(', ') : null;
+    this.anchored = blocks.filter((b) => b.anchor);
+    this.plain = blocks.filter((b) => !b.anchor);
+    this.plainSelector = this.plain.length ? this.plain.map((b) => b.selector).join(', ') : null;
+    this.blockFor = new WeakMap();
     this.muted = categories.custom ? mutedWordPattern(mutedWords) : null;
   }
 
@@ -140,8 +179,7 @@ export class Scanner {
     this.seen = new WeakMap();
     if (!this.active) {
       // Drop queued work too: a slice already scheduled must not hide anything now.
-      this.pending = [];
-      this.queued.clear();
+      this.dropQueue();
       this.hiddenFps.clear();
       this.hider.unhideAll();
       this.markFull();
@@ -159,10 +197,25 @@ export class Scanner {
     return new Promise((resolve) => this.settleWaiters.push(resolve));
   }
 
+  /** Bench hook: zero the peak counters so the next state() reports one window. */
+  resetPerfPeaks(): void {
+    this.perf.maxSliceMs = 0;
+    this.perf.maxCollectMs = 0;
+    this.perf.maxDecideMs = 0;
+    this.perf.worstSlice = null;
+  }
+
   private enqueue(u: Element): void {
     if (this.queued.has(u)) return;
     this.queued.add(u);
     this.pending.push(u);
+  }
+
+  private dropQueue(): void {
+    this.pending = [];
+    this.queued.clear();
+    this.carried = [];
+    this.needCollect = false;
   }
 
   /** A user override changed: re-decide the whole page, so copies of the same post follow it. */
@@ -210,7 +263,7 @@ export class Scanner {
       canSuggest: !!this.deps.adapter?.suggested || !!this.deps.adapter?.blocks.some((b) => b.category === 'suggested'),
       rules: (this.deps.adapter?.suggested?.rules ?? []).map((r) => ({ id: r.id, label: r.label, on: !this.offRules.has(r.id) })),
       hiddenNow: this.hider.hiddenUnits().length,
-      perf: { ...this.perf, pending: this.pending.length },
+      perf: { ...this.perf, pending: this.pending.length + this.carried.length },
     };
   }
 
@@ -250,34 +303,28 @@ export class Scanner {
   }
 
   /**
-   * Queue units, then work through them in idle-time slices of at most ~8 ms.
-   * `full` re-collects the whole page (start, settings change); otherwise only
-   * units touched by mutations since the last scan are looked at.
+   * Ask for a scan: the next idle slice collects units (the whole page when
+   * `full`: start, settings change; otherwise only what mutations touched), then
+   * the slices work through them, each within ~8 ms. Nothing touches the DOM here,
+   * so the debounce timer task stays empty.
    */
   scanNow(full = true): void {
-    const start = this.now();
-    this.hider.prune();
     if (!this.active) {
       this.markFull();
+      this.settle();
       return;
     }
     this.perf.scans++;
     if (full) this.markFull();
-    for (const u of this.collectUnits()) {
-      // Our own placeholder can match a unit selector (X's cells are bare divs).
-      if (!u.hasAttribute(PLACEHOLDER_ATTR)) this.enqueue(u);
-    }
-    this.perf.totalMs += this.now() - start;
-    if (!this.running && this.pending.length > 0) {
+    this.needCollect = true;
+    if (!this.running) {
       this.running = true;
       this.idle((budget) => this.runSlice(budget));
-    } else if (!this.running) {
-      this.settle();
     }
   }
 
   private settle(): void {
-    if (this.debounceTimer !== null) return;
+    if (this.debounceTimer !== null || this.running) return;
     const waiters = this.settleWaiters;
     this.settleWaiters = [];
     for (const w of waiters) w();
@@ -292,7 +339,7 @@ export class Scanner {
     const root = this.deps.doc.body;
     if (!root) return [];
     const { adapter } = this.deps;
-    const blocks = this.blockSelector ? this.innermostBlocks(collectBlocks(root, this.blockSelector, full, touched, added), root) : [];
+    const blocks = this.collectBlocks(root, full, touched, added);
     if (!adapter) return [...this.collectGeneric(root, full, touched, added), ...blocks];
     try {
       const units = full
@@ -305,15 +352,59 @@ export class Scanner {
     }
   }
 
+  /**
+   * Page modules the block rules match. An anchored rule is found from its anchor
+   * (a simple selector, cheap in `closest` and in a dirty subtree) and a walk up to
+   * the first ancestor the rule matches: innermost by construction, and the rule's
+   * `:has()` only ever runs against that module's own ancestors. Rules without an
+   * anchor are found by their selector, the same dirty-only way as units.
+   */
+  private collectBlocks(root: Element, full: boolean, touched: Set<Node>, added: Set<Element>): Element[] {
+    if (this.blocks.length === 0) return [];
+    const out = new Set<Element>();
+    for (const b of this.anchored) {
+      for (const anchor of collectMatches(root, b.anchor as string, full, touched, added)) {
+        const m = this.moduleAround(anchor, b, root);
+        if (m) {
+          this.blockFor.set(m, b);
+          out.add(m);
+        }
+      }
+    }
+    if (this.plainSelector) {
+      const found = collectMatches(root, this.plainSelector, full, touched, added);
+      for (const el of this.innermostBlocks(found, root)) {
+        const b = this.blockOf(el, this.plain);
+        if (!b) continue;
+        this.blockFor.set(el, b);
+        out.add(el);
+      }
+    }
+    return [...out];
+  }
+
+  /** The module around an anchor: the nearest ancestor the rule matches, or the farthest when the rule is not `innermost`. */
+  private moduleAround(anchor: Element, b: Block, root: Element): Element | null {
+    let found: Element | null = null;
+    let el: Element | null = anchor;
+    for (let i = 0; el && el !== root && i < MAX_ANCHOR_CLIMB; el = el.parentElement, i++) {
+      if (safeMatches(el, b.selector)) {
+        found = el;
+        if (b.innermost) break;
+      }
+    }
+    return found;
+  }
+
   /** Drop ancestors an `innermost` block rule matched only because the module is inside them. */
   private innermostBlocks(found: Element[], root: Element): Element[] {
-    if (!this.blocks.some((b) => b.innermost)) return found;
+    if (!this.plain.some((b) => b.innermost)) return found;
     // Compare against every match in the document, not el.querySelector(): a rule
     // that starts outside el ("[role=complementary] div:has(…)") is not reliably
     // found by a query scoped to el, and a false "no descendant" hides the column.
     const all = new Map<Block, Element[]>();
     return found.filter((el) => {
-      const b = this.blockOf(el);
+      const b = this.blockOf(el, this.plain);
       if (!b?.innermost) return true;
       let matches = all.get(b);
       if (!matches) {
@@ -328,16 +419,9 @@ export class Scanner {
     });
   }
 
-  /** The block rule an element was collected for, if any. */
-  private blockOf(el: Element): Block | null {
-    if (!this.blockSelector) return null;
-    for (const b of this.blocks) {
-      try {
-        if (el.matches(b.selector)) return b;
-      } catch {
-        /* skip */
-      }
-    }
+  /** The block rule an element matches, if any. */
+  private blockOf(el: Element, blocks: Block[] = this.blocks): Block | null {
+    for (const b of blocks) if (safeMatches(el, b.selector)) return b;
     return null;
   }
 
@@ -379,39 +463,94 @@ export class Scanner {
   }
 
   /**
-   * One slice: decide units while the budget lasts (DOM reads only), then apply
-   * the hides in one pass (DOM writes only). Interleaving the two would make each
-   * read after a hide lay the page out again.
+   * One slice: write what the last slice could not, collect if a scan is due,
+   * decide units while the budget lasts (DOM reads only), then apply the hides in
+   * one pass (DOM writes only). Interleaving reads and writes would make each read
+   * after a hide lay the page out again. The decide loop stops *before* the unit
+   * that would overrun, judged by this slice's average cost per unit.
    */
   private runSlice(budget: number): void {
     if (!this.active) {
-      this.pending = [];
-      this.queued.clear();
+      this.dropQueue();
       this.running = false;
       this.settle();
       return;
     }
     const start = this.now();
+    const carried = this.carried;
+    this.carried = [];
+    for (const d of carried) this.apply(d);
+    const carriedMs = this.now() - start;
+    let collected = false;
+    let collectMs = 0;
+    if (this.needCollect) {
+      this.needCollect = false;
+      collected = true;
+      const t0 = this.now();
+      this.hider.prune();
+      for (const u of this.collectUnits()) {
+        // Our own placeholder can match a unit selector (X's cells are bare divs).
+        if (!u.hasAttribute(PLACEHOLDER_ATTR)) this.enqueue(u);
+      }
+      collectMs = this.now() - t0;
+      this.perf.collectMs += collectMs;
+      this.perf.maxCollectMs = Math.max(this.perf.maxCollectMs, collectMs);
+    }
     const decisions: Decision[] = [];
+    const decideStart = this.now();
+    const decidedAtStart = this.perf.unitsDecided;
     let i = 0;
     while (i < this.pending.length) {
+      const elapsed = this.now() - start;
+      // Always make progress: one unit, unless this slice already did something
+      // (a collect, or carried writes). The next unit is assumed to cost what a
+      // fully decided one has cost so far: most units are unchanged and near free,
+      // so an in-slice average would wave through the one that is not.
+      if (i > 0 || collected || carried.length > 0) {
+        if (elapsed + this.decideCostMs > budget) break;
+      }
       const unit = this.pending[i++] as Element;
       this.queued.delete(unit);
+      const decidedBefore = this.perf.unitsDecided;
+      const t0 = this.now();
       const d = this.decide(unit);
+      if (this.perf.unitsDecided > decidedBefore) {
+        const cost = this.now() - t0;
+        this.perf.maxDecideMs = Math.max(this.perf.maxDecideMs, cost);
+        this.decideCostMs = this.decideCostMs === 0 ? cost : this.decideCostMs * 0.7 + cost * 0.3;
+      }
       if (d) decisions.push(d);
-      if (this.now() - start >= budget) break;
     }
     this.pending = i >= this.pending.length ? [] : this.pending.slice(i);
-    for (const d of decisions) this.apply(d);
+    const decideMs = this.now() - decideStart;
+    // Writes: count against the budget too, and carry what does not fit.
+    let applied = 0;
+    while (applied < decisions.length) {
+      this.apply(decisions[applied++] as Decision);
+      if (applied < decisions.length && this.now() - start >= budget) break;
+    }
+    if (applied < decisions.length) this.carried = decisions.slice(applied);
     const took = this.now() - start;
     this.perf.slices++;
     this.perf.totalMs += took;
+    if (took > this.perf.maxSliceMs) {
+      this.perf.worstSlice = {
+        carriedMs: +carriedMs.toFixed(1),
+        collectMs: +collectMs.toFixed(1),
+        decideMs: +decideMs.toFixed(1),
+        applyMs: +(took - carriedMs - collectMs - decideMs).toFixed(1),
+        units: i,
+        decided: this.perf.unitsDecided - decidedAtStart,
+        applied,
+        budget: +budget.toFixed(1),
+      };
+    }
     this.perf.maxSliceMs = Math.max(this.perf.maxSliceMs, took);
     if (took > SLICE_BUDGET_MS * 1.5) this.perf.slicesOverBudget++;
     if (this.deps.dev && took > SLICE_BUDGET_MS * 1.5) {
-      console.warn(`[sifter] slice took ${took.toFixed(1)} ms for ${i} units`);
+      console.warn(`[sifter] slice took ${took.toFixed(1)} ms for ${i} units${collected ? ' (with collect)' : ''}`);
     }
-    if (this.pending.length > 0) {
+    if (this.pending.length > 0 || this.carried.length > 0 || this.needCollect) {
       this.idle((b) => this.runSlice(b));
     } else {
       this.running = false;
@@ -427,8 +566,7 @@ export class Scanner {
     // Fingerprints use the site key, so twitter.com and x.com share one identity.
     const site = this.ctx.siteKey;
     // Cheap change signal (no layout): sites recycle feed nodes for new content.
-    const raw = unit.textContent ?? '';
-    const sig = `${raw.length}:${raw.slice(0, 80)}:${raw.slice(-40)}`;
+    const sig = changeSignature(unit.textContent ?? '');
     const prev = this.seen.get(unit);
     if (prev && prev.sig === sig) return null;
     // "Show" sticks to the element for the page session even if its text changes
@@ -436,7 +574,15 @@ export class Scanner {
 
     this.perf.unitsDecided++;
     const { categories } = this.ctx;
-    const block = this.blockOf(unit);
+    // A module keeps the rule it was collected for; a post never gets matched
+    // against block rules. Only an element hidden as a module earlier, and not
+    // collected as one now, pays for the full check (its rule may have gone off).
+    let block = this.blockFor.get(unit) ?? null;
+    if (block && !safeMatches(unit, block.selector)) {
+      this.blockFor.delete(unit);
+      block = null;
+    }
+    if (!block && this.blockHidden.has(unit)) block = this.blockOf(unit);
     if (block) {
       // One identity per rule: "Always show" on a block keeps all of that rule's modules.
       const fp = fingerprint(site, `block:${block.selector}`);
@@ -463,7 +609,7 @@ export class Scanner {
     if (!text && !marker) return null;
     const fp = fingerprint(site, text || structuralKey(unit));
     this.seen.set(unit, { sig, fp });
-    this.unitsSeen.add(fp);
+    if (this.unitsSeen.size < MAX_UNITS_SEEN) this.unitsSeen.add(fp);
 
     if (this.userShown.has(unit)) return null;
     const decision = decideTier0({
@@ -495,11 +641,7 @@ export class Scanner {
   private isUnit(el: Element): boolean {
     const { adapter } = this.deps;
     if (!adapter) return findGenericUnits(this.deps.doc.body ?? el).includes(el);
-    try {
-      return el.matches(adapter.unitSelector) || (!!adapter.adContainerSelector && el.matches(adapter.adContainerSelector));
-    } catch {
-      return false;
-    }
+    return safeMatches(el, adapter.unitSelector) || (!!adapter.adContainerSelector && safeMatches(el, adapter.adContainerSelector));
   }
 
   private userShow(unit: Element): void {
@@ -518,6 +660,14 @@ export class Scanner {
     }
     this.userShow(unit);
     if (fp) this.redecideAll();
+  }
+}
+
+function safeMatches(el: Element, selector: string): boolean {
+  try {
+    return el.matches(selector);
+  } catch {
+    return false;
   }
 }
 
@@ -557,8 +707,8 @@ function dirtyUnits(selector: string, touched: Set<Node>, added: Set<Element>): 
   return out;
 }
 
-/** Page modules matched by a block selector, found the same dirty-only way as units. */
-function collectBlocks(root: Element, selector: string, full: boolean, touched: Set<Node>, added: Set<Element>): Element[] {
+/** Elements a selector matches: the whole page when `full`, else around what changed. */
+function collectMatches(root: Element, selector: string, full: boolean, touched: Set<Node>, added: Set<Element>): Element[] {
   try {
     if (full) return Array.from(root.querySelectorAll(selector));
     const out = new Set<Element>();

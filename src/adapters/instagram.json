@@ -41,6 +41,7 @@
   "blocks": [
     {
       "selector": "main div:has(a[href^=\"/explore/people\"]):has(div[role=\"button\"])",
+      "anchor": "a[href^=\"/explore/people\"]",
       "category": "suggested",
       "innermost": true,
       "rule": "people"

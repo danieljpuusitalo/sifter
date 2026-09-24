@@ -33,6 +33,17 @@ export function stableText(text: string): string {
   return normaliseText(text).replace(/\d[\d.,]*(?:\s?[a-zA-Z]{1,3}\b)?/g, '#');
 }
 
+/**
+ * Cheap change signal for a unit's raw textContent: the scanner re-decides a unit
+ * only when this moves. Digit runs collapse for the same reason as above, so a
+ * ticking like count (rewritten in place twice a second on a live feed) does not
+ * cost a full decision, with its computed-style reads, on every scan.
+ */
+export function changeSignature(text: string): string {
+  const stable = stableText(text);
+  return `${stable.length}:${cyrb53(stable).toString(36)}`;
+}
+
 export function fingerprint(host: string, text: string): string {
   const norm = stableText(text).slice(0, 500);
   return cyrb53(`${host}\n${norm}`).toString(36);

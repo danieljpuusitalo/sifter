@@ -70,25 +70,40 @@ export function renderedText(node: Element): string {
  * a hidden "Promoted" decoy would read as visible. Stops at the unit, because our
  * own hide puts display:none on the unit and must not blind the rescan.
  */
-export function renderedWithin(node: Element, unit: Element): boolean {
+export function renderedWithin(node: Element, unit: Element, cache?: VisibilityCache): boolean {
   const view = node.ownerDocument.defaultView;
   if (!view) return true;
+  // Label nodes of one unit share most ancestors: remember each ancestor's answer
+  // for the duration of one decision, so the header pays for its style reads once.
+  const path: Element[] = [];
+  let shown = true;
   for (let el: Element | null = node; el && el !== unit; el = el.parentElement) {
+    const known = cache?.get(el);
+    if (known !== undefined) {
+      shown = known;
+      break;
+    }
+    path.push(el);
     const cs = view.getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse' || cs.opacity === '0') {
-      return false;
+      shown = false;
+      break;
     }
   }
-  return true;
+  if (cache) for (const el of path) cache.set(el, shown);
+  return shown;
 }
+
+/** Per-decision memo of renderedWithin answers, keyed by element. */
+export type VisibilityCache = Map<Element, boolean>;
 
 /**
  * Visible text of a node inside a unit; '' when the node is not rendered. Most
  * label nodes are leaves, and a rendered leaf shows exactly its text, so only
  * nodes with children pay for the walk.
  */
-function labelText(node: Element, unit: Element): string {
-  if (!renderedWithin(node, unit)) return '';
+function labelText(node: Element, unit: Element, cache?: VisibilityCache): string {
+  if (!renderedWithin(node, unit, cache)) return '';
   return node.firstElementChild ? renderedText(node) : (node.textContent ?? '');
 }
 
@@ -100,9 +115,10 @@ function safeQueryAll(root: Element, selector: string): Element[] {
   }
 }
 
-function safeMatches(el: Element, selector: string): boolean {
+/** Whether the unit is, or contains, a match. Stops at the first one. */
+function safeHas(unit: Element, selector: string): boolean {
   try {
-    return el.matches(selector);
+    return unit.matches(selector) || unit.querySelector(selector) !== null;
   } catch {
     return false;
   }
@@ -110,24 +126,28 @@ function safeMatches(el: Element, selector: string): boolean {
 
 /**
  * Label nodes in document order: nodes inside the adapter's ignore selector (author
- * links) are dropped first, then the list is capped at the node limit.
+ * links) are dropped first, then the list is capped at the node limit. The ignore
+ * check stops once the limit is full, so a broad selector over a long post does
+ * not pay a `closest` per body span.
  */
 function labelNodes(unit: Element, adapter: Adapter, selectors = adapter.labelSelectors, limit = adapter.labelNodeLimit): Element[] {
   if (selectors.length === 0) return [];
-  let nodes = safeQueryAll(unit, selectors.join(', '));
+  const nodes = safeQueryAll(unit, selectors.join(', '));
   const ignore = adapter.labelIgnoreSelector;
-  if (ignore) {
-    nodes = nodes.filter((n) => {
-      let c: Element | null = null;
-      try {
-        c = n.closest(ignore);
-      } catch {
-        return true;
-      }
-      return !c || !unit.contains(c) || c === unit;
-    });
+  if (!ignore) return limit ? nodes.slice(0, limit) : nodes;
+  const out: Element[] = [];
+  for (const n of nodes) {
+    if (limit && out.length >= limit) break;
+    let c: Element | null = null;
+    try {
+      c = n.closest(ignore);
+    } catch {
+      out.push(n);
+      continue;
+    }
+    if (!c || !unit.contains(c) || c === unit) out.push(n);
   }
-  return limit ? nodes.slice(0, limit) : nodes;
+  return out;
 }
 
 export function labelTexts(unit: Element, adapter: Adapter | null): string[] {
@@ -230,6 +250,10 @@ const NO_RULES: ReadonlySet<string> = new Set();
 
 /** Resolving aria-labelledby touches the document, so cap how many a unit may cost. */
 const MAX_LABELLEDBY = 40;
+/** No marker word, with the punctuation sites put around it, is longer than this. */
+const MAX_MARKER_ATTR = 24;
+/** Cheap reject before parsing a URL: every ad-click host or path contains one of these. */
+const AD_CLICK_HINT = /aclk|googleadservices|doubleclick/i;
 
 /**
  * Tier 0 marker detection for one unit. Returns the first sponsored hit, else the
@@ -239,30 +263,32 @@ const MAX_LABELLEDBY = 40;
 export function detectMarker(unit: Element, adapter: Adapter | null, base: string, opts: DetectOptions = {}): MarkerHit | null {
   const sponsored = (kind: MarkerHit['kind'], detail: string): MarkerHit => ({ kind, category: 'sponsored', detail });
   for (const sel of adapter?.adSelectors ?? []) {
-    if (safeMatches(unit, sel) || safeQueryAll(unit, sel).length > 0) return sponsored('structural', sel);
+    if (safeHas(unit, sel)) return sponsored('structural', sel);
   }
   for (const a of safeQueryAll(unit, 'a[href]')) {
     const href = a.getAttribute('href') ?? '';
-    if (isAdClickUrl(href, base)) return sponsored('ad-link', new URL(href, base).hostname);
-    if ((a.getAttribute('rel') ?? '').split(/\s+/).includes('sponsored')) return sponsored('rel', 'rel=sponsored');
+    if (AD_CLICK_HINT.test(href) && isAdClickUrl(href, base)) return sponsored('ad-link', new URL(href, base).hostname);
+    const rel = a.getAttribute('rel');
+    if (rel && rel.split(/\s+/).includes('sponsored')) return sponsored('rel', 'rel=sponsored');
   }
   for (const el of safeQueryAll(unit, '[aria-label]')) {
     const v = el.getAttribute('aria-label') ?? '';
-    if (isMarkerText(v)) return sponsored('aria', v);
+    if (v.length <= MAX_MARKER_ATTR && isMarkerText(v)) return sponsored('aria', v);
   }
   const labelledBy = labelledByMarker(unit);
   if (labelledBy) return sponsored('aria', labelledBy);
+  const cache: VisibilityCache = new Map();
   let labels: string[] | null = null;
   if (adapter) {
-    labels = labelNodes(unit, adapter).map((node) => labelText(node, unit));
+    labels = labelNodes(unit, adapter).map((node) => labelText(node, unit, cache));
     for (const t of labels) {
       if (hasMarkerLine(t)) return sponsored('label', normaliseText(t).slice(0, MAX_LABEL_LEN));
     }
   } else {
-    const hit = genericLabelHit(unit);
+    const hit = genericLabelHit(unit, cache);
     if (hit) return sponsored('label', hit);
   }
-  if (opts.suggested && adapter?.suggested) return detectSuggested(unit, adapter, labels ?? [], opts.offRules ?? NO_RULES);
+  if (opts.suggested && adapter?.suggested) return detectSuggested(unit, adapter, labels ?? [], opts.offRules ?? NO_RULES, cache);
   return null;
 }
 
@@ -282,20 +308,20 @@ function endingList(block: { lineEndings?: string[] }): readonly string[] {
 
 type Matcher = { selectors: string[]; words: string[]; lineEndings?: string[] };
 
-function detectSuggested(unit: Element, adapter: Adapter, adapterLabels: string[], off: ReadonlySet<string>): MarkerHit | null {
+function detectSuggested(unit: Element, adapter: Adapter, adapterLabels: string[], off: ReadonlySet<string>, cache?: VisibilityCache): MarkerHit | null {
   const block = adapter.suggested!;
   // The base fields, then each named rule the user hasn't switched off here.
   const matchers: { m: Matcher; rule?: string }[] = [{ m: block }];
   for (const r of block.rules) if (!off.has(r.id)) matchers.push({ m: r, rule: r.id });
   for (const { m, rule } of matchers) {
     for (const sel of m.selectors) {
-      if (safeMatches(unit, sel) || safeQueryAll(unit, sel).length > 0) return { kind: 'structural', category: 'suggested', detail: sel, rule };
+      if (safeHas(unit, sel)) return { kind: 'structural', category: 'suggested', detail: sel, rule };
     }
   }
   const textual = matchers.filter(({ m }) => wordSet(m).size > 0 || endingList(m).length > 0);
   if (textual.length === 0) return null;
   const texts = block.labelSelectors
-    ? labelNodes(unit, adapter, block.labelSelectors, block.labelNodeLimit).map((n) => labelText(n, unit))
+    ? labelNodes(unit, adapter, block.labelSelectors, block.labelNodeLimit).map((n) => labelText(n, unit, cache))
     : adapterLabels;
   // A social line ("<Name> likes this") heads the card, so only the first label
   // counts for endings: a post body that says "everyone likes this" must not hide.
@@ -334,13 +360,13 @@ function labelledByMarker(unit: Element): string | null {
  * whose whole visible text is a marker word. Bounded so a huge unit can't blow
  * the per-batch budget.
  */
-function genericLabelHit(unit: Element): string | null {
+function genericLabelHit(unit: Element, cache?: VisibilityCache): string | null {
   const candidates = safeQueryAll(unit, 'span, div, p, small, a, li, header *').slice(0, 300);
   for (const el of candidates) {
     const raw = el.textContent ?? '';
     if (raw.length > 60) continue; // skip containers before paying for computed style
     if (!isMarkerText(raw)) continue; // cheap reject before paying for layout
-    const t = labelText(el, unit);
+    const t = labelText(el, unit, cache);
     if (isMarkerText(t)) return normaliseText(t);
   }
   return null;

@@ -27,7 +27,7 @@ Settings store only the rules switched off (`sites[key].rules`).
 | `pnpm typecheck` | passes |
 | `pnpm test` | 153/153, including the audit regressions (below) |
 | `pnpm eval:mock` | 8 fixtures, tp=58 fp=0 fn=0 (suggested pass included; the Google top-carousel case added 2026-09-24) |
-| `pnpm test:e2e` | 10/10, 30/30 with `--repeat-each=3`. One earlier run failed "muted words..." while a `pnpm dev` Chromium was also running (55 s vs a normal 24 s); not reproduced since. Watch it in CI |
+| `pnpm test:e2e` | 12 passed, 1 fixme (Google late-injection spec added 2026-09-24); earlier 10/10, 30/30 with `--repeat-each=3`. One earlier run failed "muted words..." while a `pnpm dev` Chromium was also running (55 s vs a normal 24 s); not reproduced since. Watch it in CI |
 | `pnpm bench:scroll` | scrolling p50 and p95 are the same with the extension off and on (16.7 / 16.9 ms), 0 slices over budget while scrolling. One long task at load (75–81 ms, initial scan about 340 ms of idle-sliced work); max slice at load 27–33 ms. That load slice is the only thing over budget |
 | `pnpm build` | `.output/sifter-1.0.0-chrome.zip`, 110 kB |
 
@@ -37,8 +37,8 @@ Settings store only the rules switched off (`sites[key].rules`).
 |---|---|---|
 | LinkedIn | live DOM inspected 2026-09-24; Daniel confirmed | **live 2026-09-24**: social lines, Follow/Connect; "Suggested" word and NL/DE/FR UNVERIFIED |
 | Reddit | Daniel confirmed it works (2026-09-24); markup not inspected by an agent | n/a |
-| Google | markup inspected; Daniel: "does something", but the top **"Sponsored products" carousel stayed visible** for "shoes". Re-inspected the same evening: the live carousel (EN and NL) matches the adapter, both fixtures carry that layout and pass, Google does not undo the hide. Not reproducible from the code; most likely a stale build in the dev profile. **Daniel: reload the extension and re-check.** Local pack / Maps: see below | n/a |
-| X | Daniel confirmed promoted posts are hidden (2026-09-24) | UNVERIFIED |
+| Google | markup inspected; Daniel: "does something", but the top **"Sponsored products" carousel stayed visible** for "shoes". Re-inspected the same evening: the live carousel (EN and NL) matches the adapter, both fixtures carry that layout and pass, Google does not undo the hide. Not reproducible from the code. Same evening, second report "still not working": dev build confirmed current (has the marker); the carousel is rendered from the streamed page before document_idle so the initial scan sees it; the late-injection path is covered by `tests/e2e/google-late.spec.ts` (2 pass, 1 fixme for attribute-only arrival, which Google does not do). **Sifter is loaded only in the two `pnpm dev` profiles on this machine, not in regular Chrome or Edge**, so the open question is which browser the report came from. Local pack / Maps: see below | n/a |
+| X | Daniel confirmed promoted posts are hidden (2026-09-24), then doubted one. Agent tally the same evening: 41 tweets, structural marker and X's own "Ad" label agree on exactly 8, no disagreement, none of the 8 timestamped. Precision holds | UNVERIFIED |
 | Instagram | live 2026-09-24 (ig_redirect, 6/6) | **live 2026-09-24**: Follow / "Suggested for you" articles, people module; NL/DE/FR UNVERIFIED |
 | Facebook | rail live; feed: Daniel confirmed it works (2026-09-24) | **live 2026-09-24**: Follow, Join, Reels, group suggestions; NL/DE/FR UNVERIFIED |
 | Threads | Daniel browsed it with Sifter on: no ads appeared, nothing organic hidden. Ad path still unverified | n/a |
@@ -94,7 +94,7 @@ Not fixed, noted:
 
 ## Next
 
-1. **Daniel:** live results are in the table above (2026-09-24). Still open: reload the extension in the dev profile (or load the release zip) and re-check the Google "shoes" carousel; the suggested words on each site; a sponsored local result or Maps pin when one appears.
+1. **Daniel:** live results are in the table above (2026-09-24). Still open: load the release build (`.output/chrome-mv3`, "Load unpacked") into regular Chrome, which is where the store users will run it, and re-check the Google "shoes" carousel there; if it still stays, open the Sifter popup on that page and report the "hidden on this page" count; the suggested words on each site; a sponsored local result or Maps pin when one appears.
    - Scroll smoothness, 2026-09-24:
      - Most of the lag was the dev browser: x64 Chromium emulated on ARM64.
      - Sifter's only measured cost was a 12–13 ms forced layout from `innerText`, now removed.

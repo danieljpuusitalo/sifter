@@ -6,6 +6,15 @@ import { test as base, chromium, expect, type BrowserContext, type Page } from '
 // public fixtures at the real site URLs, and blocks every other request, so no
 // test ever touches a live site.
 
+// The service worker's `chrome` global, as far as these tests use it (the code runs
+// inside the extension via sw.evaluate, not in Node).
+declare const chrome: {
+  tabs: {
+    query(q: { url: string }): Promise<Array<{ id?: number }>>;
+    sendMessage(tabId: number, message: unknown): Promise<unknown>;
+  };
+};
+
 const EXT = resolve('.output/chrome-mv3');
 const FIXTURES: Record<string, string> = {
   'www.linkedin.com': 'linkedin-feed.html',

@@ -2,6 +2,8 @@
 
 Last updated: 2026-09-24
 
+Published at https://danieljpuusitalo.github.io/sifter/privacy/
+
 **Sifter collects nothing.** It has no server, no account, no analytics and no
 tracking, and it makes no network requests of its own.
 

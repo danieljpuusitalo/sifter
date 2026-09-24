@@ -5,6 +5,13 @@ options page, icons, store docs, then a full audit and its fixes.
 
 ## Where it stands
 
+**2026-09-24, release hardening:** manifest now pins `minimum_chrome_version: '116'`
+and drops `http://localhost/*` from `optional_host_permissions` until M2 exists.
+Added `.github/workflows/pages.yml` (privacy policy on GitHub Pages) and
+`.github/workflows/release.yml` (tag-triggered build + GitHub Release),
+`CHANGELOG.md`, and a README install section. Path to the store is
+`docs/ROADMAP.md`.
+
 v1.0.0 is feature-complete for publication, apart from the live checks and the
 store assets listed below. Seven sites: LinkedIn, Reddit, Google Search, X,
 Instagram, Facebook and Threads. Three categories: sponsored (on by default),
@@ -108,8 +115,8 @@ Not fixed, noted:
    - **Per-rule switches** (commit 46434ef): live-checked only for Facebook "Groups you're not in". Still to click live: the Reels switch (no Reels unit appeared that session), and the Instagram and LinkedIn switches. `scratchpad`-style CDP check: open popup.html in its own window with `chrome.tabs.query` patched to return the site tab, click `label.sub`, count units by header button.
    - **Store screenshots predate the per-rule switches and the live count.** Re-run `pnpm store:assets` before submitting if the popup shot should show them.
 2. **Licence:** MIT (`LICENSE`), done.
-3. **Store assets:** the screenshots and promo tile are done (`pnpm store:assets` writes them to `docs/store/`). **Daniel** still has to choose where the privacy policy is hosted: GitHub Pages needs the repo public, or it can go on danieluusitalo.com. After that, the store submission itself is his: a developer account ($5 one-off) and uploading `.output/sifter-1.0.0-chrome.zip`.
-4. M2 (tier-1 model classification, BRIEF.md §9) has not started. `http://localhost/*` stays in `optional_host_permissions` for its local providers.
+3. **Privacy policy URL** is the Pages URL (`https://danieljpuusitalo.github.io/sifter/privacy/`); it needs the repo public before it serves. Submission steps are in `docs/ROADMAP.md` Phase 4.
+4. M2 (tier-1 model classification, BRIEF.md §9) has not started. `http://localhost/*` was removed from `optional_host_permissions` on 2026-09-24 (an unused permission is a review question); M2 re-adds it for its local providers.
 
 ## Deviations from BRIEF.md (deliberate)
 

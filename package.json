@@ -18,7 +18,8 @@
     "postinstall": "wxt prepare",
     "bench:scroll": "wxt build && tsx bench/scroll.ts",
     "icons": "node scripts/render-icons.mjs",
-    "store:assets": "wxt build && node scripts/store-assets.mjs"
+    "store:assets": "wxt build && node scripts/store-assets.mjs",
+    "pages": "node scripts/build-pages.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
@@ -26,6 +27,7 @@
     "@preact/preset-vite": "^2.10.6",
     "@types/node": "^26.6.2",
     "happy-dom": "^20.14.5",
+    "marked": "^18.0.14",
     "preact": "^10.29.8",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",

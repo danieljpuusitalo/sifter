@@ -7,16 +7,38 @@ network-level blockers can't reach them.
 Sifter reads the label the site already shows ("Sponsored", "Promoted", "Ad") and
 hides that post. It runs entirely in your browser. No account, no server, no AI.
 
+## Install
+
+**Chrome Web Store:** not yet listed. The link goes here once the store approves it.
+
+**Manual install (until then):**
+
+1. Download the zip from the [latest GitHub Release](https://github.com/danieljpuusitalo/sifter/releases/latest).
+2. Unzip it.
+3. Open `chrome://extensions`, turn on Developer mode (top right).
+4. Click "Load unpacked" and select the unzipped folder.
+
+## Screenshots
+
+![The LinkedIn feed, without and with Sifter](docs/store/screenshot-1-feed.png)
+Sponsored posts collapsed to a one-line placeholder, each with "Show" and "Not an ad".
+
+![The Sifter popup](docs/store/screenshot-2-popup.png)
+Per-category toggles and per-site overrides, from the popup.
+
+![The Sifter settings page](docs/store/screenshot-3-options.png)
+Muted words, element rules and per-site suggested-post switches.
+
 ## What it covers
 
 | Site | Sponsored posts | Suggested posts | Checked against the live site |
 |---|---|---|---|
-| LinkedIn | yes | yes | sponsored: yes · suggested: not yet |
+| LinkedIn | yes | yes | sponsored: yes · suggested: yes (English; NL/DE/FR unchecked) |
 | Reddit | yes | – | confirmed working in use; markup not inspected |
 | Google Search | yes (text ads, shopping units) | – | markup inspected; re-check in use pending |
 | X | yes | "Who to follow" | yes |
-| Instagram | yes | yes | sponsored: yes · suggested: not yet |
-| Facebook | yes | yes | not yet |
+| Instagram | yes | yes | sponsored: yes · suggested: yes (English; NL/DE/FR unchecked) |
+| Facebook | yes | yes | right-rail ads: yes · feed ads: not yet · suggested: yes (English) |
 | Threads | yes | – | not yet |
 
 "Not yet" means the rules come from known markup and pass the synthetic fixtures, but
@@ -43,6 +65,10 @@ Sifter uses general detection: it hides elements whose whole visible label is
 ## Privacy
 
 Everything happens on your device. See [PRIVACY.md](PRIVACY.md).
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## Development
 

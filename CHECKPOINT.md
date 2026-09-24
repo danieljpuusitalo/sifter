@@ -105,6 +105,8 @@ Not fixed, noted:
      - LinkedIn: "<Name> likes/celebrates/loves/... this" (new `suggested.lineEndings`, checked on the card's top line only) and Follow/Connect in the 5-node header. Reposts are kept, including a connection's reshare of a stranger's post. Live: every hidden unit carried a signal; the 2 shown units with a Follow button were both reshares.
      - Suggested labels over 300 chars are treated as post body and skipped.
      - NL/DE/FR strings are baseline guesses; Daniel's UI is English, so only English is checked.
+   - **Per-rule switches** (commit 46434ef): live-checked only for Facebook "Groups you're not in". Still to click live: the Reels switch (no Reels unit appeared that session), and the Instagram and LinkedIn switches. `scratchpad`-style CDP check: open popup.html in its own window with `chrome.tabs.query` patched to return the site tab, click `label.sub`, count units by header button.
+   - **Store screenshots predate the per-rule switches and the live count.** Re-run `pnpm store:assets` before submitting if the popup shot should show them.
 2. **Licence:** MIT (`LICENSE`), done.
 3. **Store assets:** the screenshots and promo tile are done (`pnpm store:assets` writes them to `docs/store/`). **Daniel** still has to choose where the privacy policy is hosted: GitHub Pages needs the repo public, or it can go on danieluusitalo.com. After that, the store submission itself is his: a developer account ($5 one-off) and uploading `.output/sifter-1.0.0-chrome.zip`.
 4. M2 (tier-1 model classification, BRIEF.md §9) has not started. `http://localhost/*` stays in `optional_host_permissions` for its local providers.

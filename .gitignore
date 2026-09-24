@@ -14,3 +14,5 @@ evals/results/
 # Playwright
 test-results/
 playwright-report/
+web-ext.config.ts
+.dev-profile/

@@ -22,6 +22,8 @@ Use `pnpm` (installed globally). On this Windows machine, run from Git Bash or P
 
 First e2e run on a new machine: `pnpm exec playwright install chromium`.
 
+`pnpm dev` needs `web-ext` (a devDependency; without it WXT silently prints "load manually"). Branded Chrome 137+ ignores `--load-extension`, so a gitignored `web-ext.config.ts` points `binaries.chrome` at Playwright's Chromium with a persistent `.dev-profile/` (create the folder first). Copy that pattern on a new machine.
+
 ## Hard rules (BRIEF.md §3, verbatim)
 
 1. No backend, no servers, no analytics, no remote config. Everything runs in the browser.

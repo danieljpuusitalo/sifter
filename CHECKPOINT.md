@@ -78,10 +78,19 @@ Not fixed, noted:
      - Most of the lag was the dev browser: x64 Chromium emulated on ARM64.
      - Sifter's only measured cost was a 12–13 ms forced layout from `innerText`, now removed.
      - Reddit A/B in native Edge: long frames 13/10 with Sifter on vs 26/12 off, 0 slow slices.
-   - Not yet measured:
-     - the layout jump when a visible post collapses to its placeholder
-     - LinkedIn and Facebook in Edge (need a login)
-   - Facebook: one visible "Sponsored" h3 (probably the right rail) is not hidden. Uninvestigated.
+   - Logged-in Edge A/B, 20 s wheel scroll, two runs each way:
+
+     | Site | Sifter on | Sifter off |
+     |---|---|---|
+     | LinkedIn | 0 frames >50 ms, 0 layout shifts | same |
+     | Facebook, quiet run | 0 frames >50 ms, 0 layout shifts | 0 and 59 frames |
+     | Facebook, heavy run | 42 and 34 frames >50 ms | 38 and 43 |
+
+     Facebook's own load varies; Sifter adds nothing measurable. 0 slow slices anywhere.
+   - Facebook (live 2026-09-24):
+     - The right-rail "Sponsored" module is hidden: the smallest div holding the h3 and the `a[aria-label=Advertiser]` cards. It is a block with `innermost`, because its `:has()` rule also matches every ancestor up to the whole rail.
+     - The "Suggested for you" groups carousel is a suggested marker.
+     - **No sponsored feed post appeared in 51 posts, so feed-ad detection on Facebook is still unverified live.** Re-check when one shows up.
    - After this: hide posts from accounts the user doesn't follow (a "Follow" button by the author), per site. Probably an extension of the suggested category.
 2. **Licence:** MIT (`LICENSE`), done.
 3. **Store assets:** the screenshots and promo tile are done (`pnpm store:assets` writes them to `docs/store/`). **Daniel** still has to choose where the privacy policy is hosted: GitHub Pages needs the repo public, or it can go on danieluusitalo.com. After that, the store submission itself is his: a developer account ($5 one-off) and uploading `.output/sifter-1.0.0-chrome.zip`.

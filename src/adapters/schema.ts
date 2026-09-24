@@ -48,7 +48,20 @@ export const AdapterSchema = z.object({
    * Whole page modules to hide under a category, outside the feed's units: X's
    * "Who to follow" box, Facebook's right-rail "Sponsored" column.
    */
-  blocks: z.array(z.object({ selector: z.string().min(1), category: z.enum(['sponsored', 'suggested']) })).default([]),
+  blocks: z
+    .array(
+      z.object({
+        selector: z.string().min(1),
+        category: z.enum(['sponsored', 'suggested']),
+        /**
+         * Keep only matches with no matching descendant. A selector built from
+         * `:has()` also matches every ancestor of the module, up to the whole
+         * column, so without this the rail's Contacts would go with its ad.
+         */
+        innermost: z.boolean().optional(),
+      }),
+    )
+    .default([]),
   feedRootSelector: z.string().optional(),
   /** Free-text provenance: when and how the selectors were last checked against the live site. */
   verified: z.string().optional(),

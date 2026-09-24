@@ -12,7 +12,9 @@
     "a[href*=\"/ads/about\"]"
   ],
   "suggested": {
-    "selectors": [],
+    "selectors": [
+      "[aria-label=\"Suggested for you\"]"
+    ],
     "labelSelectors": [
       "[data-ad-rendering-role=\"profile_name\"] [role=\"button\"]",
       "[data-ad-rendering-role=\"profile_name\"] span"
@@ -25,6 +27,12 @@
       "Lid worden"
     ]
   },
-  "blocks": [],
-  "verified": "UNVERIFIED live (no logged-in session available). From known Facebook markup: sponsored posts link through attributionsrc privacy_sandbox or /ads/about, and the scrambled 'Sponsored' text exposes its real name through aria-labelledby, which detectMarker resolves. A Follow/Join button beside the author name marks a suggested post. Needs a manual check in pnpm dev."
+  "blocks": [
+    {
+      "selector": "[role=\"complementary\"] div:has(h3):has(a[aria-label=\"Advertiser\"])",
+      "category": "sponsored",
+      "innermost": true
+    }
+  ],
+  "verified": "2026-09-24 live DOM, logged-in home feed, English UI, 51 posts scrolled. Right rail: the 'Sponsored' section is an h3 plus ad cards, each an a[aria-label=Advertiser] linking out through l.facebook.com; the smallest div holding both is the module. Feed: a 'Suggested for you' groups carousel carries that exact aria-label. No sponsored feed post appeared in 51 posts, so the feed ad markers (attributionsrc privacy_sandbox, /ads/about, aria-labelledby resolving to 'Sponsored') are still from known markup, not seen live. Timestamps' aria-labelledby resolve to e.g. '6 hours ago'. Dutch UI strings unchecked."
 }

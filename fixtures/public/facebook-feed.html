@@ -1,7 +1,8 @@
 <!doctype html>
 <!--
-  Synthetic Facebook news feed, built from known Facebook markup (NOT checked
-  against a live session): posts are [aria-posinset] inside [role=feed];
+  Synthetic Facebook news feed. The rail module and the suggested carousel were
+  checked against a live session on 2026-09-24; the sponsored feed posts are from
+  known Facebook markup (none appeared live): posts are [aria-posinset] inside [role=feed];
   sponsored posts link through attributionsrc privacy_sandbox or /ads/about, and
   the visible "Sponsored" is scrambled into letter spans while an aria-labelledby
   target holds the clean word. All names and text are invented.
@@ -56,6 +57,30 @@
         <div aria-posinset="6" aria-setsize="-1" data-gold="none">
           <div data-ad-rendering-role="profile_name"><h4><a href="/lena.k"><span>Lena Kask</span></a></h4></div>
           <div data-ad-preview="message"><span>Follow</span><br /><span>the river path and you'll find the best cafe in town.</span></div>
+        </div>
+        <!-- Groups carousel from accounts you don't follow (live 2026-09-24): suggested. -->
+        <div aria-posinset="7" aria-setsize="-1" data-gold="suggested">
+          <div aria-label="Suggested for you"><ul><li><a href="/groups/100"><span>Trail Runners Oslo</span></a><span>12K members</span></li></ul></div>
+        </div>
+      </div>
+    </div>
+    <!--
+      Right rail (live 2026-09-24). The "Sponsored" module is the smallest div holding
+      its h3 and the Advertiser cards. Its ancestors also match the :has() rule; they
+      hold Contacts too and must stay visible, so the rule is innermost-only.
+    -->
+    <div role="complementary">
+      <div>
+        <div data-gold="sponsored">
+          <div><span dir="auto"><h3><span>Sponsored</span></h3></span></div>
+          <div>
+            <div><a aria-label="Advertiser" href="https://l.facebook.com/l.php?u=https%3A%2F%2Fnorthwind.example%2F" rel="nofollow" target="_blank"><span>Northwind Cloud</span></a></div>
+            <div><a aria-label="Advertiser" href="https://l.facebook.com/l.php?u=https%3A%2F%2Ffjordshoes.example%2F" rel="nofollow" target="_blank"><span>Fjord Shoes</span></a></div>
+          </div>
+        </div>
+        <div data-gold="none">
+          <h3><span>Contacts</span></h3>
+          <ul><li><a href="/aino.v"><span>Aino Virtanen</span></a></li></ul>
         </div>
       </div>
     </div>

@@ -46,7 +46,7 @@ export type ScannerDeps = {
 
 type Seen = { sig: string; fp: string };
 /** A whole page module hidden by rule: an adapter block, or one of the user's element rules. */
-type Block = { selector: string; category: BlockCategory };
+type Block = { selector: string; category: BlockCategory; innermost?: boolean };
 type Decision = { unit: Element; fp: string; hide: HideCategory | null; block?: boolean };
 
 export class Scanner {
@@ -286,7 +286,7 @@ export class Scanner {
     const root = this.deps.doc.body;
     if (!root) return [];
     const { adapter } = this.deps;
-    const blocks = this.blockSelector ? collectBlocks(root, this.blockSelector, full, touched, added) : [];
+    const blocks = this.blockSelector ? this.innermostBlocks(collectBlocks(root, this.blockSelector, full, touched, added), root) : [];
     if (!adapter) return [...this.collectGeneric(root, full, touched, added), ...blocks];
     try {
       const units = full
@@ -297,6 +297,29 @@ export class Scanner {
     } catch {
       return blocks;
     }
+  }
+
+  /** Drop ancestors an `innermost` block rule matched only because the module is inside them. */
+  private innermostBlocks(found: Element[], root: Element): Element[] {
+    if (!this.blocks.some((b) => b.innermost)) return found;
+    // Compare against every match in the document, not el.querySelector(): a rule
+    // that starts outside el ("[role=complementary] div:has(…)") is not reliably
+    // found by a query scoped to el, and a false "no descendant" hides the column.
+    const all = new Map<Block, Element[]>();
+    return found.filter((el) => {
+      const b = this.blockOf(el);
+      if (!b?.innermost) return true;
+      let matches = all.get(b);
+      if (!matches) {
+        try {
+          matches = Array.from(root.querySelectorAll(b.selector));
+        } catch {
+          matches = [];
+        }
+        all.set(b, matches);
+      }
+      return !matches.some((m) => m !== el && el.contains(m));
+    });
   }
 
   /** The block rule an element was collected for, if any. */

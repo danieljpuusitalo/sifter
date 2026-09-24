@@ -164,6 +164,32 @@ describe('scanner: blocks, custom rules, context menu', () => {
     expect(hidden('#wtf')).toBe(true);
     expect(hidden('#t1')).toBe(false);
   });
+  const fbRail =
+    '<div role="complementary"><div id="rail">' +
+    '<div id="ads"><div><h3><span>Sponsored</span></h3></div><div><a aria-label="Advertiser" href="https://l.facebook.com/l.php?u=x">Acme</a></div></div>' +
+    '<div id="contacts"><h3>Contacts</h3><a href="/someone">Someone</a></div>' +
+    '</div></div>';
+  it('an innermost block hides the module, not the ancestors its :has() rule also matches', () => {
+    setup('www.facebook.com', fbRail);
+    expect(hidden('#ads')).toBe(true);
+    expect(hidden('#rail')).toBe(false);
+    expect(hidden('#contacts')).toBe(false);
+  });
+  it('negative control: the same rule without innermost takes the whole rail', () => {
+    const adapter = adapterFor('www.facebook.com')!;
+    const plain = { ...adapter, blocks: adapter.blocks.map((b) => ({ ...b, innermost: false })) };
+    document.body.innerHTML = fbRail;
+    new Scanner({
+      doc: document,
+      hostname: 'www.facebook.com',
+      baseUrl: 'https://www.facebook.com/',
+      adapter: plain,
+      context: defaultContext(siteKey('www.facebook.com')),
+      persistOverride: () => {},
+      schedule: (fn) => fn(),
+    }).scanNow();
+    expect(hidden('#rail')).toBe(true);
+  });
   it('element rules hide as custom; an invalid rule is skipped, not fatal', () => {
     setup('x.com', xPage, { customSelectors: ['[[bad', '#promo-box'] });
     expect(hidden('#promo-box')).toBe(true);

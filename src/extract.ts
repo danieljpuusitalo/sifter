@@ -216,9 +216,17 @@ export type MarkerHit = {
   /** What the site is doing: a paid placement, or a recommendation from someone you don't follow. */
   category: 'sponsored' | 'suggested';
   detail: string;
+  /** The adapter's named suggested rule that matched, if any. */
+  rule?: string;
 };
 
-export type DetectOptions = { suggested?: boolean };
+export type DetectOptions = {
+  suggested?: boolean;
+  /** Suggested rule ids switched off on this site. */
+  offRules?: ReadonlySet<string>;
+};
+
+const NO_RULES: ReadonlySet<string> = new Set();
 
 /** Resolving aria-labelledby touches the document, so cap how many a unit may cost. */
 const MAX_LABELLEDBY = 40;
@@ -254,7 +262,7 @@ export function detectMarker(unit: Element, adapter: Adapter | null, base: strin
     const hit = genericLabelHit(unit);
     if (hit) return sponsored('label', hit);
   }
-  if (opts.suggested && adapter?.suggested) return detectSuggested(unit, adapter, labels ?? []);
+  if (opts.suggested && adapter?.suggested) return detectSuggested(unit, adapter, labels ?? [], opts.offRules ?? NO_RULES);
   return null;
 }
 
@@ -272,14 +280,20 @@ function endingList(block: { lineEndings?: string[] }): readonly string[] {
   return l;
 }
 
-function detectSuggested(unit: Element, adapter: Adapter, adapterLabels: string[]): MarkerHit | null {
+type Matcher = { selectors: string[]; words: string[]; lineEndings?: string[] };
+
+function detectSuggested(unit: Element, adapter: Adapter, adapterLabels: string[], off: ReadonlySet<string>): MarkerHit | null {
   const block = adapter.suggested!;
-  for (const sel of block.selectors) {
-    if (safeMatches(unit, sel) || safeQueryAll(unit, sel).length > 0) return { kind: 'structural', category: 'suggested', detail: sel };
+  // The base fields, then each named rule the user hasn't switched off here.
+  const matchers: { m: Matcher; rule?: string }[] = [{ m: block }];
+  for (const r of block.rules) if (!off.has(r.id)) matchers.push({ m: r, rule: r.id });
+  for (const { m, rule } of matchers) {
+    for (const sel of m.selectors) {
+      if (safeMatches(unit, sel) || safeQueryAll(unit, sel).length > 0) return { kind: 'structural', category: 'suggested', detail: sel, rule };
+    }
   }
-  const words = wordSet(block);
-  const endings = endingList(block);
-  if (words.size === 0 && endings.length === 0) return null;
+  const textual = matchers.filter(({ m }) => wordSet(m).size > 0 || endingList(m).length > 0);
+  if (textual.length === 0) return null;
   const texts = block.labelSelectors
     ? labelNodes(unit, adapter, block.labelSelectors, block.labelNodeLimit).map((n) => labelText(n, unit))
     : adapterLabels;
@@ -290,8 +304,10 @@ function detectSuggested(unit: Element, adapter: Adapter, adapterLabels: string[
     // A label node this long is post text that a broad selector reached, not a
     // header: a line reading "Follow" inside it is the author's, not the site's.
     if (t.length > MAX_SUGGESTED_LABEL) continue;
-    if (hasWordLine(t, words) || (t === first && hasLineEnding(t, endings))) {
-      return { kind: 'label', category: 'suggested', detail: normaliseText(t).slice(0, MAX_LABEL_LEN) };
+    for (const { m, rule } of textual) {
+      if (hasWordLine(t, wordSet(m)) || (t === first && hasLineEnding(t, endingList(m)))) {
+        return { kind: 'label', category: 'suggested', detail: normaliseText(t).slice(0, MAX_LABEL_LEN), rule };
+      }
     }
   }
   return null;

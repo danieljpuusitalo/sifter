@@ -1,3 +1,4 @@
+import { Fragment } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { browser } from 'wxt/browser';
 import { bg } from '../../src/bg';
@@ -117,6 +118,8 @@ function Running(props: { tab: Tab; state: PageState; settings: Settings; onChan
     run(() => bg<SiteContext>({ type: 'sifter:setSiteEnabled', hostname: state.siteKey, enabled }), 'change this site');
   const toggleCategory = (category: BlockCategory, value: boolean) =>
     run(() => bg<SiteContext>({ type: 'sifter:setSiteCategory', hostname: state.siteKey, category, value }), 'change this setting');
+  const toggleRule = (rule: string, value: boolean) =>
+    run(() => bg<SiteContext>({ type: 'sifter:setSiteRule', hostname: state.siteKey, rule, value }), 'change this setting');
   const pause = (minutes: number | null) => run(() => bg({ type: 'sifter:pause', minutes }), 'pause');
   const showAll = async () => {
     try {
@@ -167,18 +170,32 @@ function Running(props: { tab: Tab; state: PageState; settings: Settings; onChan
           <h2>Block on this site</h2>
           {BLOCK_ROWS.filter((r) => !r.needsSuggest || state.canSuggest).map((r) => {
             const custom = siteCats[r.cat] !== undefined;
+            // This site's own kinds of suggestion, each its own switch, while the category is on.
+            const rules = r.cat === 'suggested' && state.categories.suggested ? (state.rules ?? []) : [];
             return (
-              <label key={r.cat} class="switch">
-                <input
-                  type="checkbox"
-                  checked={state.categories[r.cat]}
-                  onChange={(e) => void toggleCategory(r.cat, (e.currentTarget as HTMLInputElement).checked)}
-                />
-                <span>
-                  {r.label}
-                  {custom && <span class="muted small"> · this site only</span>}
-                </span>
-              </label>
+              <Fragment key={r.cat}>
+                <label class="switch">
+                  <input
+                    type="checkbox"
+                    checked={state.categories[r.cat]}
+                    onChange={(e) => void toggleCategory(r.cat, (e.currentTarget as HTMLInputElement).checked)}
+                  />
+                  <span>
+                    {r.label}
+                    {custom && <span class="muted small"> · this site only</span>}
+                  </span>
+                </label>
+                {rules.map((rule) => (
+                  <label key={rule.id} class="switch sub">
+                    <input
+                      type="checkbox"
+                      checked={rule.on}
+                      onChange={(e) => void toggleRule(rule.id, (e.currentTarget as HTMLInputElement).checked)}
+                    />
+                    <span>{rule.label}</span>
+                  </label>
+                ))}
+              </Fragment>
             );
           })}
         </section>

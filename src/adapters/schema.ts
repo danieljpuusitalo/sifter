@@ -6,6 +6,17 @@ import { z } from 'zod';
 //  - `adSelectors` names structural ad markers (a dedicated element or attribute
 //    such as Reddit's <shreddit-ad-post>). Some of these carry their label inside
 //    a shadow root, where neither innerText nor querySelector can see it.
+export const SuggestRuleSchema = z.object({
+  /** Stable key for the user's per-site setting. Renaming it resets that setting. */
+  id: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
+  /** What the popup's switch says. */
+  label: z.string().min(1),
+  selectors: z.array(z.string()).default([]),
+  words: z.array(z.string()).default([]),
+  lineEndings: z.array(z.string()).optional(),
+});
+export type SuggestRule = z.infer<typeof SuggestRuleSchema>;
+
 export const AdapterSchema = z.object({
   id: z.string().min(1),
   hosts: z.array(z.string().min(1)).min(1),
@@ -48,6 +59,12 @@ export const AdapterSchema = z.object({
        * line counts when it ends with a space and one of these, and is short.
        */
       lineEndings: z.array(z.string()).optional(),
+      /**
+       * Named kinds of suggestion the user can switch off one by one on this site
+       * ("Groups you're not in", "Reels"). Each matches like the fields above, over
+       * the same label nodes. The fields above stay on whenever "suggested" is.
+       */
+      rules: z.array(SuggestRuleSchema).default([]),
     })
     .optional(),
   /**
@@ -65,6 +82,8 @@ export const AdapterSchema = z.object({
          * column, so without this the rail's Contacts would go with its ad.
          */
         innermost: z.boolean().optional(),
+        /** A suggested rule's id: the module goes when that rule is switched off. */
+        rule: z.string().optional(),
       }),
     )
     .default([]),

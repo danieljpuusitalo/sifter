@@ -125,7 +125,7 @@ describe('detectMarker extras', () => {
     expect(detectMarker(document.querySelector('article')!, a, base)).toMatchObject({ kind: 'label' });
   });
   it('reports suggested only when asked, and sponsored wins', () => {
-    const a = make({ labelSelectors: ['span'], suggested: { selectors: [], words: ['Suggested for you'] } });
+    const a = make({ labelSelectors: ['span'], suggested: { selectors: [], words: ['Suggested for you'], rules: [] } });
     document.body.innerHTML = '<article><span>Suggested for you</span></article>';
     const u = document.querySelector('article')!;
     expect(detectMarker(u, a, base)).toBeNull();

@@ -14,6 +14,8 @@ export type SiteContext = {
   /** The user's element rules that apply to this site. */
   customSelectors: string[];
   mutedWords: string[];
+  /** The adapter's suggested rules switched off on this site. */
+  offRules: string[];
 };
 
 /** Content script / popup -> service worker. */
@@ -22,6 +24,7 @@ export type BgRequest =
   | { type: 'sifter:setOverride'; hostname: string; fp: string; action: OverrideAction | null }
   | { type: 'sifter:setSiteEnabled'; hostname: string; enabled: boolean }
   | { type: 'sifter:setSiteCategory'; hostname: string; category: BlockCategory; value: boolean | null }
+  | { type: 'sifter:setSiteRule'; hostname: string; rule: string; value: boolean }
   | { type: 'sifter:pause'; minutes: number | null };
 
 /** Popup -> content script in the active tab. */
@@ -43,6 +46,8 @@ export type PageState = {
   categories: CategoryToggles;
   /** Whether this site's rules can detect suggested posts at all. */
   canSuggest: boolean;
+  /** This site's named suggested rules, each with whether it is on here. */
+  rules: { id: string; label: string; on: boolean }[];
   hiddenNow: number;
   /** Scanner self-cost on this page (hard rule 7), for the popup and the scroll bench. */
   perf: ScanPerf;
@@ -80,6 +85,7 @@ export function defaultContext(siteKey: string, over: Partial<SiteContext> = {})
     categories: { ...DEFAULT_CATEGORIES },
     customSelectors: [],
     mutedWords: [],
+    offRules: [],
     ...over,
   };
 }

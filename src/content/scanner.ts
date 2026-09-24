@@ -74,6 +74,7 @@ export class Scanner {
   private blocks: Block[] = [];
   private blockSelector: string | null = null;
   private muted: RegExp | null = null;
+  private offRules: ReadonlySet<string> = new Set();
   private readonly now: () => number;
   private readonly schedule: (fn: () => void, ms: number) => unknown;
 
@@ -91,8 +92,12 @@ export class Scanner {
   /** Derive what the context implies once, not per unit. */
   private compileContext(): void {
     const { categories, customSelectors, mutedWords } = this.ctx;
+    // Older service workers answer without offRules while the extension updates.
+    this.offRules = new Set(this.ctx.offRules ?? []);
     const blocks: Block[] = [];
-    for (const b of this.deps.adapter?.blocks ?? []) if (categories[b.category]) blocks.push(b);
+    for (const b of this.deps.adapter?.blocks ?? []) {
+      if (categories[b.category] && !(b.rule && this.offRules.has(b.rule))) blocks.push(b);
+    }
     if (categories.custom) {
       for (const selector of customSelectors) {
         // The options page validates rules, but storage is data: re-check before use (hard rule 2).
@@ -203,6 +208,7 @@ export class Scanner {
       counts,
       categories: this.ctx.categories,
       canSuggest: !!this.deps.adapter?.suggested || !!this.deps.adapter?.blocks.some((b) => b.category === 'suggested'),
+      rules: (this.deps.adapter?.suggested?.rules ?? []).map((r) => ({ id: r.id, label: r.label, on: !this.offRules.has(r.id) })),
       hiddenNow: this.hider.hiddenUnits().length,
       perf: { ...this.perf, pending: this.pending.length },
     };
@@ -450,7 +456,7 @@ export class Scanner {
       // Its rule or category was switched off, and it isn't a post in its own right.
       return { unit, fp: this.blockHidden.get(unit) as string, hide: null };
     }
-    const marker = detectMarker(unit, adapter, baseUrl, { suggested: categories.suggested });
+    const marker = detectMarker(unit, adapter, baseUrl, { suggested: categories.suggested, offRules: this.offRules });
     const text = unitText(unit, adapter);
     // Skeleton units have no text yet; come back when they fill in, unless a
     // structural marker already settles it.

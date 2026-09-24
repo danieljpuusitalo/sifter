@@ -22,6 +22,12 @@ const CategoryTogglesSchema = z.object({
 export const SiteSettingSchema = z.object({
   enabled: z.boolean().optional(),
   categories: z.object({ sponsored: z.boolean(), suggested: z.boolean(), custom: z.boolean() }).partial().optional(),
+  /**
+   * The adapter's named suggested rules switched off here ("groups": false). Only
+   * false is stored: a rule is on whenever the site's "suggested" is. A bad value
+   * costs this field, not the whole sites map.
+   */
+  rules: z.record(z.string().max(32), z.literal(false)).optional().catch(undefined),
 });
 
 /** Caps on what storage (or a backup file) may hold, so a hostile file can't stall every page. */
@@ -95,6 +101,11 @@ export function isSiteEnabled(settings: Settings, key: string, isLaunchSite: boo
 /** The categories in force on one site: the global toggles with that site's overrides on top. */
 export function siteCategories(settings: Settings, key: string): CategoryToggles {
   return { ...settings.categories, ...(settings.sites[key]?.categories ?? {}) };
+}
+
+/** Suggested rule ids switched off on one site. */
+export function siteOffRules(settings: Settings, key: string): string[] {
+  return Object.keys(settings.sites[key]?.rules ?? {});
 }
 
 export function isPaused(settings: Settings, now: number): boolean {

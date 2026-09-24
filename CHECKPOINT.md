@@ -9,12 +9,16 @@ v1.0.0 is feature-complete for publication, apart from the live checks and the
 store assets listed below. Seven sites: LinkedIn, Reddit, Google Search, X,
 Instagram, Facebook and Threads. Three categories: sponsored (on by default),
 suggested (off) and custom (muted words and element rules). Each has a global
-toggle and per-site overrides.
+toggle and per-site overrides. Within "suggested", each adapter names its kinds
+of suggestion (`suggested.rules`: Facebook groups / follow / reels, Instagram
+accounts / people, LinkedIn activity / follow / suggested). Each rule gets its own
+per-site switch in the popup, shown under "Suggested posts" while that is on.
+Settings store only the rules switched off (`sites[key].rules`).
 
 | Gate | State |
 |---|---|
 | `pnpm typecheck` | passes |
-| `pnpm test` | 139/139, including the audit regressions (below) |
+| `pnpm test` | 153/153, including the audit regressions (below) |
 | `pnpm eval:mock` | 8 fixtures, tp=56 fp=0 fn=0 (suggested pass included) |
 | `pnpm test:e2e` | 10/10, 30/30 with `--repeat-each=3`. One earlier run failed "muted words..." while a `pnpm dev` Chromium was also running (55 s vs a normal 24 s); not reproduced since. Watch it in CI |
 | `pnpm bench:scroll` | scrolling p50 and p95 are the same with the extension off and on (16.7 / 16.9 ms), 0 slices over budget while scrolling. One long task at load (75–81 ms, initial scan about 340 ms of idle-sliced work); max slice at load 27–33 ms. That load slice is the only thing over budget |
@@ -31,6 +35,10 @@ toggle and per-site overrides.
 | Instagram | live 2026-09-24 (ig_redirect, 6/6) | **live 2026-09-24**: Follow / "Suggested for you" articles, people module; NL/DE/FR UNVERIFIED |
 | Facebook | rail live; **feed ads UNVERIFIED live** | **live 2026-09-24**: Follow, Join, Reels, group suggestions; NL/DE/FR UNVERIFIED |
 | Threads | **UNVERIFIED live** | UNVERIFIED |
+
+Per-rule switches, live 2026-09-24 on Facebook through the real popup. With every rule on: 4 Join posts hidden,
+13 Follow posts hidden. After switching "Groups you're not in" off: 0 Join hidden, 2 shown, Follow still all
+hidden. Switching it back on hid them again. Not yet clicked live on Instagram or LinkedIn (unit tests cover both).
 
 These need a logged-in `pnpm dev` session. An agent can't provide one, since logging in means entering credentials.
 
@@ -122,4 +130,5 @@ Not fixed, noted:
   - no `innerText` or `getComputedStyle` outside `decide()`
   - run `pnpm bench:scroll` after any scanner change
 - **`closed()` in `src/rules/filters.ts`:** Chrome auto-closes an unfinished selector on its own, but inside the joined block selector it swallows its neighbours.
+- **Suggested rule ids** (`suggested.rules[].id`) are storage keys: renaming one silently resets every user's switch for it.
 - **Background `authorize()`:** a content script's hostname comes from `sender.url`, never from the message.

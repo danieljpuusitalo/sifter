@@ -12,5 +12,6 @@ button.link:hover { color: var(--fg); }
 .blocks { display: grid; gap: 8px; }
 .blocks h2 { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: none; }
 .small { font-size: 12px; }
+.switch.sub { padding-left: 26px; font-size: 13px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .foot { font-size: 12px; border-top: 1px solid var(--line); padding-top: 10px; }

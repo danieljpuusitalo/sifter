@@ -9,6 +9,7 @@ import {
   loadSettings,
   setOverride,
   siteCategories,
+  siteOffRules,
   siteKey,
   updateSettings,
 } from '../src/storage/settings';
@@ -143,6 +144,16 @@ async function handle(msg: BgRequest): Promise<unknown> {
       });
       return getContext(msg.hostname);
     }
+    case 'sifter:setSiteRule': {
+      const key = siteKey(msg.hostname);
+      await updateSettings((s) => {
+        const rules: Record<string, false> = { ...(s.sites[key]?.rules ?? {}) };
+        if (msg.value) delete rules[msg.rule];
+        else rules[msg.rule] = false;
+        return { ...s, sites: { ...s.sites, [key]: { ...s.sites[key], rules } } };
+      });
+      return getContext(msg.hostname);
+    }
     case 'sifter:pause':
       await updateSettings((s) => ({
         ...s,
@@ -167,6 +178,7 @@ async function getContext(hostname: string): Promise<SiteContext> {
     categories: siteCategories(settings, key),
     customSelectors: selectorsFor(rules, key),
     mutedWords: settings.mutedWords,
+    offRules: siteOffRules(settings, key),
   };
 }
 

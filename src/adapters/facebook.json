@@ -12,29 +12,47 @@
     "a[href*=\"/ads/about\"]"
   ],
   "suggested": {
-    "selectors": [
-      "[aria-label=\"Suggested for you\"]",
-      "[aria-label=\"Join group\"]",
-      "[aria-label=\"Lid worden van groep\"]",
-      "[aria-label=\"Gruppe beitreten\"]",
-      "[aria-label=\"Rejoindre le groupe\"]"
-    ],
     "labelSelectors": [
       "[data-ad-rendering-role=\"profile_name\"] [role=\"button\"]",
       "[data-ad-rendering-role=\"profile_name\"] span",
       "h3"
     ],
     "labelNodeLimit": 8,
-    "words": [
-      "Follow",
-      "Join",
-      "Reels",
-      "Volgen",
-      "Lid worden",
-      "Folgen",
-      "Beitreten",
-      "Suivre",
-      "Rejoindre"
+    "rules": [
+      {
+        "id": "groups",
+        "label": "Groups you're not in",
+        "selectors": [
+          "[aria-label=\"Suggested for you\"]",
+          "[aria-label=\"Join group\"]",
+          "[aria-label=\"Lid worden van groep\"]",
+          "[aria-label=\"Gruppe beitreten\"]",
+          "[aria-label=\"Rejoindre le groupe\"]"
+        ],
+        "words": [
+          "Join",
+          "Lid worden",
+          "Beitreten",
+          "Rejoindre"
+        ]
+      },
+      {
+        "id": "follow",
+        "label": "Pages and people you don't follow",
+        "words": [
+          "Follow",
+          "Volgen",
+          "Folgen",
+          "Suivre"
+        ]
+      },
+      {
+        "id": "reels",
+        "label": "Reels",
+        "words": [
+          "Reels"
+        ]
+      }
     ]
   },
   "blocks": [

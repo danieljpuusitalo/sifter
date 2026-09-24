@@ -26,7 +26,7 @@ Settings store only the rules switched off (`sites[key].rules`).
 |---|---|
 | `pnpm typecheck` | passes |
 | `pnpm test` | 153/153, including the audit regressions (below) |
-| `pnpm eval:mock` | 8 fixtures, tp=56 fp=0 fn=0 (suggested pass included) |
+| `pnpm eval:mock` | 8 fixtures, tp=58 fp=0 fn=0 (suggested pass included; the Google top-carousel case added 2026-09-24) |
 | `pnpm test:e2e` | 10/10, 30/30 with `--repeat-each=3`. One earlier run failed "muted words..." while a `pnpm dev` Chromium was also running (55 s vs a normal 24 s); not reproduced since. Watch it in CI |
 | `pnpm bench:scroll` | scrolling p50 and p95 are the same with the extension off and on (16.7 / 16.9 ms), 0 slices over budget while scrolling. One long task at load (75–81 ms, initial scan about 340 ms of idle-sliced work); max slice at load 27–33 ms. That load slice is the only thing over budget |
 | `pnpm build` | `.output/sifter-1.0.0-chrome.zip`, 110 kB |
@@ -36,12 +36,18 @@ Settings store only the rules switched off (`sites[key].rules`).
 | Site | Sponsored | Suggested |
 |---|---|---|
 | LinkedIn | live DOM inspected 2026-09-24; Daniel confirmed | **live 2026-09-24**: social lines, Follow/Connect; "Suggested" word and NL/DE/FR UNVERIFIED |
-| Reddit | Daniel confirmed it works; markup not inspected by an agent | UNVERIFIED |
-| Google | markup inspected; **Daniel to re-check** All + Shopping | n/a |
-| X | built from known markup | UNVERIFIED |
+| Reddit | Daniel confirmed it works (2026-09-24); markup not inspected by an agent | n/a |
+| Google | markup inspected; Daniel: "does something", but the top **"Sponsored products" carousel stayed visible** for "shoes". Re-inspected the same evening: the live carousel (EN and NL) matches the adapter, both fixtures carry that layout and pass, Google does not undo the hide. Not reproducible from the code; most likely a stale build in the dev profile. **Daniel: reload the extension and re-check.** Local pack / Maps: see below | n/a |
+| X | Daniel confirmed promoted posts are hidden (2026-09-24) | UNVERIFIED |
 | Instagram | live 2026-09-24 (ig_redirect, 6/6) | **live 2026-09-24**: Follow / "Suggested for you" articles, people module; NL/DE/FR UNVERIFIED |
-| Facebook | rail live; **feed ads UNVERIFIED live** | **live 2026-09-24**: Follow, Join, Reels, group suggestions; NL/DE/FR UNVERIFIED |
-| Threads | **UNVERIFIED live** | UNVERIFIED |
+| Facebook | rail live; feed: Daniel confirmed it works (2026-09-24) | **live 2026-09-24**: Follow, Join, Reels, group suggestions; NL/DE/FR UNVERIFIED |
+| Threads | Daniel browsed it with Sifter on: no ads appeared, nothing organic hidden. Ad path still unverified | n/a |
+
+Google, location searches (2026-09-24): "shoe store amsterdam" and "plumber amsterdam" served a Places pack
+with no Sponsored or ad marker, so promoted places could not be inspected; "hotels amsterdam" hotel ads are
+text ads inside the covered `[data-dsktp-pla=false]` wrapper. Google Maps (`google.com/maps`) is a separate app
+with its own markup and is not covered; the tab used for inspection answered "can't find" to every Maps query,
+so its promoted pins were not seen. Both stay open until a sponsored local result shows up live.
 
 Per-rule switches, live 2026-09-24 on Facebook through the real popup. With every rule on: 4 Join posts hidden,
 13 Follow posts hidden. After switching "Groups you're not in" off: 0 Join hidden, 2 shown, Follow still all
@@ -88,7 +94,7 @@ Not fixed, noted:
 
 ## Next
 
-1. **Daniel:** in `pnpm dev` (now Edge, fresh profile: log in again), check Facebook, Threads and the suggested words on each site. Re-check Google. Also judge scrolling there.
+1. **Daniel:** live results are in the table above (2026-09-24). Still open: reload the extension in the dev profile (or load the release zip) and re-check the Google "shoes" carousel; the suggested words on each site; a sponsored local result or Maps pin when one appears.
    - Scroll smoothness, 2026-09-24:
      - Most of the lag was the dev browser: x64 Chromium emulated on ARM64.
      - Sifter's only measured cost was a 12–13 ms forced layout from `innerText`, now removed.

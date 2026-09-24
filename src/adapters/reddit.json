@@ -5,5 +5,5 @@
   "unitSelector": "shreddit-post, shreddit-ad-post",
   "labelSelectors": [],
   "adSelectors": ["shreddit-ad-post"],
-  "verified": "UNVERIFIED: from prior knowledge of the shreddit UI; the browser tool is blocked on reddit.com. Needs a manual check."
+  "verified": "2026-09-24: Daniel confirmed it hides promoted posts on the logged-in feed (Edge, pnpm dev). Selectors come from prior knowledge of the shreddit UI (shreddit-post / shreddit-ad-post); the markup was not inspected by an agent, because the browser tool is blocked on reddit.com."
 }

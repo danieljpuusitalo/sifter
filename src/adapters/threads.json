@@ -6,5 +6,5 @@
   "labelNodeLimit": 3,
   "labelIgnoreSelector": "a",
   "adSelectors": ["a[href*=\"facebook.com/ads/about\"]"],
-  "verified": "UNVERIFIED live (no logged-in session available). Posts are [data-pressable-container]; ads carry a 'Sponsored' span in the header row (the post's first child) and an 'About ads' link to facebook.com/ads/about. Labels are read from the header only, so a post whose text says 'Ads' is not an ad; the Ad Library (facebook.com/ads/library) is linked by organic posts too, so it is not a marker. Author names are links and are ignored as labels. Needs a manual check in pnpm dev."
+  "verified": "2026-09-24: Daniel browsed the logged-in feed with Sifter on; no ad appeared, so nothing was hidden and nothing organic was hidden either (no false hides seen). The ad path itself is still unverified live. Posts are [data-pressable-container]; ads carry a 'Sponsored' span in the header row (the post's first child) and an 'About ads' link to facebook.com/ads/about. Labels are read from the header only, so a post whose text says 'Ads' is not an ad; the Ad Library (facebook.com/ads/library) is linked by organic posts too, so it is not a marker. Author names are links and are ignored as labels. Re-check when an ad shows up."
 }

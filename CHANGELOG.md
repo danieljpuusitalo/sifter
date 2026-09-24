@@ -22,11 +22,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Known limitations
 
 - Live-verified against a logged-in feed: LinkedIn (sponsored + suggested),
-  Instagram (sponsored + suggested), Google Search (sponsored), X (sponsored).
-- Not yet verified live: Reddit (works in manual use; markup not inspected
-  against the adapter), Facebook feed ads (only the right rail is verified live; feed
-  suggested rules are verified live), Threads (fully unverified, no logged-in
-  session available).
+  Instagram (sponsored + suggested), Reddit, X, Facebook (feed and right rail,
+  plus suggested), Google Search text ads.
+- Google: one live report of the top "Sponsored products" carousel staying
+  visible could not be reproduced from the markup (EN and NL) or the fixtures;
+  under re-check. Promoted places in the local pack were never served during
+  inspection, so they are unverified, and Google Maps is not covered.
+- Threads: runs without hiding organic posts; no ad has appeared live yet to
+  confirm the ad path.
 - Dutch, German and French marker strings on Facebook, Instagram and LinkedIn
   are baseline guesses, not checked against a live non-English UI. A wrong
   guess misses an ad rather than hiding a real post.

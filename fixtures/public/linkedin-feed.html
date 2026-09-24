@@ -1,0 +1,79 @@
+<!doctype html>
+<!--
+  Synthetic LinkedIn home feed. Structure mirrors the live DOM checked on
+  2026-09-24 (hashed classes, data-testid="mainFeed", listitem units keyed by
+  componentkey, "Promoted" in p[componentkey] > span). All names and text are
+  invented. data-gold marks the expected outcome on each unit root.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="sift-host" content="www.linkedin.com" />
+    <title>Feed | LinkedIn (fixture)</title>
+    <style>
+      body { font-family: system-ui, sans-serif; background: #f4f2ee; margin: 0; }
+      ._3a1f { max-width: 560px; margin: 0 auto; padding: 16px; }
+      [role='listitem'] { background: #fff; border-radius: 8px; margin: 8px 0; padding: 12px; }
+      ._vh { display: none; }
+    </style>
+  </head>
+  <body>
+    <main id="workspace">
+      <div class="_3a1f">
+        <div data-testid="mainFeed" role="list" data-component-type="LazyColumn">
+          <div data-lazy-mount-id="a1">
+            <div role="listitem" componentkey="update-card-focus1001FeedType_MAIN_FEED_RELEVANCE" data-gold="none">
+              <div class="_9c2e"><div><p componentkey="c-1"><span>Aino Virtanen</span></p><p componentkey="c-2"><span>Product designer · 3h</span></p></div></div>
+              <div class="_77aa"><p componentkey="c-3"><span>Shipped the new onboarding flow today. Big thanks to the team for three weeks of careful testing and even more careful copywriting.</span></p></div>
+            </div>
+          </div>
+          <div data-lazy-mount-id="a2">
+            <div role="listitem" componentkey="update-card-focus1002FeedType_MAIN_FEED_RELEVANCE" data-gold="sponsored">
+              <div class="_9c2e"><div><p componentkey="c-4"><span>Northwind Cloud</span></p><p componentkey="c-5"><span>Promoted</span></p></div></div>
+              <div class="_77aa"><p componentkey="c-6"><span>Cut your infrastructure bill in half with Northwind autoscaling. Start a free trial today.</span></p><a href="https://northwind.example/trial?li_fat_id=x&amp;utm_source=linkedin">Learn more</a></div>
+            </div>
+          </div>
+          <div data-lazy-mount-id="a3">
+            <!-- Organic post that uses the word "promoted" in the body: must not hide. -->
+            <div role="listitem" componentkey="update-card-focus1003FeedType_MAIN_FEED_RELEVANCE" data-gold="none">
+              <div class="_9c2e"><div><p componentkey="c-7"><span>Jonas Berg</span></p><p componentkey="c-8"><span>Engineering manager · 1d</span></p></div></div>
+              <div class="_77aa"><p componentkey="c-9"><span>Some news: I have been promoted to engineering manager. Ad astra, and thanks to everyone who helped along the way.</span></p></div>
+            </div>
+          </div>
+          <div data-lazy-mount-id="a4">
+            <!-- Promoted label split around a hidden decoy span: innerText still reads "Promoted". -->
+            <div role="listitem" componentkey="update-card-focus1004FeedType_MAIN_FEED_RELEVANCE" data-gold="sponsored">
+              <div class="_9c2e"><div><p componentkey="c-10"><span>Harbor Analytics</span></p><p componentkey="c-11"><span>Pro<span class="_vh">zq</span>moted</span></p></div></div>
+              <div class="_77aa"><p componentkey="c-12"><span>Your dashboards, finally in one place. Book a demo with Harbor.</span></p></div>
+            </div>
+          </div>
+          <div data-lazy-mount-id="a5">
+            <!-- Organic post with a hidden "Promoted" string in its header: invisible, so must not hide. -->
+            <div role="listitem" componentkey="update-card-focus1005FeedType_MAIN_FEED_RELEVANCE" data-gold="none">
+              <div class="_9c2e"><div><p componentkey="c-13"><span>Sara Lindqvist</span></p><p componentkey="c-14"><span class="_vh">Promoted</span></p></div></div>
+              <div class="_77aa"><p componentkey="c-15"><span>Reading list for the weekend: three essays on writing clearly about technical work.</span></p></div>
+            </div>
+          </div>
+          <div data-lazy-mount-id="a6">
+            <!-- Dutch interface label. -->
+            <div role="listitem" componentkey="update-card-focus1006FeedType_MAIN_FEED_RELEVANCE" data-gold="sponsored">
+              <div class="_9c2e"><div><p componentkey="c-16"><span>Tulip Payroll</span></p><p componentkey="c-17"><span>Gepromoot</span></p></div></div>
+              <div class="_77aa"><p componentkey="c-18"><span>Salarisadministratie zonder gedoe. Probeer het dertig dagen gratis.</span></p></div>
+            </div>
+          </div>
+          <div data-lazy-mount-id="a7">
+            <!-- A non-post module: role=listitem without componentkey. Not a unit. -->
+            <div role="listitem"><p><span>Promoted</span></p><p><span>Add to your feed</span></p></div>
+          </div>
+          <div data-lazy-mount-id="a8">
+            <!-- Organic post with a body line that is exactly "Ad": label nodes past the header must not count. -->
+            <div role="listitem" componentkey="update-card-focus1008FeedType_MAIN_FEED_RELEVANCE" data-gold="none">
+              <div class="_9c2e"><div><p componentkey="c-19"><span>Mika Laine</span></p><p componentkey="c-20"><span>Founder · 5h</span></p></div></div>
+              <div class="_77aa"><p componentkey="c-21"><span>Our first year in one word per quarter. Q1 was build, Q2 was sell, Q3 was hire. Q4 was:</span></p><p componentkey="c-22"><span>Ad</span></p><p componentkey="c-23"><span>As in ad hoc. Everything.</span></p></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+.options { max-width: 680px; margin: 0 auto; padding: 40px 16px 64px; display: flex; flex-direction: column; gap: 32px; }
+.options h1 { font-size: 22px; }
+.lede { margin-top: -20px; color: var(--muted); }
+section { display: flex; flex-direction: column; gap: 12px; }
+section h2 { font-size: 16px; }
+.paths { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; }
+.path { padding: 12px 14px; display: grid; gap: 4px; }
+.path + .path { border-top: 1px solid var(--line); }
+.path h3 { font-size: 14px; }
+.path.current { box-shadow: inset 3px 0 0 var(--accent); }
+.state { font-size: 12px; }
+.small { font-size: 12px; }
+.modes { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+.mode { display: flex; gap: 10px; align-items: baseline; cursor: pointer; }
+.mode input { accent-color: var(--accent); }
+.sites { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.sites li { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

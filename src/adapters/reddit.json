@@ -1,0 +1,9 @@
+{
+  "id": "reddit",
+  "hosts": ["reddit.com"],
+  "feedRootSelector": "shreddit-feed",
+  "unitSelector": "shreddit-post, shreddit-ad-post",
+  "labelSelectors": [],
+  "adSelectors": ["shreddit-ad-post"],
+  "verified": "UNVERIFIED: from prior knowledge of the shreddit UI; the browser tool is blocked on reddit.com. Needs a manual check."
+}

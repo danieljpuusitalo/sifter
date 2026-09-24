@@ -1,0 +1,33 @@
+{
+  "name": "sift",
+  "description": "Hides the ads your ad blocker misses.",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build && wxt zip",
+    "zip": "wxt zip",
+    "typecheck": "wxt prepare && tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "wxt build && playwright test",
+    "eval:mock": "tsx evals/run.ts --provider mock",
+    "verify": "pnpm typecheck && pnpm test && pnpm eval:mock",
+    "postinstall": "wxt prepare"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.29.7",
+    "@playwright/test": "^1.63.0",
+    "@preact/preset-vite": "^2.10.6",
+    "@types/node": "^26.6.2",
+    "happy-dom": "^20.14.5",
+    "preact": "^10.29.8",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1",
+    "wxt": "^0.21.4",
+    "zod": "^4.6.5"
+  }
+}

@@ -1,0 +1,68 @@
+<!doctype html>
+<!--
+  Synthetic Google results page. Structure mirrors the live DOM checked on
+  2026-09-24: top text ads in #tvcap > #tads, a shopping block in
+  [data-dsktp-pla] under #cnt, a second ad block inside #rso, and #rso .MjjYud
+  results that nest (one wrapper holds several results). Per-ad text carries no
+  "Sponsored" label. All names and text are invented. data-gold marks the
+  expected outcome on each unit root.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="sift-host" content="www.google.com" />
+    <title>running shoes - Google Search (fixture)</title>
+    <style>
+      body { font-family: arial, sans-serif; margin: 0; }
+      #cnt { max-width: 700px; padding: 16px 32px; }
+      .MjjYud, [data-text-ad] { margin: 0 0 20px; }
+    </style>
+  </head>
+  <body>
+    <div id="cnt">
+      <div data-dsktp-pla="1" data-gold="sponsored">
+        <span role="heading" style="text-transform: capitalize">Sponsored results</span>
+        <div><div data-text-ad="1" data-ta-slot="0" data-ta-slot-pos="1"><a href="https://shoes-outlet.example/" data-rw="https://www.google.com/aclk?sa=l&amp;ai=x">Shoes Outlet: running shoes up to 40% off</a><div>Free returns within 30 days. Shop the full range of trail and road shoes.</div></div></div>
+        <g-scrolling-carousel>
+          <div data-pla-slot-pos="1" data-merchant-id="m1" data-dtld="runstore.example"><a id="plap_1" href="https://www.google.com/aclk?sa=l&amp;ai=y">Trail Runner 5, €129, RunStore</a></div>
+          <div data-pla-slot-pos="2" data-merchant-id="m2" data-dtld="fleet.example"><a id="plap_2" href="https://www.google.com/aclk?sa=l&amp;ai=z">Road Glide, €99, Fleet</a></div>
+        </g-scrolling-carousel>
+      </div>
+      <div id="rcnt">
+        <div id="center_col">
+          <div id="taw"><div id="tvcap">
+            <div id="tads" data-gold="sponsored">
+              <div><div data-text-ad="1" data-ta-slot="0" data-ta-slot-pos="1"><a href="https://quickinsure.example/">QuickInsure: compare in 2 minutes</a><div>Get a quote from 30 insurers at once.</div><span aria-label="Why this ad?"></span></div></div>
+              <div><div data-text-ad="1" data-ta-slot="0" data-ta-slot-pos="2"><a href="https://coverwell.example/">Coverwell Direct: switch and save</a><div>Rated excellent by 20,000 customers.</div></div></div>
+            </div>
+          </div></div>
+          <div id="search"><div id="rso">
+            <div class="MjjYud NdPIL" data-gold="none">
+              <div class="A6K0A" data-rpos="0"><h3>How to choose running shoes: a beginner's guide</h3><a href="https://runnersguide.example/choose">runnersguide.example</a><div>Fit matters more than brand. Here is how to test a shoe in the shop before you buy.</div></div>
+            </div>
+            <div class="MjjYud vRlJeb" data-gold="none">
+              <div><h3>People also ask</h3><div>Are expensive running shoes worth it?</div></div>
+            </div>
+            <!-- A wrapper that holds several results: the wrapper itself is not a unit. -->
+            <div class="MjjYud">
+              <div class="MjjYud" data-gold="none"><div class="A6K0A" data-rpos="1"><h3>Ad blockers and your running app: what breaks</h3><a href="https://techrun.example/">techrun.example</a><div>An organic article whose title starts with the word Ad.</div></div></div>
+              <div class="MjjYud" data-gold="none"><div class="A6K0A" data-rpos="2"><h3>Best running shoes of the year, tested</h3><a href="https://reviewlab.example/shoes">reviewlab.example</a><div>We ran 400 km in 22 pairs so you don't have to.</div></div></div>
+              <div class="MjjYud" data-gold="none"><div class="A6K0A" data-rpos="3"><h3>Sponsored athletes and the shoe arms race</h3><a href="https://sportsdesk.example/">sportsdesk.example</a><div>How carbon plates changed marathon results.</div></div></div>
+            </div>
+            <!-- The ad block inside the organic results, slot 3. -->
+            <div class="MjjYud">
+              <div id="k04FTb"><div id="tsuid_1">
+                <div data-text-ad="1" data-ta-slot="3" data-ta-slot-pos="1" data-gold="sponsored"><a href="https://stridehouse.example/">Stride House: new season shoes</a><div>Order before 22:00, delivered tomorrow.</div></div>
+              </div><div id="tsuid_2">
+                <div data-text-ad="1" data-ta-slot="3" data-ta-slot-pos="2" data-gold="sponsored"><a href="https://www.googleadservices.com/pagead/aclk?sa=L&amp;ai=q">Pace Shop: running shoe sale</a><div>Up to 50% off last season's colours.</div></div>
+              </div></div>
+            </div>
+            <div class="MjjYud NdPIL" data-gold="none">
+              <div class="A6K0A" data-rpos="4"><h3>Running shoe sizing chart</h3><a href="https://sizing.example/">sizing.example</a><div>Convert between EU, UK and US sizes.</div></div>
+            </div>
+          </div></div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

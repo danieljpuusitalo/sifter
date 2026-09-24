@@ -1,0 +1,48 @@
+/* Shared by popup and options. Quiet and native: system font, one accent, sentence case. */
+:root {
+  --bg: #ffffff;
+  --fg: #1b1b1f;
+  --muted: #5f6068;
+  --line: #e3e3e8;
+  --accent: #2f6f4f;
+  --accent-fg: #ffffff;
+  --danger: #a3281e;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1f;
+    --fg: #ececf0;
+    --muted: #a0a0aa;
+    --line: #34343a;
+    --accent: #7cc49b;
+    --accent-fg: #0f1f16;
+    --danger: #f08a80;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+h1, h2, h3 { font-weight: 600; margin: 0; }
+p { margin: 0; }
+.muted { color: var(--muted); }
+button {
+  font: inherit;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+button:hover { border-color: var(--muted); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:disabled { opacity: 0.5; cursor: default; }
+.switch { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.switch input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
+.error { color: var(--danger); }

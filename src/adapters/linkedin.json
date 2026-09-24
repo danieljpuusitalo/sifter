@@ -1,0 +1,14 @@
+{
+  "id": "linkedin",
+  "hosts": [
+    "linkedin.com"
+  ],
+  "feedRootSelector": "[data-testid=\"mainFeed\"]",
+  "unitSelector": "[role=\"listitem\"][componentkey^=\"update-card-focus\"]",
+  "labelSelectors": [
+    "p[componentkey] > span"
+  ],
+  "labelNodeLimit": 3,
+  "adSelectors": [],
+  "verified": "2026-09-24 live DOM, home feed: classes are hashed; old data-urn / .feed-shared-update-v2 selectors return 0. 'Promoted' is plain text in p[componentkey] > span, no decoys, no shadow DOM."
+}

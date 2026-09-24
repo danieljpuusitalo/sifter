@@ -1,0 +1,33 @@
+{
+  "id": "google",
+  "hosts": [
+    "google.com",
+    "google.nl",
+    "google.de",
+    "google.co.uk",
+    "google.fr",
+    "google.be",
+    "google.at",
+    "google.ch",
+    "google.es",
+    "google.it",
+    "google.pt",
+    "google.ie",
+    "google.se",
+    "google.fi",
+    "google.dk",
+    "google.no",
+    "google.pl",
+    "google.ca",
+    "google.com.au"
+  ],
+  "unitSelector": "#tads, [data-dsktp-pla], #rso [data-text-ad], #rso .MjjYud",
+  "labelSelectors": [],
+  "adSelectors": [
+    "[data-text-ad]",
+    "[data-dsktp-pla]",
+    "a[id^=\"plap_\"]"
+  ],
+  "feedRootSelector": "#rcnt",
+  "verified": "2026-09-24 live DOM, queries \"car insurance\" and \"running shoes\": ad blocks move between #tads (under #tvcap) and [data-dsktp-pla] (under #cnt); a second ad block sits inside #rso. Per-ad text carries no Sponsored label, so detection is structural. #rso .MjjYud nests (one wrapper held 11 results): the scanner keeps innermost units only. Selector avoids complex :not() (happy-dom ignores it). Known gap: a [data-dsktp-pla] block placed inside #rso would lose to its inner [data-text-ad] under the innermost rule, leaving its carousel shown (a miss, not a false hide)."
+}

@@ -1,0 +1,39 @@
+<!doctype html>
+<!--
+  Synthetic Reddit home feed. UNVERIFIED against the live site (the browser tool
+  is blocked on reddit.com): the shreddit-post / shreddit-ad-post structure is
+  from prior knowledge. The ad post's label sits in a declarative shadow root to
+  model the case where innerText can't see it. All names and text are invented.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="sift-host" content="www.reddit.com" />
+    <title>Reddit (fixture)</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; background: #fff; }
+      shreddit-feed { display: block; max-width: 640px; margin: 0 auto; padding: 16px; }
+      shreddit-post, shreddit-ad-post { display: block; padding: 12px; border-bottom: 1px solid #ddd; }
+    </style>
+  </head>
+  <body>
+    <shreddit-feed>
+      <article><shreddit-post post-title="What is your long run pace compared to race pace?" subreddit-prefixed-name="r/running" data-gold="none">
+        <a slot="title" href="/r/running/comments/abc/">What is your long run pace compared to race pace?</a>
+        <div slot="text-body">Trying to work out whether I am running my easy days too fast. Mine is about 90 seconds slower per km.</div>
+      </shreddit-post></article>
+      <article><shreddit-ad-post data-gold="sponsored">
+        <template shadowrootmode="open"><div><span>Promoted</span><slot></slot></div></template>
+        <a slot="title" href="https://gelmax.example/">Fuel your long runs with GelMax. 20% off your first order.</a>
+      </shreddit-ad-post></article>
+      <article><shreddit-post post-title="Promoted to team captain, any advice?" subreddit-prefixed-name="r/rowing" data-gold="none">
+        <a slot="title" href="/r/rowing/comments/def/">Promoted to team captain, any advice?</a>
+        <div slot="text-body">First season leading the squad. How do you balance being a friend and being the one who sets the lineup?</div>
+      </shreddit-post></article>
+      <article><shreddit-post post-title="Weekly shoe thread" subreddit-prefixed-name="r/running" data-gold="none">
+        <a slot="title" href="/r/running/comments/ghi/">Weekly shoe thread</a>
+        <div slot="text-body">Post your questions about shoes here. Ad posts and affiliate links will be removed by the mods.</div>
+      </shreddit-post></article>
+    </shreddit-feed>
+  </body>
+</html>

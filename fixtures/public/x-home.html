@@ -1,0 +1,103 @@
+<!doctype html>
+<!--
+  Synthetic X home timeline. Structure mirrors the live DOM checked on 2026-09-24:
+  virtualised cells ([data-testid=cellInnerDiv]) each holding one div, tweets as
+  article[data-testid=tweet], and a promoted tweet wrapped directly in
+  [data-testid=placementTracking]. All names and text are invented.
+  data-gold marks the expected outcome on each unit root.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="sifter-host" content="x.com" />
+    <title>Home / X (fixture)</title>
+    <style>
+      body { font-family: system-ui, sans-serif; background: #000; color: #e7e9ea; margin: 0; display: flex; gap: 24px; justify-content: center; }
+      [data-testid='primaryColumn'] { width: 600px; }
+      [data-testid='sidebarColumn'] { width: 350px; }
+      article { border-bottom: 1px solid #2f3336; padding: 12px 16px; }
+      aside { border: 1px solid #2f3336; border-radius: 16px; padding: 12px; margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <main role="main">
+      <div data-testid="primaryColumn">
+        <section role="region" aria-label="Timeline: Your Home Timeline">
+          <div aria-label="Timeline: Your Home Timeline">
+            <div data-testid="cellInnerDiv" style="position: relative">
+              <div data-gold="none">
+                <article data-testid="tweet" role="article" tabindex="0">
+                  <div data-testid="User-Name"><a href="/aino_v"><span>Aino Virtanen</span></a><span>@aino_v · 2h</span></div>
+                  <div data-testid="tweetText"><span>Finally got the sourdough starter to behave. Three weeks of feeding it like a pet.</span></div>
+                  <div role="group"><span>12</span><span>48</span><span>1.2K</span></div>
+                </article>
+              </div>
+            </div>
+            <div data-testid="cellInnerDiv" style="position: relative">
+              <div data-gold="sponsored">
+                <div data-testid="placementTracking">
+                  <article data-testid="tweet" role="article" tabindex="0">
+                    <div data-testid="User-Name"><a href="/northwindcloud"><span>Northwind Cloud</span></a><span>@northwindcloud</span></div>
+                    <div data-testid="tweetText"><span>Cut your infrastructure bill in half with autoscaling that actually scales down.</span></div>
+                    <div><span>Ad</span></div>
+                    <a href="https://northwind.example/trial" role="link">northwind.example</a>
+                  </article>
+                </div>
+              </div>
+            </div>
+            <div data-testid="cellInnerDiv" style="position: relative">
+              <!-- Organic tweet with a video: X puts a placementTracking node inside the
+                   article around the player. Must not hide. -->
+              <div data-gold="none">
+                <article data-testid="tweet" role="article" tabindex="0">
+                  <div data-testid="User-Name"><a href="/jonas_b"><span>Jonas Berg</span></a><span>@jonas_b · 5h</span></div>
+                  <div data-testid="tweetText"><span>Timelapse of the bridge going up, start to finish.</span></div>
+                  <div data-testid="videoComponent"><div data-testid="placementTracking"><div data-testid="videoPlayer"><video aria-label="Embedded video"></video></div></div></div>
+                </article>
+              </div>
+            </div>
+            <div data-testid="cellInnerDiv" style="position: relative">
+              <!-- Organic tweet whose text is just "Ad" and "Promoted": must not hide. -->
+              <div data-gold="none">
+                <article data-testid="tweet" role="article" tabindex="0">
+                  <div data-testid="User-Name"><a href="/ad"><span>Ad</span></a><span>@ad · 1d</span></div>
+                  <div data-testid="tweetText"><span>Promoted</span></div>
+                  <div data-testid="tweetText"><span>Sponsored</span></div>
+                </article>
+              </div>
+            </div>
+            <div data-testid="cellInnerDiv" style="position: relative">
+              <div data-gold="sponsored">
+                <div data-testid="placementTracking">
+                  <article data-testid="tweet" role="article" tabindex="0">
+                    <div data-testid="User-Name"><a href="/fjordshoes"><span>Fjord Shoes</span></a><span>@fjordshoes</span></div>
+                    <div data-testid="tweetText"><span>Waterproof trail runners, now 30% off for the season.</span></div>
+                  </article>
+                </div>
+              </div>
+            </div>
+            <div data-testid="cellInnerDiv" style="position: relative">
+              <div data-gold="none">
+                <article data-testid="tweet" role="article" tabindex="0">
+                  <div data-testid="User-Name"><a href="/lena_k"><span>Lena Kask</span></a><span>@lena_k · 8h</span></div>
+                  <div data-testid="tweetText"><span>Reminder that the library has a seed exchange now. Tomatoes went fast.</span></div>
+                </article>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+    <div data-testid="sidebarColumn">
+      <aside aria-label="Who to follow" data-gold="suggested">
+        <h2><span>Who to follow</span></h2>
+        <div><a href="/mika_r"><span>Mika Rantanen</span></a><button>Follow</button></div>
+        <div><a href="/sofia_l"><span>Sofia Lind</span></a><button>Follow</button></div>
+      </aside>
+      <section aria-label="Trending" data-gold="none">
+        <h2><span>What's happening</span></h2>
+        <div><span>Trending in Finland</span><span>Sauna season</span></div>
+      </section>
+    </div>
+  </body>
+</html>

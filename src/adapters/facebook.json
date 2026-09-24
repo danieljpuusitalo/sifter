@@ -1,0 +1,30 @@
+{
+  "id": "facebook",
+  "hosts": [
+    "facebook.com"
+  ],
+  "feedRootSelector": "[role=\"feed\"]",
+  "unitSelector": "[role=\"feed\"] [aria-posinset]",
+  "labelSelectors": [],
+  "labelIgnoreSelector": "a",
+  "adSelectors": [
+    "a[attributionsrc*=\"privacy_sandbox\"]",
+    "a[href*=\"/ads/about\"]"
+  ],
+  "suggested": {
+    "selectors": [],
+    "labelSelectors": [
+      "[data-ad-rendering-role=\"profile_name\"] [role=\"button\"]",
+      "[data-ad-rendering-role=\"profile_name\"] span"
+    ],
+    "labelNodeLimit": 8,
+    "words": [
+      "Follow",
+      "Join",
+      "Volgen",
+      "Lid worden"
+    ]
+  },
+  "blocks": [],
+  "verified": "UNVERIFIED live (no logged-in session available). From known Facebook markup: sponsored posts link through attributionsrc privacy_sandbox or /ads/about, and the scrambled 'Sponsored' text exposes its real name through aria-labelledby, which detectMarker resolves. A Follow/Join button beside the author name marks a suggested post. Needs a manual check in pnpm dev."
+}

@@ -2,7 +2,7 @@
   "name": "sifter",
   "description": "Hides the ads your ad blocker misses.",
   "private": true,
-  "version": "0.0.1",
+  "version": "1.0.0",
   "type": "module",
   "license": "MIT",
   "scripts": {
@@ -16,7 +16,8 @@
     "eval:mock": "tsx evals/run.ts --provider mock",
     "verify": "pnpm typecheck && pnpm test && pnpm eval:mock",
     "postinstall": "wxt prepare",
-    "bench:scroll": "wxt build && tsx bench/scroll.ts"
+    "bench:scroll": "wxt build && tsx bench/scroll.ts",
+    "icons": "node scripts/render-icons.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",

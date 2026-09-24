@@ -29,9 +29,18 @@ const MARKER_SET = new Set<string>(MARKER_WORDS);
 /** Punctuation and separators sites put around a label ("Promoted ·", "Sponsored:"). */
 const EDGE_JUNK = /^[\s·•|:\-–—()[\]]+|[\s·•|:\-–—()[\]]+$/g;
 
+/** A label's comparable form: whitespace collapsed, edge punctuation dropped, lower case. */
+export function labelKey(raw: string): string {
+  return raw.replace(/\s+/g, ' ').replace(EDGE_JUNK, '').toLowerCase();
+}
+
 export function isMarkerText(raw: string): boolean {
-  const t = raw.replace(/\s+/g, ' ').replace(EDGE_JUNK, '').toLowerCase();
-  return MARKER_SET.has(t);
+  return MARKER_SET.has(labelKey(raw));
+}
+
+/** Whether any line of a label is exactly one of `words` (already lower case). */
+export function hasWordLine(raw: string, words: ReadonlySet<string>): boolean {
+  return words.size > 0 && raw.split(/\n/).some((line) => words.has(labelKey(line)));
 }
 
 /**

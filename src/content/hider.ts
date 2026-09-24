@@ -9,9 +9,19 @@ export const PLACEHOLDER_ATTR = 'data-sifter-placeholder';
 
 const LABELS: Record<HideCategory, string> = {
   sponsored: 'Hidden sponsored post',
+  suggested: 'Hidden suggestion',
   affiliate: 'Hidden affiliate post',
   custom: 'Hidden by your filter',
   manual: 'Hidden by you',
+};
+
+/** The second button always means "stop hiding this one", said per category. */
+const KEEP_LABELS: Record<HideCategory, string> = {
+  sponsored: 'Not an ad',
+  suggested: 'Always show',
+  affiliate: 'Not an ad',
+  custom: 'Always show',
+  manual: 'Undo',
 };
 
 type Record_ = {
@@ -172,7 +182,7 @@ export class Hider {
     label.className = 'label';
     label.textContent = LABELS[category];
     const show = this.button('Show', 'show', () => this.cb.onShow(unit));
-    const notAd = this.button('Not an ad', 'not-ad', () => this.cb.onNotAd(unit));
+    const notAd = this.button(KEEP_LABELS[category], 'not-ad', () => this.cb.onNotAd(unit));
     row.append(label, show, notAd);
     root.append(style, row);
     return host;
@@ -194,6 +204,8 @@ export class Hider {
   private updateLabel(rec: Record_, category: HideCategory): void {
     const label = rec.placeholder?.shadowRoot?.querySelector('.label');
     if (label) label.textContent = LABELS[category];
+    const keep = rec.placeholder?.shadowRoot?.querySelector('[data-act="not-ad"]');
+    if (keep) keep.textContent = KEEP_LABELS[category];
     rec.placeholder?.setAttribute(PLACEHOLDER_ATTR, category);
   }
 }

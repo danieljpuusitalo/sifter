@@ -1,70 +1,101 @@
 # Sifter checkpoint
 
-Updated 2026-09-24, session 2 (Google ad containers; scroll-cost rewrite of the scanner with a benchmark).
+Updated 2026-09-24, session 3: seven site adapters, ad-blocker-style popup and
+options page, icons, store docs, then a full audit and its fixes.
 
 ## Where it stands
 
-M0 and M1 are built. The automated parts of both milestones pass. Three items still
-need a human (listed below). Nothing is on GitHub yet: the repo has one local commit
-and no remote, so CI has never run.
+v1.0.0 is feature-complete for publication, apart from the live checks and the
+store assets listed below. Seven sites: LinkedIn, Reddit, Google Search, X,
+Instagram, Facebook and Threads. Three categories: sponsored (on by default),
+suggested (off) and custom (muted words and element rules). Each has a global
+toggle and per-site overrides.
 
 | Gate | State |
 |---|---|
-| `pnpm typecheck` | passes (tsc 7, strict; a negative control confirmed it catches errors) |
-| `pnpm test` | 75/75, including `scanner-cost.test.ts` (a rescan examines only what changed) |
-| `pnpm eval:mock` | 4 fixtures, tp=11 fp=0 fn=0 |
-| `pnpm test:e2e` | 5/5 against the built extension: hide on all three sites, Show, Not an ad (persists across reload), popup render + page counts, infinite-scroll append |
-| `pnpm bench:scroll` | 600-card feed, 4x CPU throttle, 20 s scroll, ext off vs on: the same forced layouts (40 vs 40), 0 slices over budget, 1 or 2 re-decisions. The old scanner examined about 22,000 units a run and blocked for up to 52 ms |
-| `pnpm build` | `.output/sifter-0.0.1-chrome.zip`, 95 kB |
-| `pnpm dev` opens Chrome with the popup | **not checked by an agent**: it opens a window on Daniel's screen |
-| Infinite scroll still loads on the live sites | **manual, not done** |
-| LinkedIn + Reddit live | Daniel confirmed that both hide ads (session 2) |
-| Google Shopping + in-results ad blocks live | fixed against a synthetic fixture; **Daniel to re-check live** |
+| `pnpm typecheck` | passes |
+| `pnpm test` | 123/123, including the audit regressions (below) |
+| `pnpm eval:mock` | 8 fixtures, tp=42 fp=0 fn=0 |
+| `pnpm test:e2e` | 10/10, 30/30 with `--repeat-each=3`. One earlier run failed "muted words..." while a `pnpm dev` Chromium was also running (55 s vs a normal 24 s); not reproduced since. Watch it in CI |
+| `pnpm bench:scroll` | scrolling p50 and p95 are the same with the extension off and on (16.7 / 16.9 ms), 0 slices over budget while scrolling. One long task at load (75–81 ms, initial scan about 340 ms of idle-sliced work); max slice at load 27–33 ms. That load slice is the only thing over budget |
+| `pnpm build` | `.output/sifter-1.0.0-chrome.zip`, 110 kB |
+
+## Live verification (from each adapter's `verified` field)
+
+| Site | Sponsored | Suggested |
+|---|---|---|
+| LinkedIn | live DOM inspected 2026-09-24; Daniel confirmed | words UNVERIFIED |
+| Reddit | Daniel confirmed it works; markup not inspected by an agent | UNVERIFIED |
+| Google | markup inspected; **Daniel to re-check** All + Shopping | n/a |
+| X | built from known markup | UNVERIFIED |
+| Instagram | built from known markup | UNVERIFIED |
+| Facebook | **UNVERIFIED live** | UNVERIFIED |
+| Threads | **UNVERIFIED live** | UNVERIFIED |
+
+These need a logged-in `pnpm dev` session. An agent can't provide one, since logging in means entering credentials.
+
+## v1 audit (session 3): what was found and fixed
+
+Each fix below has a regression test in `tests/unit/filters.test.ts` ("audit
+regressions") or `settings.test.ts`. A mutation run confirmed the scanner tests
+fail without their fixes.
+
+- **Scanner**
+  - Turning off a block category or an element rule left the module hidden. Block-hidden elements are now tracked and re-decided.
+  - Switching a site off while slices were queued could still hide posts. The queue is now cleared, and `runSlice` checks `active`.
+  - "Not an ad" or "Hide this post" left duplicates of the same post undecided. The whole page is now re-decided.
+  - "Show" left the post in the popup counts.
+  - Fingerprints used the hostname, so twitter.com and x.com overrides didn't match. They now use the site key.
+  - Our own placeholder could be collected as a unit.
+  - SVG `<style>` text leaked into the unit text.
+  - New: `scanner.settled()`. The content script's `refresh` waits for it (capped at 1 s), so the popup reads finished counts.
+- **Rules:** element rules for alias hosts (`twitter.com##`, `google.nl##`) never applied. A selector with an unclosed `(`, `[`, quote or `/*` swallowed every rule joined after it, so `closed()` now rejects those.
+- **Settings:** one bad field reset the whole configuration; the schema now uses a per-field `.catch`. Opt-in hosts are now checked as plain hostnames, because they become match patterns. Words, rules and hosts are capped in size, and the options page refuses a backup over 5 MB.
+- **Background**
+  - Any sender could send any message. Content scripts are now limited to `getContext` and `setOverride`, with the hostname taken from `sender.url`.
+  - Enabling old.reddit.com didn't work: it has an adapter, so it was treated as a launch host but never got a script. Launch is now decided by `isLaunchHost`.
+  - Opt-in script sync calls could interleave; they are now serialised.
+  - Settings changes (such as an import) and permission changes now trigger a resync.
+  - The "Hide this post" menu now also covers opt-in sites.
+  - The `setAccessLevel` and install setup promises now catch their errors.
+- **Threads adapter:** an organic post that linked to the Meta Ad Library, or whose text started "Ads", was hidden. Labels now come from the header row only, and the ad marker is `facebook.com/ads/about`.
+- **Popup and options**
+  - A background `{error}` reply was reported as success; the shared `src/bg.ts` now throws it.
+  - The popup requested permission for the aliased key instead of the real host.
+  - Unhandled rejections are fixed.
+  - An import didn't refresh the filter drafts. Stored changes now update them unless there are unsaved edits.
+- **Content script:** after an extension update, the orphaned instance kept its hides and blocked the new one. A probe event now makes an orphan stand down, so the new instance takes over.
+
+Not fixed, noted:
+- happy-dom's `innerText` ignores `<br>` and block boundaries, unlike Chrome. Label tests use spans for this reason.
+- The observer keeps running on a site that is switched off. It's cheap, because `scanNow` returns early.
+- The popup e2e only renders the "unsupported" view. The running view's counts are covered through `getPageState`.
 
 ## Next
 
-Daniel's direction (session 2): add Instagram, Facebook, X and Threads where that is
-feasible, then at v1 do a FULL AUDIT (tests across the solution, systemic gap fixes).
-
-1. Daniel: re-check Google (All and Shopping tabs) and scroll smoothness in `pnpm dev`.
-2. New site adapters, one per session. Each needs its unit/label structure read from
-   the live DOM (a real capture into `fixtures/private/`), then a synthetic public
-   fixture and an e2e host. Expected difficulty: X and Threads use a plain-text
-   "Ad" label (precision risk); Facebook obfuscates "Sponsored" into split spans,
-   which is the hardest case; Instagram labels "Sponsored" under the author.
-3. Open from session 1: the LinkedIn `labelNodeLimit` header check; VISION §8/§9
-   decisions; whether to create the private GitHub repo so CI runs.
-
-Known, not fixed: the "Not an ad" fingerprint includes live counters, so an override
-can stop matching once a reaction count ticks. It belongs in the v1 audit.
-
-The folder is still `~/sift`; the package, manifest and all identifiers say Sifter.
+1. **Daniel:** in `pnpm dev`, log in and check Facebook, Threads and the suggested words on each site. Re-check Google.
+2. **Daniel:** decide the licence. `package.json` says MIT, but there's no LICENSE file.
+3. **Store assets** (`docs/STORE_LISTING.md`): screenshots from the synthetic fixtures, a 440×280 promo tile, and a hosted privacy policy URL (`PRIVACY.md` can be served from GitHub Pages once the repo is public, or from danieluusitalo.com).
+4. M2 (tier-1 model classification, BRIEF.md §9) has not started. `http://localhost/*` stays in `optional_host_permissions` for its local providers.
 
 ## Deviations from BRIEF.md (deliberate)
 
-- The adapter schema has `hosts[]` rather than `host` (Google spans 19 country
-  domains). It also adds `adSelectors` (structural markers), `labelNodeLimit` (label
-  nodes past the header don't count) and a `verified` provenance note.
-- The manifest adds `activeTab`, which shows no install warning; the popup uses it
-  to read the current tab's hostname. The Google domains are enumerated because
-  match patterns can't wildcard a TLD.
-- Storage is set to `TRUSTED_CONTEXTS`. Content scripts get settings and overrides
-  only by message, so rule 4 holds structurally, not just by convention.
-- "Show" sticks per element for the page session. "Not an ad" persists per
-  fingerprint.
-- "gepromoot" was added to the marker words.
+- **Adapter schema:**
+  - `hosts[]` rather than `host`, because Google spans 19 country domains
+  - adds `adSelectors`, `labelNodeLimit`, `adContainerSelector`, `blocks`, `suggested`, and a `verified` provenance note
+- **Manifest:** adds `activeTab` and `contextMenus`. Google domains are enumerated, because match patterns can't wildcard a TLD.
+- **Storage:** set to `TRUSTED_CONTEXTS`, and the background authorises each message by sender.
+- **Overrides:** "Show" sticks per element for the page session. "Not an ad" persists per fingerprint.
+- **Categories and filters:** the categories, muted words and element rules (`site##selector`) are an ad-blocker-style layer on top of the brief.
 
 ## Do not undo
 
-- `renderedWithin` in `src/extract.ts`: innerText returns full text for an element
-  that is itself `display:none`, so without this a hidden "Promoted" string hides an
-  organic post. The eval caught this as a real false hide.
-- `isAdClickUrl` matches `/aclk` only as a whole path segment on google.* hosts. A
-  substring match flagged any site's `/aclk-guide`.
-- The Google `unitSelector` avoids complex `:not()`, because happy-dom ignores it and the
-  evals mis-judge. Ad-only containers (`adContainerSelector`) are hidden whole, so
-  their "Sponsored" header goes with them. `[data-pla]` is deliberately not a marker.
-- The scanner decides from MutationRecord dirt, not by re-walking the page, and runs
-  in `requestIdleCallback` slices with reads before writes. Do not add `innerText` or
-  `getComputedStyle` calls outside `decide()`: they force layout. Run `pnpm bench:scroll`
-  after any scanner change.
+- **`renderedWithin` in `src/extract.ts`:** innerText returns the full text of an element that is itself `display:none`.
+- **`isAdClickUrl`:** matches `/aclk` only as a whole path segment on google.* hosts.
+- **The Google `unitSelector`:** avoids complex `:not()`, which happy-dom ignores.
+- **Scanner slicing:**
+  - the scanner decides from MutationRecord dirt and runs in idle slices, reads before writes
+  - no `innerText` or `getComputedStyle` outside `decide()`
+  - run `pnpm bench:scroll` after any scanner change
+- **`closed()` in `src/rules/filters.ts`:** Chrome auto-closes an unfinished selector on its own, but inside the joined block selector it swallows its neighbours.
+- **Background `authorize()`:** a content script's hostname comes from `sender.url`, never from the message.

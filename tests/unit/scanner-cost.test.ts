@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { adapterFor } from '../../src/adapters/index';
 import { HIDDEN_CLASS } from '../../src/content/hider';
 import { Scanner } from '../../src/content/scanner';
+import { defaultContext } from '../../src/messages';
 
 // Hard rule 7 as a deterministic check: the work a rescan does must scale with
 // what changed, not with how long the feed has grown. Wall-clock is too noisy for
@@ -27,7 +28,7 @@ describe('scanner cost scales with the change, not the page', () => {
       hostname: 'www.linkedin.com',
       baseUrl: 'https://www.linkedin.com/',
       adapter: adapterFor('www.linkedin.com'),
-      context: { siteKey: 'linkedin.com', enabled: true, pausedUntil: null, hideMode: 'collapse', overrides: {} },
+      context: defaultContext('linkedin.com'),
       persistOverride: () => {},
     });
     scanner.start();

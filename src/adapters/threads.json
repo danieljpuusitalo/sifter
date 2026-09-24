@@ -1,0 +1,10 @@
+{
+  "id": "threads",
+  "hosts": ["threads.com", "threads.net"],
+  "unitSelector": "[data-pressable-container]",
+  "labelSelectors": ["[data-pressable-container] > div:first-child span"],
+  "labelNodeLimit": 3,
+  "labelIgnoreSelector": "a",
+  "adSelectors": ["a[href*=\"facebook.com/ads/about\"]"],
+  "verified": "UNVERIFIED live (no logged-in session available). Posts are [data-pressable-container]; ads carry a 'Sponsored' span in the header row (the post's first child) and an 'About ads' link to facebook.com/ads/about. Labels are read from the header only, so a post whose text says 'Ads' is not an ad; the Ad Library (facebook.com/ads/library) is linked by organic posts too, so it is not a marker. Author names are links and are ignored as labels. Needs a manual check in pnpm dev."
+}

@@ -1,0 +1,51 @@
+<!doctype html>
+<!--
+  Synthetic Threads feed, built from known Threads markup (NOT checked against a
+  live session): posts are [data-pressable-container]; author names are links;
+  ads carry a "Sponsored" span in the header and link out through
+  facebook.com/ads. All names and text are invented.
+  data-gold marks the expected outcome on each unit root.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="sifter-host" content="www.threads.com" />
+    <title>Threads (fixture)</title>
+    <style>
+      body { font-family: system-ui, sans-serif; background: #fff; margin: 0; }
+      .col { max-width: 620px; margin: 0 auto; }
+      [data-pressable-container] { border-bottom: 1px solid #ddd; padding: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="col">
+      <div data-pressable-container="true" data-gold="none">
+        <div><a href="/@aino.v"><span>aino.v</span></a><span><time datetime="2026-09-24T08:00:00Z">2h</time></span></div>
+        <div><span>Hot take: the best part of autumn is the first cold morning.</span></div>
+      </div>
+      <div data-pressable-container="true" data-gold="sponsored">
+        <div><a href="/@northwindcloud"><span>northwindcloud</span></a><span>Sponsored</span></div>
+        <div><span>Autoscaling that actually scales down. Try it free.</span></div>
+        <a href="https://northwind.example/trial"><span>Learn more</span></a>
+      </div>
+      <!-- Account named "sponsored": its name is a link, so it is not a label. Must not hide. -->
+      <div data-pressable-container="true" data-gold="none">
+        <div><a href="/@sponsored"><span>sponsored</span></a><span><time datetime="2026-09-23T08:00:00Z">1d</time></span></div>
+        <div><span>Yes, that is really my username. No, nobody pays me.</span></div>
+      </div>
+      <div data-pressable-container="true" data-gold="sponsored">
+        <div><a href="/@fjordshoes"><span>fjordshoes</span></a></div>
+        <div><span>Waterproof trail runners, 30% off.</span></div>
+        <a href="https://l.facebook.com/l.php?u=https%3A%2F%2Fwww.facebook.com%2Fads%2Fabout"><span>Why am I seeing this?</span></a>
+        <a href="https://www.facebook.com/ads/about/?entry_product=threads"><span>About ads</span></a>
+      </div>
+      <!-- Organic post whose later text says "Ad": past the label limit. Must not hide. -->
+      <div data-pressable-container="true" data-gold="none">
+        <div><a href="/@lena.k"><span>lena.k</span></a><span><time datetime="2026-09-24T06:00:00Z">4h</time></span></div>
+        <div><span>Latin homework, word of the day:</span></div>
+        <div><span>more words here</span></div>
+        <div><span>Ad</span></div>
+      </div>
+    </div>
+  </body>
+</html>

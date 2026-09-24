@@ -1,0 +1,54 @@
+# Chrome Web Store listing: draft
+
+## Name
+Sifter: hide sponsored posts
+
+## Summary (132 characters max)
+Hides the sponsored posts your ad blocker misses on LinkedIn, Reddit, Google, X, Instagram, Facebook and Threads.
+
+## Category
+Productivity (alternative: Social & Communication)
+
+## Description
+
+Ad blockers stop ads served by ad networks. They can't stop the ones a site serves
+itself, as posts in your feed. Those carry the site's own label ("Sponsored",
+"Promoted", "Ad"), and that label is what Sifter reads.
+
+WHAT IT HIDES
+• Sponsored posts on LinkedIn, Reddit, X, Instagram, Facebook and Threads
+• Sponsored results and shopping ads on Google Search
+• Optionally, suggested posts from accounts you don't follow
+• Anything matching your own muted words or element rules
+
+YOU'RE IN CONTROL
+• Choose what to block, globally or per site, like an ad blocker's filter lists
+• Every hidden post leaves a one-line note: open it, or mark it "Not an ad"
+• Missed one? Right-click it and choose "Hide this post with Sifter"
+• Collapse, blur or hide completely
+• Pause for an hour, or turn any site off
+• Turn it on for other sites from the popup
+
+PRIVATE BY DESIGN
+• Runs entirely in your browser: no account, no server, no analytics
+• Makes no network requests of its own
+• Never removes anything from the page, so feeds and infinite scroll keep working
+
+## Single purpose (for review)
+Hide sponsored and promoted posts, and posts matching user-set filters, on the sites the user chooses.
+
+## Permission justifications (for review)
+- Host permissions (launch sites): read the page to find posts labelled as sponsored and hide them. Nothing is transmitted.
+- Optional host permissions (https://*/*): requested per site, only when the user chooses "Hide ads on this site" in the popup.
+- storage: user settings and exceptions, stored locally.
+- scripting: inject the content script into a site the user has just turned on.
+- activeTab: read the current tab's hostname so the popup can offer to turn Sifter on there.
+- contextMenus: the "Hide this post with Sifter" menu item.
+
+## Data use disclosures
+Collects no user data. Does not sell or transfer data. No remote code.
+
+## Assets still needed
+- 1280x800 screenshots (at least 1; ideally a before/after of a feed, the popup, the settings page). These must be made from synthetic fixtures, not a real account's feed.
+- 440x280 small promo tile
+- Privacy policy URL: host PRIVACY.md (e.g. GitHub Pages) before submitting

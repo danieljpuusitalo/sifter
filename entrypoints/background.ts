@@ -1,35 +1,115 @@
-import { browser } from 'wxt/browser';
+import { browser, type Browser } from 'wxt/browser';
 import { defineBackground } from 'wxt/utils/define-background';
-import { adapterFor } from '../src/adapters';
-import { isBgRequest, type BgRequest, type SiteContext } from '../src/messages';
+import { isBgRequest, type BgRequest, type SiteContext, type TabRequest } from '../src/messages';
+import { parseRules, selectorsFor } from '../src/rules/filters';
+import { isLaunchHost, LAUNCH_MATCHES, LAUNCH_SITES } from '../src/sites';
 import {
   isSiteEnabled,
   loadOverrides,
   loadSettings,
   setOverride,
+  siteCategories,
   siteKey,
   updateSettings,
 } from '../src/storage/settings';
 
 const OPT_IN_SCRIPT_ID = 'sifter-opt-in';
+const MENU_ID = 'sifter-hide-this';
+
+/** Content scripts may only read their own site's context and record overrides for it. */
+const CONTENT_SCRIPT_REQUESTS = new Set<BgRequest['type']>(['sifter:getContext', 'sifter:setOverride']);
 
 export default defineBackground(() => {
   // Hard rule 4: content scripts must never be able to read stored API keys.
   // Lock storage.local to trusted contexts; content scripts go through messages.
-  void browser.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
+  browser.storage.local
+    .setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' })
+    .catch((e: unknown) => console.warn('[sifter] could not lock storage to trusted contexts', e));
 
   browser.runtime.onInstalled.addListener(({ reason }) => {
-    if (reason === 'install') void browser.runtime.openOptionsPage();
-    void syncOptInScripts();
+    if (reason === 'install') browser.runtime.openOptionsPage().catch(() => undefined);
+    // Menus persist across restarts; recreate on install/update only.
+    browser.contextMenus
+      .removeAll()
+      .then(() => {
+        browser.contextMenus.create({
+          id: MENU_ID,
+          title: 'Hide this post with Sifter',
+          contexts: ['page', 'link', 'image', 'video', 'selection'],
+          documentUrlPatterns: LAUNCH_MATCHES,
+        });
+      })
+      .then(() => syncOptInScripts())
+      .catch((e: unknown) => console.warn('[sifter] install setup failed', e));
   });
   browser.runtime.onStartup.addListener(() => void syncOptInScripts());
+  // Granting or revoking a site in chrome://extensions changes where the script may run.
+  browser.permissions.onAdded.addListener(() => void syncOptInScripts());
+  browser.permissions.onRemoved.addListener(() => void syncOptInScripts());
 
-  browser.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
+  browser.contextMenus.onClicked.addListener((info, tab) => {
+    if (info.menuItemId !== MENU_ID || tab?.id === undefined) return;
+    const msg: TabRequest = { type: 'sifter:hideTarget' };
+    void browser.tabs.sendMessage(tab.id, msg, { frameId: info.frameId ?? 0 }).catch(() => undefined);
+  });
+
+  // Settings changed anywhere (options page, popup, an imported backup, another
+  // tab's "Not an ad"): re-register opt-in scripts, then tell open pages to
+  // re-read their context, so a change applies without a reload.
+  let broadcastTimer: ReturnType<typeof setTimeout> | undefined;
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !('settings' in changes || 'overrides' in changes)) return;
+    const settingsChanged = 'settings' in changes;
+    clearTimeout(broadcastTimer);
+    broadcastTimer = setTimeout(() => {
+      void (settingsChanged ? syncOptInScripts() : Promise.resolve()).then(broadcastRefresh);
+    }, 150);
+  });
+
+  browser.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
     if (!isBgRequest(msg)) return false;
-    handle(msg).then(sendResponse, (err: unknown) => sendResponse({ error: String(err) }));
+    const checked = authorize(msg, sender);
+    if (!checked) {
+      sendResponse({ error: 'not allowed' });
+      return false;
+    }
+    handle(checked).then(sendResponse, (err: unknown) => sendResponse({ error: String(err) }));
     return true; // async response
   });
 });
+
+/**
+ * Extension pages may send anything. A content script runs inside a site's page,
+ * which could be compromised, so it may only ask about its own site: the hostname
+ * comes from the sender's URL, never from the message.
+ */
+function authorize(msg: BgRequest, sender: Browser.runtime.MessageSender): BgRequest | null {
+  if (sender.id !== browser.runtime.id) return null;
+  if (sender.url?.startsWith(browser.runtime.getURL('/'))) return msg;
+  if (!CONTENT_SCRIPT_REQUESTS.has(msg.type) || !sender.url) return null;
+  let hostname: string;
+  try {
+    hostname = new URL(sender.url).hostname;
+  } catch {
+    return null;
+  }
+  return { ...msg, hostname } as BgRequest;
+}
+
+async function broadcastRefresh(): Promise<void> {
+  const tabs = await browser.tabs.query({});
+  const msg: TabRequest = { type: 'sifter:refresh' };
+  // Tabs without the content script reject; that's expected.
+  await Promise.all(tabs.map((t) => (t.id === undefined ? null : browser.tabs.sendMessage(t.id, msg).catch(() => undefined))));
+}
+
+/**
+ * A host the manifest injects into, or a launch site's key (the options page
+ * names sites by key). Anything else, old.reddit.com included, needs opting in.
+ */
+function isLaunch(hostname: string): boolean {
+  return isLaunchHost(hostname) || LAUNCH_SITES.some((s) => s.key === hostname);
+}
 
 async function handle(msg: BgRequest): Promise<unknown> {
   switch (msg.type) {
@@ -40,14 +120,27 @@ async function handle(msg: BgRequest): Promise<unknown> {
       return { ok: true };
     case 'sifter:setSiteEnabled': {
       const key = siteKey(msg.hostname);
-      const isLaunch = adapterFor(msg.hostname) !== null;
+      // Opt-in hosts become match patterns, so they keep the real hostname (minus
+      // "www."), not the aliased key.
+      const host = msg.hostname.toLowerCase().replace(/^www\./, '');
+      const optIn = !isLaunch(msg.hostname) && msg.enabled;
       await updateSettings((s) => ({
         ...s,
-        sites: { ...s.sites, [key]: { enabled: msg.enabled } },
-        optInHosts:
-          isLaunch || !msg.enabled || s.optInHosts.includes(key) ? s.optInHosts : [...s.optInHosts, key],
+        sites: { ...s.sites, [key]: { ...s.sites[key], enabled: msg.enabled } },
+        optInHosts: !optIn || s.optInHosts.includes(host) ? s.optInHosts : [...s.optInHosts, host],
       }));
       await syncOptInScripts();
+      return getContext(msg.hostname);
+    }
+    case 'sifter:setSiteCategory': {
+      const key = siteKey(msg.hostname);
+      await updateSettings((s) => {
+        const cats = { ...(s.sites[key]?.categories ?? {}) };
+        // Setting a site back to the global value drops the override, so a later global change applies.
+        if (msg.value === null || msg.value === s.categories[msg.category]) delete cats[msg.category];
+        else cats[msg.category] = msg.value;
+        return { ...s, sites: { ...s.sites, [key]: { ...s.sites[key], categories: cats } } };
+      });
       return getContext(msg.hostname);
     }
     case 'sifter:pause':
@@ -62,31 +155,45 @@ async function handle(msg: BgRequest): Promise<unknown> {
 async function getContext(hostname: string): Promise<SiteContext> {
   const key = siteKey(hostname);
   const [settings, overrides] = await Promise.all([loadSettings(), loadOverrides()]);
+  // No DOM in the service worker, so selectors are checked in the page (scanner) instead.
+  const { rules } = parseRules(settings.rulesText, () => true);
+  const optedIn = settings.optInHosts.includes(hostname.toLowerCase().replace(/^www\./, ''));
   return {
     siteKey: key,
-    enabled: isSiteEnabled(settings, key, adapterFor(hostname) !== null),
+    enabled: isSiteEnabled(settings, key, isLaunch(hostname) || optedIn),
     pausedUntil: settings.pausedUntil,
     hideMode: settings.hideMode,
     overrides: overrides[key] ?? {},
+    categories: siteCategories(settings, key),
+    customSelectors: selectorsFor(rules, key),
+    mutedWords: settings.mutedWords,
   };
 }
 
 /**
  * Sites the user switched on from the popup get the content script through
  * chrome.scripting.registerContentScripts (BRIEF.md §5 "Permissions"). Rebuilt
- * from settings each time so storage stays the single source of truth.
+ * from settings each time so storage stays the single source of truth. Calls are
+ * chained: two overlapping syncs would race unregister against register.
  */
-async function syncOptInScripts(): Promise<void> {
+let syncChain: Promise<void> = Promise.resolve();
+function syncOptInScripts(): Promise<void> {
+  syncChain = syncChain.then(doSync).catch((e: unknown) => console.warn('[sifter] opt-in sync failed', e));
+  return syncChain;
+}
+
+async function doSync(): Promise<void> {
   const settings = await loadSettings();
-  const hosts = settings.optInHosts.filter((h) => settings.sites[h]?.enabled !== false);
+  const hosts = settings.optInHosts.filter((h) => settings.sites[siteKey(h)]?.enabled !== false);
   const existing = await browser.scripting.getRegisteredContentScripts({ ids: [OPT_IN_SCRIPT_ID] });
   if (existing.length > 0) await browser.scripting.unregisterContentScripts({ ids: [OPT_IN_SCRIPT_ID] });
-  if (hosts.length === 0) return;
   const granted = await browser.permissions.getAll();
   const origins = new Set(granted.origins ?? []);
   const matches = hosts
     .flatMap((h) => [`https://${h}/*`, `https://www.${h}/*`])
     .filter((m) => origins.has(m) || origins.has('https://*/*'));
+  // "Hide this post" belongs wherever the script runs.
+  await browser.contextMenus.update(MENU_ID, { documentUrlPatterns: [...LAUNCH_MATCHES, ...matches] }).catch(() => undefined);
   if (matches.length === 0) return;
   await browser.scripting.registerContentScripts([
     { id: OPT_IN_SCRIPT_ID, js: ['content-scripts/content.js'], matches, runAt: 'document_idle', persistAcrossSessions: true },

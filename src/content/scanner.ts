@@ -3,8 +3,9 @@ import type { Adapter } from '../adapters/schema';
 import { detectMarker, unitText } from '../extract';
 import { fingerprint } from '../fingerprint';
 import type { PageState, ScanPerf, SiteContext } from '../messages';
+import { mutedWordHit, mutedWordPattern } from '../rules/filters';
 import { decideTier0 } from '../rules/tier0';
-import type { HideCategory, OverrideAction } from '../types';
+import type { BlockCategory, HideCategory, OverrideAction } from '../types';
 import { Hider, PLACEHOLDER_ATTR } from './hider';
 
 // Content-script pipeline: extract -> fingerprint -> tier 0 -> apply
@@ -44,7 +45,9 @@ export type ScannerDeps = {
 };
 
 type Seen = { sig: string; fp: string };
-type Decision = { unit: Element; fp: string; hide: HideCategory | null };
+/** A whole page module hidden by rule: an adapter block, or one of the user's element rules. */
+type Block = { selector: string; category: BlockCategory };
+type Decision = { unit: Element; fp: string; hide: HideCategory | null; block?: boolean };
 
 export class Scanner {
   private hider: Hider;
@@ -57,6 +60,9 @@ export class Scanner {
   private pending: Element[] = [];
   private queued = new Set<Element>();
   private running = false;
+  private settleWaiters: (() => void)[] = [];
+  /** Elements hidden because a block rule matched them, which may not be feed units at all. */
+  private blockHidden = new WeakMap<Element, string>();
   // What changed since the last scan. `touched` nodes changed in place, so the
   // unit around them is dirty; `added` subtrees may also hold whole new units.
   private touched = new Set<Node>();
@@ -64,6 +70,10 @@ export class Scanner {
   private needFull = true;
   private perf: Omit<ScanPerf, 'pending'> = { scans: 0, fullScans: 0, unitsExamined: 0, unitsDecided: 0, slices: 0, totalMs: 0, maxSliceMs: 0, slicesOverBudget: 0 };
   private ctx: SiteContext;
+  /** Blocks in force for the current context, and one joined selector to find them with. */
+  private blocks: Block[] = [];
+  private blockSelector: string | null = null;
+  private muted: RegExp | null = null;
   private readonly now: () => number;
   private readonly schedule: (fn: () => void, ms: number) => unknown;
 
@@ -75,6 +85,28 @@ export class Scanner {
       onShow: (unit) => this.userShow(unit),
       onNotAd: (unit) => this.userNotAd(unit),
     });
+    this.compileContext();
+  }
+
+  /** Derive what the context implies once, not per unit. */
+  private compileContext(): void {
+    const { categories, customSelectors, mutedWords } = this.ctx;
+    const blocks: Block[] = [];
+    for (const b of this.deps.adapter?.blocks ?? []) if (categories[b.category]) blocks.push(b);
+    if (categories.custom) {
+      for (const selector of customSelectors) {
+        // The options page validates rules, but storage is data: re-check before use (hard rule 2).
+        try {
+          this.deps.doc.querySelector(selector);
+          blocks.push({ selector, category: 'custom' });
+        } catch {
+          /* invalid selector: skip it */
+        }
+      }
+    }
+    this.blocks = blocks;
+    this.blockSelector = blocks.length ? blocks.map((b) => b.selector).join(', ') : null;
+    this.muted = categories.custom ? mutedWordPattern(mutedWords) : null;
   }
 
   get active(): boolean {
@@ -98,14 +130,61 @@ export class Scanner {
   /** New settings from the popup or options: re-decide everything on the page. */
   applyContext(ctx: SiteContext): void {
     this.ctx = ctx;
+    this.compileContext();
     this.hider.setMode(ctx.hideMode);
     this.seen = new WeakMap();
     if (!this.active) {
+      // Drop queued work too: a slice already scheduled must not hide anything now.
+      this.pending = [];
+      this.queued.clear();
+      this.hiddenFps.clear();
       this.hider.unhideAll();
       this.markFull();
       return;
     }
+    // Hidden elements a full scan may no longer collect (a block whose category or
+    // rule was just switched off) still need a fresh decision, to be shown again.
+    for (const u of this.hider.hiddenUnits()) this.enqueue(u);
     this.scanNow();
+  }
+
+  /** Resolves once queued work is done, so a caller reading state() sees the result. */
+  settled(): Promise<void> {
+    if (!this.running && this.debounceTimer === null) return Promise.resolve();
+    return new Promise((resolve) => this.settleWaiters.push(resolve));
+  }
+
+  private enqueue(u: Element): void {
+    if (this.queued.has(u)) return;
+    this.queued.add(u);
+    this.pending.push(u);
+  }
+
+  /** A user override changed: re-decide the whole page, so copies of the same post follow it. */
+  private redecideAll(): void {
+    this.seen = new WeakMap();
+    for (const u of this.hider.hiddenUnits()) this.enqueue(u);
+    this.scanNow();
+  }
+
+  /**
+   * The context menu's "Hide this post": the nearest unit around the clicked
+   * element is hidden now and on every later visit. Returns false when the click
+   * wasn't inside anything Sifter knows as a post.
+   */
+  hideContaining(target: Element | null): boolean {
+    for (let el = target; el; el = el.parentElement) {
+      const seen = this.seen.get(el);
+      if (!seen) continue;
+      this.ctx = { ...this.ctx, overrides: { ...this.ctx.overrides, [seen.fp]: 'hide' } };
+      this.deps.persistOverride(seen.fp, 'hide');
+      this.userShown.delete(el);
+      this.hiddenFps.set(seen.fp, 'manual');
+      this.hider.hide(el, 'manual');
+      this.redecideAll();
+      return true;
+    }
+    return false;
   }
 
   showAll(): void {
@@ -122,6 +201,8 @@ export class Scanner {
       adapter: this.deps.adapter?.id ?? 'generic',
       units: this.unitsSeen.size,
       counts,
+      categories: this.ctx.categories,
+      canSuggest: !!this.deps.adapter?.suggested || !!this.deps.adapter?.blocks.some((b) => b.category === 'suggested'),
       hiddenNow: this.hider.hiddenUnits().length,
       perf: { ...this.perf, pending: this.pending.length },
     };
@@ -177,15 +258,23 @@ export class Scanner {
     this.perf.scans++;
     if (full) this.markFull();
     for (const u of this.collectUnits()) {
-      if (this.queued.has(u)) continue;
-      this.queued.add(u);
-      this.pending.push(u);
+      // Our own placeholder can match a unit selector (X's cells are bare divs).
+      if (!u.hasAttribute(PLACEHOLDER_ATTR)) this.enqueue(u);
     }
     this.perf.totalMs += this.now() - start;
     if (!this.running && this.pending.length > 0) {
       this.running = true;
       this.idle((budget) => this.runSlice(budget));
+    } else if (!this.running) {
+      this.settle();
     }
+  }
+
+  private settle(): void {
+    if (this.debounceTimer !== null) return;
+    const waiters = this.settleWaiters;
+    this.settleWaiters = [];
+    for (const w of waiters) w();
   }
 
   private collectUnits(): Element[] {
@@ -197,15 +286,30 @@ export class Scanner {
     const root = this.deps.doc.body;
     if (!root) return [];
     const { adapter } = this.deps;
-    if (!adapter) return this.collectGeneric(root, full, touched, added);
+    const blocks = this.blockSelector ? collectBlocks(root, this.blockSelector, full, touched, added) : [];
+    if (!adapter) return [...this.collectGeneric(root, full, touched, added), ...blocks];
     try {
       const units = full
         ? innermost(root.querySelectorAll(adapter.unitSelector))
         : dirtyUnits(adapter.unitSelector, touched, added);
-      return adapter.adContainerSelector ? collapseToContainers(units, adapter.adContainerSelector) : [...units];
+      const out = adapter.adContainerSelector ? collapseToContainers(units, adapter.adContainerSelector) : [...units];
+      return blocks.length ? [...out, ...blocks] : out;
     } catch {
-      return [];
+      return blocks;
     }
+  }
+
+  /** The block rule an element was collected for, if any. */
+  private blockOf(el: Element): Block | null {
+    if (!this.blockSelector) return null;
+    for (const b of this.blocks) {
+      try {
+        if (el.matches(b.selector)) return b;
+      } catch {
+        /* skip */
+      }
+    }
+    return null;
   }
 
   /** No adapter: units come from page structure, so re-derive them, then keep only new or changed ones. */
@@ -251,6 +355,13 @@ export class Scanner {
    * read after a hide lay the page out again.
    */
   private runSlice(budget: number): void {
+    if (!this.active) {
+      this.pending = [];
+      this.queued.clear();
+      this.running = false;
+      this.settle();
+      return;
+    }
     const start = this.now();
     const decisions: Decision[] = [];
     let i = 0;
@@ -275,6 +386,7 @@ export class Scanner {
       this.idle((b) => this.runSlice(b));
     } else {
       this.running = false;
+      this.settle();
     }
   }
 
@@ -282,7 +394,9 @@ export class Scanner {
   private decide(unit: Element): Decision | null {
     this.perf.unitsExamined++;
     if (!unit.isConnected) return null;
-    const { adapter, hostname, baseUrl } = this.deps;
+    const { adapter, baseUrl } = this.deps;
+    // Fingerprints use the site key, so twitter.com and x.com share one identity.
+    const site = this.ctx.siteKey;
     // Cheap change signal (no layout): sites recycle feed nodes for new content.
     const raw = unit.textContent ?? '';
     const sig = `${raw.length}:${raw.slice(0, 80)}:${raw.slice(-40)}`;
@@ -292,17 +406,43 @@ export class Scanner {
     // (like counts tick). A recycled node may then miss an ad: rule 6's trade.
 
     this.perf.unitsDecided++;
-    const marker = detectMarker(unit, adapter, baseUrl);
+    const { categories } = this.ctx;
+    const block = this.blockOf(unit);
+    if (block) {
+      // One identity per rule: "Always show" on a block keeps all of that rule's modules.
+      const fp = fingerprint(site, `block:${block.selector}`);
+      this.seen.set(unit, { sig, fp });
+      if (this.userShown.has(unit)) return null;
+      const cat = block.category;
+      const decision = decideTier0({
+        override: this.ctx.overrides[fp],
+        marker: cat === 'custom' ? null : { kind: 'structural', category: cat, detail: block.selector },
+        custom: cat === 'custom' ? block.selector : null,
+        categories,
+      });
+      if (decision.action === 'hide') return { unit, fp, hide: decision.category, block: true };
+      return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;
+    }
+    if (this.blockHidden.has(unit) && !this.isUnit(unit)) {
+      // Its rule or category was switched off, and it isn't a post in its own right.
+      return { unit, fp: this.blockHidden.get(unit) as string, hide: null };
+    }
+    const marker = detectMarker(unit, adapter, baseUrl, { suggested: categories.suggested });
     const text = unitText(unit, adapter);
     // Skeleton units have no text yet; come back when they fill in, unless a
     // structural marker already settles it.
     if (!text && !marker) return null;
-    const fp = fingerprint(hostname, text || structuralKey(unit));
+    const fp = fingerprint(site, text || structuralKey(unit));
     this.seen.set(unit, { sig, fp });
     this.unitsSeen.add(fp);
 
     if (this.userShown.has(unit)) return null;
-    const decision = decideTier0({ override: this.ctx.overrides[fp], marker });
+    const decision = decideTier0({
+      override: this.ctx.overrides[fp],
+      marker,
+      custom: mutedWordHit(text, this.muted),
+      categories,
+    });
     if (decision.action === 'hide') return { unit, fp, hide: decision.category };
     return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;
   }
@@ -313,13 +453,30 @@ export class Scanner {
     if (d.hide) {
       this.hider.hide(d.unit, d.hide);
       this.hiddenFps.set(d.fp, d.hide);
+      if (d.block) this.blockHidden.set(d.unit, d.fp);
+      else this.blockHidden.delete(d.unit);
     } else {
       this.hider.unhide(d.unit);
+      this.hiddenFps.delete(d.fp);
+      this.blockHidden.delete(d.unit);
+    }
+  }
+
+  /** Whether the adapter (or the generic finder) would collect this element as a post. */
+  private isUnit(el: Element): boolean {
+    const { adapter } = this.deps;
+    if (!adapter) return findGenericUnits(this.deps.doc.body ?? el).includes(el);
+    try {
+      return el.matches(adapter.unitSelector) || (!!adapter.adContainerSelector && el.matches(adapter.adContainerSelector));
+    } catch {
+      return false;
     }
   }
 
   private userShow(unit: Element): void {
     this.userShown.add(unit);
+    const fp = this.seen.get(unit)?.fp;
+    if (fp) this.hiddenFps.delete(fp);
     this.hider.unhide(unit);
   }
 
@@ -331,6 +488,7 @@ export class Scanner {
       this.deps.persistOverride(fp, 'not-ad');
     }
     this.userShow(unit);
+    if (fp) this.redecideAll();
   }
 }
 
@@ -368,6 +526,29 @@ function dirtyUnits(selector: string, touched: Set<Node>, added: Set<Element>): 
     for (let i = 0; i < inner.length; i++) consider(inner[i]);
   }
   return out;
+}
+
+/** Page modules matched by a block selector, found the same dirty-only way as units. */
+function collectBlocks(root: Element, selector: string, full: boolean, touched: Set<Node>, added: Set<Element>): Element[] {
+  try {
+    if (full) return Array.from(root.querySelectorAll(selector));
+    const out = new Set<Element>();
+    for (const n of touched) {
+      const el = n.nodeType === 1 ? (n as Element) : n.parentElement;
+      const b = el?.isConnected ? el.closest(selector) : null;
+      if (b) out.add(b);
+    }
+    for (const el of added) {
+      if (!el.isConnected) continue;
+      const b = el.closest(selector);
+      if (b) out.add(b);
+      const inner = el.querySelectorAll(selector);
+      for (let i = 0; i < inner.length; i++) out.add(inner[i]!);
+    }
+    return [...out];
+  } catch {
+    return [];
+  }
 }
 
 /**

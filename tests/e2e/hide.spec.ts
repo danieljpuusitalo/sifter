@@ -9,6 +9,7 @@ import { test as base, chromium, expect, type BrowserContext, type Page } from '
 // The service worker's `chrome` global, as far as these tests use it (the code runs
 // inside the extension via sw.evaluate, not in Node).
 declare const chrome: {
+  storage: { local: { get(k: string): Promise<Record<string, unknown>>; set(v: Record<string, unknown>): Promise<void> } };
   tabs: {
     query(q: { url: string }): Promise<Array<{ id?: number }>>;
     sendMessage(tabId: number, message: unknown): Promise<unknown>;
@@ -20,6 +21,10 @@ const FIXTURES: Record<string, string> = {
   'www.linkedin.com': 'linkedin-feed.html',
   'www.google.com': 'google-search.html',
   'www.reddit.com': 'reddit-home.html',
+  'x.com': 'x-home.html',
+  'www.instagram.com': 'instagram-feed.html',
+  'www.facebook.com': 'facebook-feed.html',
+  'www.threads.com': 'threads-feed.html',
 };
 
 const test = base.extend<{ context: BrowserContext; page: Page }>({
@@ -54,7 +59,7 @@ const card = (page: Page, key: string) => page.locator(`[componentkey^="update-c
 const placeholderFor = (page: Page, key: string) =>
   page.locator(`[data-sifter-placeholder]:has(+ [componentkey^="update-card-focus${key}"])`);
 
-test('hides sponsored units and leaves organic ones on all three sites', async ({ page }) => {
+test('hides sponsored units and leaves organic ones on every launch site', async ({ page }) => {
   for (const [host, file] of Object.entries(FIXTURES)) {
     await page.goto(`https://${host}/`);
     await expect(page.locator('.sifter-hidden').first(), file).toBeAttached();
@@ -98,12 +103,16 @@ test('popup renders, and the page reports counts to it', async ({ context, page 
   await expect(card(page, '1002')).toBeHidden();
 
   // The message the popup sends to the active tab, sent from the service worker.
+  // Decisions land in idle slices, so poll until the page has converged.
   const [sw] = context.serviceWorkers();
-  const state = await sw!.evaluate(async () => {
-    const tabs = await chrome.tabs.query({ url: 'https://www.linkedin.com/*' });
-    return chrome.tabs.sendMessage(tabs[0]!.id!, { type: 'sifter:getPageState' });
-  });
-  expect(state).toMatchObject({ siteKey: 'linkedin.com', enabled: true, adapter: 'linkedin', counts: { sponsored: 3 }, hiddenNow: 3 });
+  const pageState = () =>
+    sw!.evaluate(async () => {
+      const tabs = await chrome.tabs.query({ url: 'https://www.linkedin.com/*' });
+      return chrome.tabs.sendMessage(tabs[0]!.id!, { type: 'sifter:getPageState' });
+    });
+  await expect
+    .poll(pageState, { timeout: 5000 })
+    .toMatchObject({ siteKey: 'linkedin.com', enabled: true, adapter: 'linkedin', counts: { sponsored: 3 }, hiddenNow: 3 });
 
   const id = new URL(sw!.url()).host;
   const popup = await context.newPage();
@@ -124,4 +133,85 @@ test('units added by infinite scroll are hidden too', async ({ page }) => {
   });
   await expect(card(page, '3001')).toBeHidden();
   await expect(card(page, '3002')).toBeVisible();
+});
+
+/** Change stored settings from the service worker, as the options page would. */
+async function patchSettings(context: BrowserContext, patch: Record<string, unknown>) {
+  const [sw] = context.serviceWorkers();
+  await sw!.evaluate(async (p) => {
+    const got = await chrome.storage.local.get('settings');
+    await chrome.storage.local.set({ settings: { ...((got.settings as object) ?? {}), ...p } });
+  }, patch);
+}
+
+test('turning on "suggested" in settings hides suggested units in open tabs', async ({ context, page }) => {
+  await page.goto('https://www.linkedin.com/');
+  await expect(card(page, '1002')).toBeHidden();
+  await expect(card(page, '1009')).toBeVisible(); // suggested is off by default
+  await patchSettings(context, { categories: { sponsored: true, suggested: true, custom: true } });
+  await expect(card(page, '1009')).toBeHidden();
+  await expect(placeholderFor(page, '1009')).toContainText('Hidden suggestion');
+  await expect(card(page, '1010')).toBeVisible(); // "suggested" in the body is not a label
+});
+
+test('muted words and element rules hide as "custom"', async ({ context, page }) => {
+  await page.goto('https://www.linkedin.com/');
+  await expect(card(page, '1002')).toBeHidden();
+  await patchSettings(context, { mutedWords: ['sourdough', 'interviews'], rulesText: 'linkedin.com##[componentkey^="update-card-focus1005"]' });
+  await expect(card(page, '1009')).toBeHidden(); // "user interviews"
+  await expect(card(page, '1005')).toBeHidden(); // element rule
+  await expect(card(page, '1001')).toBeVisible();
+});
+
+test('"Hide this post" from the context menu hides the unit and remembers it', async ({ context, page }) => {
+  await page.goto('https://www.linkedin.com/');
+  await expect(card(page, '1002')).toBeHidden();
+  await card(page, '1001').locator('span').first().dispatchEvent('contextmenu');
+  const [sw] = context.serviceWorkers();
+  const res = await sw!.evaluate(async () => {
+    const tabs = await chrome.tabs.query({ url: 'https://www.linkedin.com/*' });
+    return chrome.tabs.sendMessage(tabs[0]!.id!, { type: 'sifter:hideTarget' });
+  });
+  expect(res).toEqual({ ok: true });
+  await expect(card(page, '1001')).toBeHidden();
+  // A settings change re-decides every unit, the hidden ones included: the stored hide must still match.
+  await patchSettings(context, { hideMode: 'collapse', mutedWords: ['zzz-unused'] });
+  await page.waitForTimeout(600);
+  await expect(card(page, '1001')).toBeHidden();
+  await page.reload();
+  await expect(card(page, '1002')).toBeHidden();
+  await expect(card(page, '1001')).toBeHidden();
+});
+
+test('options page: global category, per-site override and rule validation reach open tabs', async ({ context, page }) => {
+  await page.goto('https://www.linkedin.com/');
+  await expect(card(page, '1002')).toBeHidden();
+  await expect(card(page, '1009')).toBeVisible();
+
+  const id = new URL(context.serviceWorkers()[0]!.url()).host;
+  const options = await context.newPage();
+  await options.goto(`chrome-extension://${id}/options.html`);
+  await expect(options.getByRole('row')).toHaveCount(8); // header + 7 launch sites
+
+  await options.getByRole('checkbox', { name: /Suggested posts/ }).check();
+  await expect(card(page, '1009')).toBeHidden();
+
+  // A site's own setting beats the global one.
+  await options.getByRole('combobox', { name: 'Suggested posts on LinkedIn' }).selectOption('off');
+  await expect(card(page, '1009')).toBeVisible();
+  await expect(card(page, '1002')).toBeHidden();
+
+  // A bad rule is reported and skipped; the good one still applies.
+  await options.getByRole('textbox', { name: /Element rules/ }).fill('linkedin.com##[componentkey^="update-card-focus1005"]\nlinkedin.com##div[[');
+  await expect(options.getByText('Line 2:')).toBeVisible();
+  await options.getByRole('button', { name: 'Save filters' }).click();
+  await expect(options.getByRole('status')).toContainText('1 rule');
+  await expect(card(page, '1005')).toBeHidden();
+});
+
+test('switching a site off shows everything on it', async ({ context, page }) => {
+  await page.goto('https://x.com/');
+  await expect(page.locator('.sifter-hidden')).toHaveCount(2);
+  await patchSettings(context, { sites: { 'x.com': { enabled: false } } });
+  await expect(page.locator('.sifter-hidden')).toHaveCount(0);
 });

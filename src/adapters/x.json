@@ -1,0 +1,10 @@
+{
+  "id": "x",
+  "hosts": ["x.com", "twitter.com"],
+  "feedRootSelector": "[data-testid=\"primaryColumn\"]",
+  "unitSelector": "[data-testid=\"cellInnerDiv\"] > div",
+  "labelSelectors": [],
+  "adSelectors": ["[data-testid=\"placementTracking\"] > article[data-testid=\"tweet\"]"],
+  "blocks": [{ "selector": "aside[aria-label=\"Who to follow\"]", "category": "suggested" }],
+  "verified": "2026-09-24 live DOM, home timeline: a promoted tweet is the only article whose direct parent is [data-testid=placementTracking]. Organic tweets with video also contain a placementTracking node, but inside the article, never as its parent. The visible 'Ad' text is not used. Units are the cell's child, not the virtualised cell itself, so X's list keeps its measured positions."
+}

@@ -1,0 +1,63 @@
+<!doctype html>
+<!--
+  Synthetic Facebook news feed, built from known Facebook markup (NOT checked
+  against a live session): posts are [aria-posinset] inside [role=feed];
+  sponsored posts link through attributionsrc privacy_sandbox or /ads/about, and
+  the visible "Sponsored" is scrambled into letter spans while an aria-labelledby
+  target holds the clean word. All names and text are invented.
+  data-gold marks the expected outcome on each unit root.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="sifter-host" content="www.facebook.com" />
+    <title>Facebook (fixture)</title>
+    <style>
+      body { font-family: system-ui, sans-serif; background: #f0f2f5; margin: 0; }
+      [role='feed'] { max-width: 590px; margin: 0 auto; }
+      [aria-posinset] { background: #fff; border-radius: 8px; margin: 12px 0; padding: 12px; }
+      .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+      .decoy { display: none; }
+    </style>
+  </head>
+  <body>
+    <span id="lbl-sp-1" class="sr">Sponsored</span>
+    <span id="lbl-time-1" class="sr">3 hours ago</span>
+    <div role="main">
+      <div role="feed">
+        <div aria-posinset="1" aria-setsize="-1" data-gold="none">
+          <div data-ad-rendering-role="profile_name"><h4><a href="/aino.v"><span>Aino Virtanen</span></a></h4></div>
+          <div><a aria-labelledby="lbl-time-1" href="/aino.v/posts/1"><span>3h</span></a></div>
+          <div data-ad-preview="message"><span>Back from the cabin. No signal for five days and I didn't miss it once.</span></div>
+        </div>
+        <!-- Sponsored, scrambled label: detected through aria-labelledby. -->
+        <div aria-posinset="2" aria-setsize="-1" data-gold="sponsored">
+          <div data-ad-rendering-role="profile_name"><h4><a href="/northwindcloud"><span>Northwind Cloud</span></a></h4></div>
+          <div><a aria-labelledby="lbl-sp-1" href="#"><span>S</span><span class="decoy">x</span><span>p</span><span>o</span><span>n</span><span>s</span><span>o</span><span>r</span><span>e</span><span>d</span></a></div>
+          <div data-ad-preview="message"><span>Autoscaling that actually scales down. Try it free.</span></div>
+        </div>
+        <!-- Sponsored with a privacy-sandbox attribution link. -->
+        <div aria-posinset="3" aria-setsize="-1" data-gold="sponsored">
+          <div data-ad-rendering-role="profile_name"><h4><a href="/fjordshoes"><span>Fjord Shoes</span></a></h4></div>
+          <div data-ad-preview="message"><span>Waterproof trail runners, 30% off.</span></div>
+          <a attributionsrc="/privacy_sandbox/comet/register/source/?id=synthetic" href="https://fjordshoes.example/"><span>Shop now</span></a>
+        </div>
+        <!-- Organic post that says "Sponsored" in the body: must not hide. -->
+        <div aria-posinset="4" aria-setsize="-1" data-gold="none">
+          <div data-ad-rendering-role="profile_name"><h4><a href="/jonas.b"><span>Jonas Berg</span></a></h4></div>
+          <div data-ad-preview="message"><span>Sponsored</span><br /><span>...is what I told my kid I'd be for her marathon. 42 km of cheering.</span></div>
+        </div>
+        <!-- Suggested page post: a Follow button beside the name. Hidden only with "suggested" on. -->
+        <div aria-posinset="5" aria-setsize="-1" data-gold="suggested">
+          <div data-ad-rendering-role="profile_name"><h4><a href="/fjordtrails"><span>Fjord Trails</span></a> · <div role="button" tabindex="0"><span>Follow</span></div></h4></div>
+          <div data-ad-preview="message"><span>Five hikes you can do before the snow.</span></div>
+        </div>
+        <!-- Organic post whose body says "Follow": must not hide even with suggested on. -->
+        <div aria-posinset="6" aria-setsize="-1" data-gold="none">
+          <div data-ad-rendering-role="profile_name"><h4><a href="/lena.k"><span>Lena Kask</span></a></h4></div>
+          <div data-ad-preview="message"><span>Follow</span><br /><span>the river path and you'll find the best cafe in town.</span></div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

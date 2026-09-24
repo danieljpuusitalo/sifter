@@ -23,7 +23,17 @@ function cyrb53(str: string, seed = 0): number {
   return 4294967296 * (2097151 & h2) + (h1 >>> 0);
 }
 
+/**
+ * Feeds rewrite numbers in place all the time: reaction counts, "3m" ago, view
+ * counts. A fingerprint that includes them stops matching the user's "Not an ad"
+ * the moment a like arrives, so every digit run (with its separators and a short
+ * unit such as K, h or hrs) collapses to one symbol before hashing.
+ */
+export function stableText(text: string): string {
+  return normaliseText(text).replace(/\d[\d.,]*(?:\s?[a-zA-Z]{1,3}\b)?/g, '#');
+}
+
 export function fingerprint(host: string, text: string): string {
-  const norm = normaliseText(text).slice(0, 500);
+  const norm = stableText(text).slice(0, 500);
   return cyrb53(`${host}\n${norm}`).toString(36);
 }

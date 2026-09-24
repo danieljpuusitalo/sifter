@@ -54,4 +54,17 @@ First e2e run on a new machine: `pnpm exec playwright install chromium`.
 - **Keep selectors simple.** happy-dom ignores complex `:not(a b)`, so a selector
   that works in Chrome can silently mis-judge in the evals. The scanner keeps
   innermost units only, so prefer that over exclusion selectors.
+- **Fingerprints use the site key**, not the hostname, so aliases (twitter.com,
+  google.nl, threads.net) share overrides. Opt-in hosts are the opposite: the real
+  hostname, because they become match patterns.
+- **The fixture gold includes suggested units.** The eval turns suggested on, so a
+  `data-gold="suggested"` unit is a true positive, not noise.
+- **CI runs more than `pnpm verify`**: build and e2e too. A green verify is not a
+  green CI.
+- **Give scanner tests a positive control.** A regression test whose units don't
+  match the adapter's `unitSelector` passes without testing anything. Assert that
+  the thing was hidden or queued first.
+- **Writing code with backslashes:** use the Write/Edit tools. Bash heredocs and
+  `node -e` strings mangle `\.`, `\n` and `\u0000` (this corrupted a regex and put
+  a NUL byte into a .tsx file in session 3).
 - Python is not used here. Node 24, pnpm 12.

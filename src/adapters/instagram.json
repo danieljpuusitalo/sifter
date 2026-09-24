@@ -1,0 +1,16 @@
+{
+  "id": "instagram",
+  "hosts": ["instagram.com"],
+  "feedRootSelector": "main",
+  "unitSelector": "article",
+  "labelSelectors": [],
+  "labelIgnoreSelector": "a",
+  "adSelectors": ["a[href*=\"facebook.com/ads/ig_redirect\"]"],
+  "suggested": {
+    "selectors": [],
+    "labelSelectors": ["header span", "header div"],
+    "labelNodeLimit": 12,
+    "words": ["Suggested for you", "Suggested posts", "Voorgesteld voor jou"]
+  },
+  "verified": "2026-09-24 live DOM, home feed: every sponsored article (6/6) carried a link to facebook.com/ads/ig_redirect; no organic article did. The 'Sponsored' label is not a stable element, and usernames are links, so author links are ignored as labels. Suggested words are UNVERIFIED live."
+}

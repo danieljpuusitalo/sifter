@@ -25,6 +25,30 @@ export const AdapterSchema = z.object({
    * the header goes with it. List only containers that never hold organic results.
    */
   adContainerSelector: z.string().optional(),
+  /**
+   * Label nodes inside an element matching this are skipped. On Instagram and
+   * Threads the author name is a link, and an account called "ad" must not read
+   * as a label.
+   */
+  labelIgnoreSelector: z.string().optional(),
+  /**
+   * "Suggested" posts: recommendations from accounts the user doesn't follow.
+   * Off by default. `selectors` are structural markers; `words` are whole-label
+   * texts matched against the label nodes (this block's own, or the adapter's).
+   */
+  suggested: z
+    .object({
+      selectors: z.array(z.string()).default([]),
+      labelSelectors: z.array(z.string()).optional(),
+      labelNodeLimit: z.number().int().positive().optional(),
+      words: z.array(z.string()).default([]),
+    })
+    .optional(),
+  /**
+   * Whole page modules to hide under a category, outside the feed's units: X's
+   * "Who to follow" box, Facebook's right-rail "Sponsored" column.
+   */
+  blocks: z.array(z.object({ selector: z.string().min(1), category: z.enum(['sponsored', 'suggested']) })).default([]),
   feedRootSelector: z.string().optional(),
   /** Free-text provenance: when and how the selectors were last checked against the live site. */
   verified: z.string().optional(),

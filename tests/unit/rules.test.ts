@@ -50,11 +50,12 @@ describe('fingerprint', () => {
 });
 
 describe('decideTier0', () => {
-  const marker = { kind: 'label' as const, detail: 'promoted' };
-  it('not-ad override beats a marker', () => expect(decideTier0({ override: 'not-ad', marker }).action).toBe('show'));
+  const marker = { kind: 'label' as const, category: 'sponsored' as const, detail: 'promoted' };
+  const categories = { sponsored: true, suggested: false, custom: true };
+  it('not-ad override beats a marker', () => expect(decideTier0({ override: 'not-ad', marker, categories }).action).toBe('show'));
   it('hide override hides as manual', () =>
-    expect(decideTier0({ override: 'hide', marker: null })).toMatchObject({ action: 'hide', category: 'manual' }));
+    expect(decideTier0({ override: 'hide', marker: null, categories })).toMatchObject({ action: 'hide', category: 'manual' }));
   it('marker hides as sponsored', () =>
-    expect(decideTier0({ override: undefined, marker })).toMatchObject({ action: 'hide', category: 'sponsored' }));
-  it('nothing known is unknown, not show', () => expect(decideTier0({ override: undefined, marker: null }).action).toBe('unknown'));
+    expect(decideTier0({ override: undefined, marker, categories })).toMatchObject({ action: 'hide', category: 'sponsored' }));
+  it('nothing known is unknown, not show', () => expect(decideTier0({ override: undefined, marker: null, categories }).action).toBe('unknown'));
 });

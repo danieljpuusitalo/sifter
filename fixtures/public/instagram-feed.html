@@ -1,0 +1,60 @@
+<!doctype html>
+<!--
+  Synthetic Instagram home feed. Structure mirrors the live DOM checked on
+  2026-09-24: each post is an <article>; sponsored posts carry a link through
+  facebook.com/ads/ig_redirect; usernames are links. All names and text are
+  invented. data-gold marks the expected outcome on each unit root.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="sifter-host" content="www.instagram.com" />
+    <title>Instagram (fixture)</title>
+    <style>
+      body { font-family: system-ui, sans-serif; background: #fff; margin: 0; }
+      main { max-width: 470px; margin: 0 auto; }
+      article { border-bottom: 1px solid #dbdbdb; padding: 12px 0; }
+      .img { height: 120px; background: #eee; }
+    </style>
+  </head>
+  <body>
+    <main role="main">
+      <div>
+        <article data-gold="none">
+          <header><div><a href="/aino.v/"><span>aino.v</span></a><span> • 2h</span></div></header>
+          <div class="img" role="img" aria-label="Photo of a lake"></div>
+          <div><span>Morning swim before the ice sets in.</span></div>
+        </article>
+        <article data-gold="sponsored">
+          <header><div><a href="/northwindcloud/"><span>northwindcloud</span></a></div><div><span>Sponsored</span></div></header>
+          <div class="img" role="img" aria-label="Product photo"></div>
+          <a href="https://www.facebook.com/ads/ig_redirect/?d=synthetic&amp;a=1"><span>Learn more</span></a>
+        </article>
+        <!-- Account literally named "ad", caption "Sponsored": must not hide. -->
+        <article data-gold="none">
+          <header><div><a href="/ad/"><span>ad</span></a><span> • 1d</span></div></header>
+          <div class="img" role="img" aria-label="Photo"></div>
+          <div><span>Sponsored</span></div>
+          <div><span>Sponsored by nobody, just my cat on a keyboard.</span></div>
+        </article>
+        <!-- Suggested post from an account the user doesn't follow. Hidden only with "suggested" on. -->
+        <article data-gold="suggested">
+          <header><div><span>Suggested for you</span></div><div><a href="/fjordtrails/"><span>fjordtrails</span></a></div></header>
+          <div class="img" role="img" aria-label="Mountain trail"></div>
+          <div><span>Five hikes you can do before the snow.</span></div>
+        </article>
+        <!-- Organic post with a user caption mentioning suggested: must not hide. -->
+        <article data-gold="none">
+          <header><div><a href="/lena.k/"><span>lena.k</span></a></div></header>
+          <div class="img" role="img" aria-label="Photo"></div>
+          <div><span>Suggested for you: more sleep. Signed, your body.</span></div>
+        </article>
+        <article data-gold="sponsored">
+          <header><div><a href="/fjordshoes/"><span>fjordshoes</span></a></div><div><span>Ad</span></div></header>
+          <div class="img" role="img" aria-label="Shoes"></div>
+          <a href="https://www.facebook.com/ads/ig_redirect/?d=synthetic&amp;a=2"><span>Shop now</span></a>
+        </article>
+      </div>
+    </main>
+  </body>
+</html>

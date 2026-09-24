@@ -1,20 +1,13 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { evalFixture, passes } from '../../evals/fixture-eval';
+import { evalFixture, passes, PASSES } from '../../evals/fixture-eval';
 import { adapterFor } from '../../src/adapters/index';
 import { HIDDEN_CLASS, Hider, PLACEHOLDER_ATTR } from '../../src/content/hider';
 import { Scanner } from '../../src/content/scanner';
-import type { SiteContext } from '../../src/messages';
+import { defaultContext, type SiteContext } from '../../src/messages';
 
-const ctx = (over: Partial<SiteContext> = {}): SiteContext => ({
-  siteKey: 'linkedin.com',
-  enabled: true,
-  pausedUntil: null,
-  hideMode: 'collapse',
-  overrides: {},
-  ...over,
-});
+const ctx = (over: Partial<SiteContext> = {}): SiteContext => defaultContext('linkedin.com', over);
 
 function button(unit: Element, act: string): HTMLElement {
   const host = unit.previousElementSibling;
@@ -147,12 +140,14 @@ describe('Scanner', () => {
 describe('public fixtures (same judge as pnpm eval:mock)', () => {
   const dir = join('fixtures', 'public');
   for (const f of readdirSync(dir).filter((x) => x.endsWith('.html'))) {
-    it(`${f}: every ad hidden, no organic unit hidden`, () => {
-      const r = evalFixture(f, readFileSync(join(dir, f), 'utf8'));
-      expect(r.units.filter((u) => u.hidden !== (u.gold === 'sponsored'))).toEqual([]);
-      expect(r.unlabelledHidden).toEqual([]);
-      expect(passes(r)).toBe(true);
-    });
+    for (const p of PASSES) {
+      it(`${f} [${p.name}]: every expected unit hidden, nothing else`, () => {
+        const r = evalFixture(f, readFileSync(join(dir, f), 'utf8'), p.categories);
+        expect(r.units.filter((u) => u.hidden !== u.expected)).toEqual([]);
+        expect(r.unlabelledHidden).toEqual([]);
+        expect(passes(r)).toBe(true);
+      });
+    }
   }
 
   it('negative control: the judge fails when a label is wrong', () => {

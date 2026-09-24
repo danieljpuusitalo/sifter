@@ -8,7 +8,17 @@ export type UnitPayload = {
   hasCta: boolean; // "Shop now", "Learn more", "Install", "Sign up" style controls
 };
 
-export type Category = 'sponsored' | 'affiliate' | 'custom' | 'none';
+export type Category = 'sponsored' | 'suggested' | 'affiliate' | 'custom' | 'none';
+
+/**
+ * What the user can switch on and off, like an ad blocker's filter lists.
+ * - sponsored: paid placements the site labels (on by default).
+ * - suggested: recommendations from accounts you don't follow (off by default).
+ * - custom: your own muted words and element rules (on whenever you add one).
+ */
+export type BlockCategory = 'sponsored' | 'suggested' | 'custom';
+export const BLOCK_CATEGORIES: readonly BlockCategory[] = ['sponsored', 'suggested', 'custom'];
+export type CategoryToggles = Record<BlockCategory, boolean>;
 
 export type Verdict = {
   id: string;
@@ -23,3 +33,4 @@ export type HideCategory = Exclude<Category, 'none'> | 'manual';
 export type OverrideAction = 'not-ad' | 'hide';
 
 export type HideMode = 'collapse' | 'blur' | 'hide';
+export const DEFAULT_CATEGORIES: CategoryToggles = { sponsored: true, suggested: false, custom: true };

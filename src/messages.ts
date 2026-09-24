@@ -1,4 +1,4 @@
-import type { HideCategory, HideMode, OverrideAction } from './types';
+import { DEFAULT_CATEGORIES, type BlockCategory, type CategoryToggles, type HideCategory, type HideMode, type OverrideAction } from './types';
 
 // Message contract between contexts. Content scripts never touch storage; they
 // ask the service worker (see src/storage/settings.ts for why).
@@ -9,6 +9,11 @@ export type SiteContext = {
   pausedUntil: number | null;
   hideMode: HideMode;
   overrides: Record<string, OverrideAction>;
+  /** What to hide on this site (global toggles with the site's own on top). */
+  categories: CategoryToggles;
+  /** The user's element rules that apply to this site. */
+  customSelectors: string[];
+  mutedWords: string[];
 };
 
 /** Content script / popup -> service worker. */
@@ -16,10 +21,16 @@ export type BgRequest =
   | { type: 'sifter:getContext'; hostname: string }
   | { type: 'sifter:setOverride'; hostname: string; fp: string; action: OverrideAction | null }
   | { type: 'sifter:setSiteEnabled'; hostname: string; enabled: boolean }
+  | { type: 'sifter:setSiteCategory'; hostname: string; category: BlockCategory; value: boolean | null }
   | { type: 'sifter:pause'; minutes: number | null };
 
 /** Popup -> content script in the active tab. */
-export type TabRequest = { type: 'sifter:getPageState' } | { type: 'sifter:refresh' } | { type: 'sifter:showAll' };
+export type TabRequest =
+  | { type: 'sifter:getPageState' }
+  | { type: 'sifter:refresh' }
+  | { type: 'sifter:showAll' }
+  /** From the context menu: hide the post that was right-clicked, and remember it. */
+  | { type: 'sifter:hideTarget' };
 
 export type PageState = {
   siteKey: string;
@@ -28,6 +39,10 @@ export type PageState = {
   adapter: string; // adapter id or "generic"
   units: number;
   counts: Partial<Record<HideCategory, number>>;
+  /** Categories in force on this page, so the popup can show the toggles. */
+  categories: CategoryToggles;
+  /** Whether this site's rules can detect suggested posts at all. */
+  canSuggest: boolean;
   hiddenNow: number;
   /** Scanner self-cost on this page (hard rule 7), for the popup and the scroll bench. */
   perf: ScanPerf;
@@ -52,4 +67,19 @@ export type ScanPerf = {
 
 export function isBgRequest(m: unknown): m is BgRequest {
   return typeof m === 'object' && m !== null && typeof (m as { type?: unknown }).type === 'string' && (m as { type: string }).type.startsWith('sifter:');
+}
+
+/** A site context with every default in place. For tests, evals and the bench. */
+export function defaultContext(siteKey: string, over: Partial<SiteContext> = {}): SiteContext {
+  return {
+    siteKey,
+    enabled: true,
+    pausedUntil: null,
+    hideMode: 'collapse',
+    overrides: {},
+    categories: { ...DEFAULT_CATEGORIES },
+    customSelectors: [],
+    mutedWords: [],
+    ...over,
+  };
 }

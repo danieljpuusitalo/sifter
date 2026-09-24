@@ -1,6 +1,6 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { evalFixture, passes, type FixtureResult } from './fixture-eval';
+import { evalFixture, passes, PASSES, type FixtureResult } from './fixture-eval';
 
 // Eval runner. M1 is tier 0 only, so every provider gives the same result; the
 // flag exists so CI already calls the command the later milestones extend.
@@ -26,20 +26,29 @@ if (files.length === 0) {
   process.exit(2);
 }
 
-const results: FixtureResult[] = files.map((f) => evalFixture(f, readFileSync(join(dir, f), 'utf8')));
+// Every fixture runs under each category pass: default settings (sponsored only),
+// then everything on (sponsored + suggested). A suggested unit must stay visible
+// in the first and hide in the second.
+const html = new Map(files.map((f) => [f, readFileSync(join(dir, f), 'utf8')]));
+const runs = PASSES.map((p) => ({ pass: p.name, results: files.map((f) => evalFixture(f, html.get(f)!, p.categories)) }));
+const results: FixtureResult[] = runs.flatMap((r) => r.results);
 
 const pct = (n: number, d: number) => (d === 0 ? 'n/a' : `${((100 * n) / d).toFixed(1)}%`);
 console.log(`provider=${provider} fixtures=${set}\n`);
+for (const run of runs) {
+console.log(`
+pass: ${run.pass}`);
 console.log('file                      adapter    units  tp  fp  fn  precision  recall');
-for (const r of results) {
+for (const r of run.results) {
   console.log(
     `${r.file.padEnd(26)}${r.adapter.padEnd(11)}${String(r.units.length).padStart(5)}${String(r.tp).padStart(4)}${String(r.fp).padStart(4)}${String(r.fn).padStart(4)}  ${pct(r.tp, r.tp + r.fp).padStart(9)}  ${pct(r.tp, r.tp + r.fn).padStart(6)}`,
   );
   for (const u of r.units) {
-    if (u.gold === 'none' && u.hidden) console.log(`    FALSE HIDE   ${u.snippet}`);
-    if (u.gold === 'sponsored' && !u.hidden) console.log(`    MISSED AD    ${u.snippet}`);
+    if (!u.expected && u.hidden) console.log(`    FALSE HIDE   [${u.gold}] ${u.snippet}`);
+    if (u.expected && !u.hidden) console.log(`    MISSED       [${u.gold}] ${u.snippet}`);
   }
   for (const s of r.unlabelledHidden) console.log(`    HID UNLABELLED ELEMENT  ${s}`);
+}
 }
 
 const tot = results.reduce((a, r) => ({ tp: a.tp + r.tp, fp: a.fp + r.fp, fn: a.fn + r.fn }), { tp: 0, fp: 0, fn: 0 });
@@ -47,7 +56,7 @@ console.log(`\ntotal: tp=${tot.tp} fp=${tot.fp} fn=${tot.fn}  precision=${pct(to
 
 mkdirSync(join('evals', 'results'), { recursive: true });
 const out = join('evals', 'results', `${set}-${provider}.json`);
-writeFileSync(out, JSON.stringify({ provider, fixtures: set, totals: tot, results }, null, 2) + '\n');
+writeFileSync(out, JSON.stringify({ provider, fixtures: set, totals: tot, runs }, null, 2) + '\n');
 console.log(`wrote ${out}`);
 
 // Tier 0 must be exact on fixtures: any organic unit hidden or any ad missed fails.

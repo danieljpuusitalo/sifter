@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test as base, chromium, expect, type BrowserContext, type Page } from '@playwright/test';
+import { settleInstall } from './install';
 
 // Loads the real built extension (.output/chrome-mv3) into Chromium, serves the
 // public fixtures at the real site URLs, and blocks every other request, so no
@@ -46,6 +47,7 @@ const test = base.extend<{ context: BrowserContext; page: Page }>({
     });
     // Wait for the service worker so storage and messaging are up before the first page.
     if (context.serviceWorkers().length === 0) await context.waitForEvent('serviceworker');
+    await settleInstall(context);
     await use(context);
     await context.close();
   },

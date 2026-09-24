@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test as base, chromium, expect, type BrowserContext, type Page } from '@playwright/test';
+import { settleInstall } from './install';
 
 // Google does not ship the top "Sponsored products" carousel in the server HTML:
 // it is rendered client-side after load (seen live 2026-09-24, a re-fetch of the
@@ -26,6 +27,7 @@ const test = base.extend<{ context: BrowserContext; page: Page }>({
       return route.abort();
     });
     if (context.serviceWorkers().length === 0) await context.waitForEvent('serviceworker');
+    await settleInstall(context);
     await use(context);
     await context.close();
   },

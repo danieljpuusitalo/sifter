@@ -59,6 +59,22 @@ test('carousel appended as a whole subtree after load is hidden', async ({ page 
   await expect(late(page)).toBeHidden();
 });
 
+// The second live shape (google.nl, 2026-09-24): no data-dsktp-pla, the block is #atvcap.
+const ATVCAP =
+  '<div id="atvcap" data-st-cnt="atvcap" data-late="1"><div class="GUyUUb" data-hb="tcu"><div data-pla="1"><h3>Sponsored products</h3>' +
+  '<div class="pla"><a id="plap_9x" href="https://www.google.com/aclk?sa=l&amp;ai=late2">Late Boot</a></div></div></div></div>';
+
+test('#atvcap carousel appended after load is hidden', async ({ page }) => {
+  await page.evaluate((html) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'SLPe5b';
+    wrap.innerHTML = html;
+    document.getElementById('cnt')!.prepend(wrap);
+  }, ATVCAP);
+  await expect(late(page)).toHaveClass(/sifter-hidden/);
+  await expect(late(page)).toBeHidden();
+});
+
 test('carousel filled into an existing empty wrapper is hidden', async ({ page }) => {
   await page.evaluate(() => {
     const wrap = document.createElement('div');

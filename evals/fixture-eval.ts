@@ -24,8 +24,8 @@ export type FixtureResult = {
 };
 
 export function evalFixture(file: string, html: string): FixtureResult {
-  const hostMatch = /<meta\s+name="sift-host"\s+content="([^"]+)"/.exec(html);
-  if (!hostMatch?.[1]) throw new Error(`${file}: missing <meta name="sift-host">`);
+  const hostMatch = /<meta\s+name="sifter-host"\s+content="([^"]+)"/.exec(html);
+  if (!hostMatch?.[1]) throw new Error(`${file}: missing <meta name="sifter-host">`);
   const host = hostMatch[1];
   const url = `https://${host}/`;
 

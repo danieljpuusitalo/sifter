@@ -1,6 +1,6 @@
-# Sift checkpoint
+# Sifter checkpoint
 
-Updated 2026-09-24, end of session 1 (M0 + M1).
+Updated 2026-09-24, session 1 (M0 + M1, then renamed to Sifter and wrote docs/VISION.md).
 
 ## Where it stands
 
@@ -14,7 +14,7 @@ and no remote, so CI has never run.
 | `pnpm test` | 70/70 |
 | `pnpm eval:mock` | 3 fixtures, tp=8 fp=0 fn=0 |
 | `pnpm test:e2e` | 5/5 against the built extension: hide on all three sites, Show, Not an ad (persists across reload), popup render + page counts, infinite-scroll append |
-| `pnpm build` | `.output/sift-0.0.1-chrome.zip`, 95 kB |
+| `pnpm build` | `.output/sifter-0.0.1-chrome.zip`, 95 kB |
 | `pnpm dev` opens Chrome with the popup | **not checked by an agent**: it opens a window on Daniel's screen |
 | Infinite scroll still loads on the live sites | **manual, not done** |
 | Reddit adapter vs the live DOM | **UNVERIFIED**: the browser tool is blocked on reddit.com |
@@ -29,10 +29,12 @@ and no remote, so CI has never run.
 3. On LinkedIn, check how many `p[componentkey] > span` nodes sit above "Promoted" in
    a real ad header. `labelNodeLimit: 3` assumes three or fewer; a bigger header
    means ads get missed.
-4. Decide on the name: "Sift" collides with Sift (sift.com, fraud detection).
+4. Read docs/VISION.md and approve, amend or reject its roadmap (§8) and decisions (§9) before M2. The store name "Sifter" is also taken by a highlighter extension; see §7.
 5. Decide whether to create the GitHub repo (private) so CI runs.
 
-Then M2 (model tier), in a new session.
+Then the next milestone in a new session: M1.5 Perception if the VISION roadmap is approved, otherwise M2 as in the brief.
+
+The folder is still `~/sift`; the package, manifest and all identifiers say Sifter.
 
 ## Deviations from BRIEF.md (deliberate)
 

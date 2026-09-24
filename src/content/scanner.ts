@@ -145,7 +145,7 @@ export class Scanner {
     }
     const took = this.now() - start;
     if (this.deps.dev && took > SLICE_BUDGET_MS * 1.5) {
-      console.warn(`[sift] slice took ${took.toFixed(1)} ms for ${processed} units`);
+      console.warn(`[sifter] slice took ${took.toFixed(1)} ms for ${processed} units`);
     }
     if (this.pending.length > 0) {
       this.schedule(() => this.runSlice(), 0);

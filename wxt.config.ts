@@ -10,7 +10,7 @@ export default defineConfig({
     plugins: [preact()],
   }),
   manifest: {
-    name: 'Sift',
+    name: 'Sifter',
     description: 'Hides the ads your ad blocker misses: sponsored posts and promoted results inside the feed.',
     // activeTab is not in the brief's list; it carries no install warning and is what
     // lets the popup read the current tab's hostname to offer "Hide ads on <site>".

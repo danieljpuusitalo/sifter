@@ -31,7 +31,7 @@ async function loadView(): Promise<View> {
   const tab = await activeTab();
   if (!tab) return { kind: 'unsupported' };
   try {
-    const state = await toTab<PageState>(tab.id, { type: 'sift:getPageState' });
+    const state = await toTab<PageState>(tab.id, { type: 'sifter:getPageState' });
     if (state) return { kind: 'running', tab, state };
   } catch {
     /* no content script in this tab */
@@ -53,14 +53,14 @@ export function App() {
   return (
     <main class="popup">
       <header class="top">
-        <h1>Sift</h1>
+        <h1>Sifter</h1>
         <button class="link" onClick={() => void browser.runtime.openOptionsPage()}>
           Settings
         </button>
       </header>
       {view.kind === 'running' && <Running tab={view.tab} state={view.state} onChange={reload} onError={setError} />}
       {view.kind === 'available' && <Available tab={view.tab} hostname={view.hostname} onChange={reload} onError={setError} />}
-      {view.kind === 'unsupported' && <p class="muted">Sift can't run on this page.</p>}
+      {view.kind === 'unsupported' && <p class="muted">Sifter can't run on this page.</p>}
       {error && <p class="error">{error}</p>}
       <footer class="provider muted">Labels only. No AI is set up, nothing leaves your browser.</footer>
     </main>
@@ -73,20 +73,20 @@ function Running(props: { tab: Tab; state: PageState; onChange: () => void; onEr
 
   const toggle = async (enabled: boolean) => {
     try {
-      await bg<SiteContext>({ type: 'sift:setSiteEnabled', hostname: state.siteKey, enabled });
-      await toTab(tab.id, { type: 'sift:refresh' });
+      await bg<SiteContext>({ type: 'sifter:setSiteEnabled', hostname: state.siteKey, enabled });
+      await toTab(tab.id, { type: 'sifter:refresh' });
       props.onChange();
     } catch (e) {
       props.onError(`Couldn't change this site: ${String(e)}`);
     }
   };
   const pause = async (minutes: number | null) => {
-    await bg({ type: 'sift:pause', minutes });
-    await toTab(tab.id, { type: 'sift:refresh' });
+    await bg({ type: 'sifter:pause', minutes });
+    await toTab(tab.id, { type: 'sifter:refresh' });
     props.onChange();
   };
   const showAll = async () => {
-    await toTab(tab.id, { type: 'sift:showAll' });
+    await toTab(tab.id, { type: 'sifter:showAll' });
     props.onChange();
   };
 
@@ -139,16 +139,16 @@ function Available(props: { tab: Tab; hostname: string; onChange: () => void; on
     // Must run inside the click handler: permission requests need a user gesture.
     const granted = await browser.permissions.request({ origins: [`https://${key}/*`, `https://www.${key}/*`] });
     if (!granted) {
-      props.onError(`Sift needs access to ${key} to hide anything there. Nothing changed.`);
+      props.onError(`Sifter needs access to ${key} to hide anything there. Nothing changed.`);
       return;
     }
-    await bg({ type: 'sift:setSiteEnabled', hostname: props.hostname, enabled: true });
+    await bg({ type: 'sifter:setSiteEnabled', hostname: props.hostname, enabled: true });
     await browser.scripting.executeScript({ target: { tabId: props.tab.id }, files: ['/content-scripts/content.js'] });
     props.onChange();
   };
   return (
     <>
-      <p>Sift isn't on for {key}. It will look for posts labelled as ads and hide them.</p>
+      <p>Sifter isn't on for {key}. It will look for posts labelled as ads and hide them.</p>
       <div class="actions">
         <button class="primary" onClick={() => void enable()}>
           Hide ads on {key}

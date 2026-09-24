@@ -4,8 +4,8 @@ import type { HideCategory, HideMode } from '../types';
 // unit root, so infinite scroll and site JS keep working, and every hide is
 // reversible in one click from the placeholder (BRIEF.md §6).
 
-export const HIDDEN_CLASS = 'sift-hidden';
-export const PLACEHOLDER_ATTR = 'data-sift-placeholder';
+export const HIDDEN_CLASS = 'sifter-hidden';
+export const PLACEHOLDER_ATTR = 'data-sifter-placeholder';
 
 const LABELS: Record<HideCategory, string> = {
   sponsored: 'Hidden sponsored post',

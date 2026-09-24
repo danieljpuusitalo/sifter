@@ -21,7 +21,7 @@ export default defineContentScript({
 
     const hostname = location.hostname;
     const send = <T>(msg: BgRequest) => browser.runtime.sendMessage(msg) as Promise<T>;
-    const context = await send<SiteContext>({ type: 'sift:getContext', hostname });
+    const context = await send<SiteContext>({ type: 'sifter:getContext', hostname });
 
     const scanner = new Scanner({
       doc: document,
@@ -29,14 +29,14 @@ export default defineContentScript({
       baseUrl: location.href,
       adapter: adapterFor(hostname),
       context,
-      persistOverride: (fp, action) => void send({ type: 'sift:setOverride', hostname, fp, action }),
+      persistOverride: (fp, action) => void send({ type: 'sifter:setOverride', hostname, fp, action }),
       dev: import.meta.env.DEV,
     });
     scanner.start();
 
     let resumeTimer: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {
-      const ctx = await send<SiteContext>({ type: 'sift:getContext', hostname });
+      const ctx = await send<SiteContext>({ type: 'sifter:getContext', hostname });
       scanner.applyContext(ctx);
       clearTimeout(resumeTimer);
       if (ctx.pausedUntil !== null && ctx.pausedUntil > Date.now()) {
@@ -47,12 +47,12 @@ export default defineContentScript({
 
     browser.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
       const m = msg as TabRequest;
-      if (m?.type === 'sift:getPageState') {
+      if (m?.type === 'sifter:getPageState') {
         sendResponse(scanner.state());
-      } else if (m?.type === 'sift:showAll') {
+      } else if (m?.type === 'sifter:showAll') {
         scanner.showAll();
         sendResponse(scanner.state());
-      } else if (m?.type === 'sift:refresh') {
+      } else if (m?.type === 'sifter:refresh') {
         refresh().then(() => sendResponse(scanner.state()));
         return true;
       }

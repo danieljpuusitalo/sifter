@@ -52,15 +52,15 @@ const test = base.extend<{ context: BrowserContext; page: Page }>({
 
 const card = (page: Page, key: string) => page.locator(`[componentkey^="update-card-focus${key}"]`);
 const placeholderFor = (page: Page, key: string) =>
-  page.locator(`[data-sift-placeholder]:has(+ [componentkey^="update-card-focus${key}"])`);
+  page.locator(`[data-sifter-placeholder]:has(+ [componentkey^="update-card-focus${key}"])`);
 
 test('hides sponsored units and leaves organic ones on all three sites', async ({ page }) => {
   for (const [host, file] of Object.entries(FIXTURES)) {
     await page.goto(`https://${host}/`);
-    await expect(page.locator('.sift-hidden').first(), file).toBeAttached();
+    await expect(page.locator('.sifter-hidden').first(), file).toBeAttached();
     const wrong = await page.evaluate(() =>
       Array.from(document.querySelectorAll('[data-gold]'))
-        .filter((el) => el.classList.contains('sift-hidden') !== (el.getAttribute('data-gold') === 'sponsored'))
+        .filter((el) => el.classList.contains('sifter-hidden') !== (el.getAttribute('data-gold') === 'sponsored'))
         .map((el) => (el.textContent ?? '').trim().slice(0, 50)),
     );
     expect(wrong, file).toEqual([]);
@@ -99,14 +99,14 @@ test('popup renders, and the page reports counts to it', async ({ context, page 
   const [sw] = context.serviceWorkers();
   const state = await sw!.evaluate(async () => {
     const tabs = await chrome.tabs.query({ url: 'https://www.linkedin.com/*' });
-    return chrome.tabs.sendMessage(tabs[0]!.id!, { type: 'sift:getPageState' });
+    return chrome.tabs.sendMessage(tabs[0]!.id!, { type: 'sifter:getPageState' });
   });
   expect(state).toMatchObject({ siteKey: 'linkedin.com', enabled: true, adapter: 'linkedin', counts: { sponsored: 3 }, hiddenNow: 3 });
 
   const id = new URL(sw!.url()).host;
   const popup = await context.newPage();
   await popup.goto(`chrome-extension://${id}/popup.html`);
-  await expect(popup.getByRole('heading', { name: 'Sift' })).toBeVisible();
+  await expect(popup.getByRole('heading', { name: 'Sifter' })).toBeVisible();
   await expect(popup.getByText('nothing leaves your browser')).toBeVisible();
 });
 

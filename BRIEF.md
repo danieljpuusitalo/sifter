@@ -1,6 +1,6 @@
-# Sift: development brief
+# Sifter: development brief
 
-Working name. Check the Chrome Web Store and GitHub for collisions before M5.
+Renamed from "Sift" on 2026-09-24. The body below still says Sift where it was written that way; read it as Sifter. "Sifter" also exists on the Web Store (a highlighter), see docs/VISION.md §7. Proposed architecture changes and a revised roadmap are in docs/VISION.md, pending approval.
 
 **How to use this file.** Put it in the root of an empty repo. Start Claude Code with: "Read BRIEF.md. Do M0 and M1, then stop and show me what works." Run one milestone per session after that. Each milestone has acceptance criteria; don't start the next one until they pass.
 

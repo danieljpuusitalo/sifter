@@ -24,15 +24,15 @@ export function App() {
 
   return (
     <main class="options">
-      <h1>Sift</h1>
+      <h1>Sifter</h1>
       <p class="lede">Hides the ads your ad blocker misses: sponsored posts and promoted results that sit inside the feed.</p>
 
       <section>
-        <h2>How Sift decides</h2>
+        <h2>How Sifter decides</h2>
         <div class="paths">
           <div class="path current">
             <h3>Labels only</h3>
-            <p>Works now, with no AI. Sift hides posts the site itself labels as sponsored or promoted. Nothing leaves your browser.</p>
+            <p>Works now, with no AI. Sifter hides posts the site itself labels as sponsored or promoted. Nothing leaves your browser.</p>
             <p class="state">In use</p>
           </div>
           <div class="path">
@@ -47,8 +47,8 @@ export function App() {
           </div>
         </div>
         <p class="muted small">
-          With AI switched on, Sift sends only the short text of posts near your screen and the names of the sites they
-          link to, and only to the provider you choose. Never page addresses, form contents or cookies. There is no Sift
+          With AI switched on, Sifter sends only the short text of posts near your screen and the names of the sites they
+          link to, and only to the provider you choose. Never page addresses, form contents or cookies. There is no Sifter
           server.
         </p>
       </section>
@@ -89,7 +89,7 @@ export function App() {
                     onChange={(e) => {
                       const enabled = (e.currentTarget as HTMLInputElement).checked;
                       void browser.runtime
-                        .sendMessage({ type: 'sift:setSiteEnabled', hostname: key, enabled })
+                        .sendMessage({ type: 'sifter:setSiteEnabled', hostname: key, enabled })
                         .then(() => loadSettings().then(setSettings));
                     }}
                   />
@@ -101,7 +101,7 @@ export function App() {
           })}
         </ul>
         <p class="muted small">
-          To add a site, open it and choose "Hide ads on this site" in the Sift popup. Built-in rules exist for{' '}
+          To add a site, open it and choose "Hide ads on this site" in the Sifter popup. Built-in rules exist for{' '}
           {ADAPTERS.map((a) => a.id).join(', ')}.
         </p>
       </section>

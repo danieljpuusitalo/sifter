@@ -11,7 +11,7 @@ import {
   updateSettings,
 } from '../src/storage/settings';
 
-const OPT_IN_SCRIPT_ID = 'sift-opt-in';
+const OPT_IN_SCRIPT_ID = 'sifter-opt-in';
 
 export default defineBackground(() => {
   // Hard rule 4: content scripts must never be able to read stored API keys.
@@ -33,12 +33,12 @@ export default defineBackground(() => {
 
 async function handle(msg: BgRequest): Promise<unknown> {
   switch (msg.type) {
-    case 'sift:getContext':
+    case 'sifter:getContext':
       return getContext(msg.hostname);
-    case 'sift:setOverride':
+    case 'sifter:setOverride':
       await setOverride(siteKey(msg.hostname), msg.fp, msg.action);
       return { ok: true };
-    case 'sift:setSiteEnabled': {
+    case 'sifter:setSiteEnabled': {
       const key = siteKey(msg.hostname);
       const isLaunch = adapterFor(msg.hostname) !== null;
       await updateSettings((s) => ({
@@ -50,7 +50,7 @@ async function handle(msg: BgRequest): Promise<unknown> {
       await syncOptInScripts();
       return getContext(msg.hostname);
     }
-    case 'sift:pause':
+    case 'sifter:pause':
       await updateSettings((s) => ({
         ...s,
         pausedUntil: msg.minutes === null ? null : Date.now() + msg.minutes * 60_000,

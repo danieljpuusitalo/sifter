@@ -13,13 +13,13 @@ export type SiteContext = {
 
 /** Content script / popup -> service worker. */
 export type BgRequest =
-  | { type: 'sift:getContext'; hostname: string }
-  | { type: 'sift:setOverride'; hostname: string; fp: string; action: OverrideAction | null }
-  | { type: 'sift:setSiteEnabled'; hostname: string; enabled: boolean }
-  | { type: 'sift:pause'; minutes: number | null };
+  | { type: 'sifter:getContext'; hostname: string }
+  | { type: 'sifter:setOverride'; hostname: string; fp: string; action: OverrideAction | null }
+  | { type: 'sifter:setSiteEnabled'; hostname: string; enabled: boolean }
+  | { type: 'sifter:pause'; minutes: number | null };
 
 /** Popup -> content script in the active tab. */
-export type TabRequest = { type: 'sift:getPageState' } | { type: 'sift:refresh' } | { type: 'sift:showAll' };
+export type TabRequest = { type: 'sifter:getPageState' } | { type: 'sifter:refresh' } | { type: 'sifter:showAll' };
 
 export type PageState = {
   siteKey: string;
@@ -32,5 +32,5 @@ export type PageState = {
 };
 
 export function isBgRequest(m: unknown): m is BgRequest {
-  return typeof m === 'object' && m !== null && typeof (m as { type?: unknown }).type === 'string' && (m as { type: string }).type.startsWith('sift:');
+  return typeof m === 'object' && m !== null && typeof (m as { type?: unknown }).type === 'string' && (m as { type: string }).type.startsWith('sifter:');
 }

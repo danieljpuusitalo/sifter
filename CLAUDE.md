@@ -1,4 +1,4 @@
-# Sift
+# Sifter
 
 Chrome MV3 extension that hides native sponsored units ad blockers miss, plus
 plain-English filters. The spec is `BRIEF.md`; current state and next steps are in
@@ -39,7 +39,7 @@ First e2e run on a new machine: `pnpm exec playwright install chromium`.
 ## Conventions learned while building
 
 - **Tests never touch live sites.** Fixtures in `fixtures/public/` are synthetic and
-  carry `data-gold="sponsored|none"` on each unit root and `<meta name="sift-host">`.
+  carry `data-gold="sponsored|none"` on each unit root and `<meta name="sifter-host">`.
   Real captures go in `fixtures/private/` (gitignored) and never get committed.
 - **Adapters are JSON** (`src/adapters/*.json`, validated by `schema.ts`). A broken
   site should be a one-line selector fix. Record how and when selectors were checked

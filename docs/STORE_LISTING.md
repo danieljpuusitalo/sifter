@@ -58,4 +58,6 @@ from the synthetic fixtures only, never a real account's feed. Re-run after any 
 - `screenshot-3-options.png` (1280x800): the settings page
 - `promo-small-440x280.png`: small promo tile
 
-Still needed: a **privacy policy URL**. `PRIVACY.md` has to be hosted publicly before submitting.
+Privacy policy URL: https://danieljpuusitalo.github.io/sifter/privacy/ (built by
+`.github/workflows/pages.yml`; GitHub Pages only serves once the repo is public or
+on a paid plan).

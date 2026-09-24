@@ -19,3 +19,6 @@ web-ext.config.ts
 
 # Benchmark outputs
 bench/results/
+
+# GitHub Pages build (scripts/build-pages.mjs)
+_site/

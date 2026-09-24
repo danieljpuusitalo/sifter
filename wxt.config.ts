@@ -16,6 +16,11 @@ export default defineConfig({
     // lets the popup read the current tab's hostname to offer "Hide ads on <site>".
     permissions: ['storage', 'scripting', 'activeTab', 'contextMenus'],
     host_permissions: LAUNCH_MATCHES,
-    optional_host_permissions: ['https://*/*', 'http://localhost/*'],
+    optional_host_permissions: ['https://*/*'],
+    homepage_url: 'https://github.com/danieljpuusitalo/sifter',
+    // Highest feature floor in the code: storage setAccessLevel (102), scripting
+    // registerContentScripts (96), adapter `:has()` selectors (105). 116 adds margin
+    // and is the oldest Chrome the e2e suite has been run against.
+    minimum_chrome_version: '116',
   },
 });

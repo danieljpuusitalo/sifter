@@ -22,6 +22,9 @@ const BLOCK_ROWS: { cat: BlockCategory; label: string; needsSuggest?: boolean }[
 
 type Tab = { id: number; url: string | undefined };
 
+/** How often the open popup re-reads the tab's counts. */
+const LIVE_MS = 1000;
+
 type View =
   | { kind: 'loading' }
   | { kind: 'running'; tab: Tab; state: PageState; settings: Settings }
@@ -56,6 +59,23 @@ export function App() {
 
   const reload = () => loadView().then(setView, (e: unknown) => setError(String(e)));
   useEffect(() => void reload(), []);
+
+  // Live counts while the popup is open: the tab keeps hiding as you scroll.
+  // state() is a count over an in-memory map, and the timer dies with the popup,
+  // so browsing with the popup closed costs nothing.
+  const tabId = view.kind === 'running' ? view.tab.id : null;
+  useEffect(() => {
+    if (tabId === null) return;
+    const timer = setInterval(() => {
+      toTab<PageState>(tabId, { type: 'sifter:getPageState' }).then(
+        (state) => state && setView((v) => (v.kind === 'running' && v.tab.id === tabId ? { ...v, state } : v)),
+        () => {
+          /* tab navigated or closed: keep the last counts */
+        },
+      );
+    }, LIVE_MS);
+    return () => clearInterval(timer);
+  }, [tabId]);
 
   if (view.kind === 'loading') return <main class="popup" />;
   return (

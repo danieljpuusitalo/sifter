@@ -62,11 +62,11 @@ Works in Chrome 116 or newer and in other Chromium browsers such as Edge and Bra
 |---|---|---|---|
 | LinkedIn | yes | yes | sponsored: yes · suggested: yes (English; NL/DE/FR unchecked) |
 | Reddit | yes | – | works in use; markup not inspected against the adapter |
-| Google Search | yes (text ads, shopping units) | – | markup inspected; re-check in use pending |
+| Google Search | yes (text ads, shopping units) | – | markup inspected (EN and NL); one report of the top shopping carousel staying visible is being re-checked. Maps and promoted places: not covered |
 | X | yes | "Who to follow" | yes |
 | Instagram | yes | yes | sponsored: yes · suggested: yes (English; NL/DE/FR unchecked) |
-| Facebook | yes | yes | right-rail ads: yes · feed ads: not yet · suggested: yes (English) |
-| Threads | yes | – | not yet |
+| Facebook | yes | yes | feed and right-rail ads: yes · suggested: yes (English) |
+| Threads | yes | – | runs without hiding organic posts; no ad has shown up yet to confirm the ad path |
 
 "Not yet" means the rules come from known markup and pass the synthetic fixtures,
 but nobody has watched them work on a logged-in feed. Each adapter's `verified`

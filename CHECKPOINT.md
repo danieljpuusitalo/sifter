@@ -94,6 +94,7 @@ Not fixed, noted:
 
 ## Next
 
+0. **Production-readiness verdict (2026-09-24, end of session): ready for an UNLISTED v1.0.0 submission, not yet for a promoted Public listing.** Phase 3 is done (release.yml on `v*` tags, CHANGELOG, privacy page live on Pages and linked from `docs/STORE_LISTING.md`, `homepage_url` + `minimum_chrome_version` in the manifest, repo public, main `aaccdde` green incl. build + e2e). Precision evidence is strong (fp=0 on every fixture; X tally 8/8). Unproven, all recall-side: Threads ad path (no ad has appeared yet), X suggested units, NL/DE/FR marker words (baseline guesses), Google carousel shapes rotate by A/B (a third shape = patch tag), the release build has never run in regular Chrome with a normal profile, and one 75–81 ms long task at load. **No git tag exists yet.** Next action is ROADMAP Phase 4 step 2: tag `v1.0.0`, take the zip from the GitHub Release, submit Unlisted, install it into regular Chrome and use it for a few days, flip to Public once Threads shows an ad hidden.
 1. **Daniel:** live results are in the table above (2026-09-24). The Google carousel miss is fixed (`#atvcap` shape). Still open: the suggested words on each site; a sponsored local result or Maps pin when one appears. Then tag v1.0.0 and submit (ROADMAP Phase 4).
    - Scroll smoothness, 2026-09-24:
      - Most of the lag was the dev browser: x64 Chromium emulated on ARM64.

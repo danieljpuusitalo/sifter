@@ -83,8 +83,67 @@
           <div data-lazy-mount-id="a10">
             <!-- Organic post whose body mentions "suggested": must not hide, even with suggested on. -->
             <div role="listitem" componentkey="update-card-focus1010FeedType_MAIN_FEED_RELEVANCE" data-gold="none">
-              <div class="_9c2e"><div><p componentkey="c-28"><span>Pekka Salo</span></p><p componentkey="c-29"><span>Teacher · 6h</span></p></div></div>
+              <div class="_9c2e"><div><p componentkey="c-28"><span>Pekka Salo</span></p><button aria-label="Open control menu"></button><button aria-label="Hide post"></button><p componentkey="c-29"><span>Teacher · 6h</span></p></div></div>
               <div class="_77aa"><p componentkey="c-30"><span>A student suggested we move class outside. Best idea of the term.</span></p><p componentkey="c-31"><span>Suggested</span></p></div>
+            </div>
+          </div>
+          <!--
+            Live 2026-09-24, English UI. Header order in every card: social line (or the
+            name), two empty buttons, name, then a Follow or Connect button when the
+            author is outside the network. The social line is "<Name> likes this".
+          -->
+          <div data-lazy-mount-id="a11">
+            <!-- A connection liked a post by someone you follow: the social line alone hides it. -->
+            <div role="listitem" componentkey="update-card-focus1011FeedType_MAIN_FEED_RELEVANCE" data-gold="suggested">
+              <div class="_4b0d"><p componentkey="c-32"><span><a href="/in/ella-norr"><strong>Ella Norr</strong></a><span> </span>likes this</span></p></div>
+              <div class="_9c2e"><div><button aria-label="Open control menu"></button><button aria-label="Hide post"></button><p componentkey="c-33"><span>Timo Aalto</span></p></div></div>
+              <div class="_77aa"><p componentkey="c-34"><span>We open-sourced our design tokens today.</span></p></div>
+              <div><button><span>Like</span></button><button><span>Comment</span></button><button><span>Repost</span></button></div>
+            </div>
+          </div>
+          <div data-lazy-mount-id="a12">
+            <!-- Social line plus a Follow button: author outside the network. -->
+            <div role="listitem" componentkey="update-card-focus1012FeedType_MAIN_FEED_RELEVANCE" data-gold="suggested">
+              <div class="_4b0d"><p componentkey="c-35"><span><a href="/in/ella-norr"><strong>Ella Norr</strong></a><span> </span>celebrates this</span></p></div>
+              <div class="_9c2e"><div><button aria-label="Open control menu"></button><button aria-label="Hide post"></button><p componentkey="c-36"><span>Rune Dahl</span></p><button aria-label="Follow Rune Dahl"><span><span>Follow</span></span></button></div></div>
+              <div class="_77aa"><p componentkey="c-37"><span>Ten years at the same company today.</span></p></div>
+            </div>
+          </div>
+          <div data-lazy-mount-id="a13">
+            <!-- No social line, a Connect button: a stranger's post. -->
+            <div role="listitem" componentkey="update-card-focus1013FeedType_MAIN_FEED_RELEVANCE" data-gold="suggested">
+              <div class="_9c2e"><div><p componentkey="c-38"><span>Iris Holm</span></p><button aria-label="Open control menu"></button><button aria-label="Hide post"></button><p componentkey="c-39"><span>Growth lead · 2d</span></p><button aria-label="Invite Iris Holm to connect"><span><span>Connect</span></span></button></div></div>
+              <div class="_77aa"><p componentkey="c-40"><span>How we doubled activation in a quarter.</span></p></div>
+            </div>
+          </div>
+          <div data-lazy-mount-id="a14">
+            <!-- A connection reposted with commentary; the inner author has a Follow button further down. Reposts are kept. -->
+            <div role="listitem" componentkey="update-card-focus1014FeedType_MAIN_FEED_RELEVANCE" data-gold="none">
+              <div class="_9c2e"><div><p componentkey="c-41"><span>Aino Virtanen</span></p><button aria-label="Open control menu"></button><button aria-label="Hide post"></button><p componentkey="c-42"><span>Worth reading, especially the part about onboarding.</span></p></div></div>
+              <div class="_inner"><p componentkey="c-43"><span>Rune Dahl</span></p><button aria-label="Follow Rune Dahl"><span><span>Follow</span></span></button><p componentkey="c-44"><span>Ten lessons from a decade of onboarding work.</span></p></div>
+            </div>
+          </div>
+          <div data-lazy-mount-id="a15">
+            <!-- A connection's post whose body says "likes this" and "Connect": must not hide. -->
+            <div role="listitem" componentkey="update-card-focus1015FeedType_MAIN_FEED_RELEVANCE" data-gold="none">
+              <div class="_9c2e"><div><p componentkey="c-45"><span>Jonas Berg</span></p><button aria-label="Open control menu"></button><button aria-label="Hide post"></button><p componentkey="c-46"><span>Engineering manager · 4h</span></p></div></div>
+              <div class="_77aa"><p componentkey="c-47"><span>New desk setup. The dog likes this</span></p><p componentkey="c-48"><span>Connect</span></p></div>
+            </div>
+          </div>
+          <div data-lazy-mount-id="a16">
+            <!-- A connection reposted without commentary: the top line is "<Name> reposted this". Kept. -->
+            <div role="listitem" componentkey="update-card-focus1016FeedType_MAIN_FEED_RELEVANCE" data-gold="none">
+              <div class="_4b0d"><p componentkey="c-49"><span><a href="/in/ella-norr"><strong>Ella Norr</strong></a><span> </span>reposted this</span></p></div>
+              <div class="_9c2e"><div><button aria-label="Open control menu"></button><button aria-label="Hide post"></button><p componentkey="c-50"><span>Timo Aalto</span></p></div></div>
+              <div class="_77aa"><p componentkey="c-51"><span>Our hiring page is live.</span></p></div>
+            </div>
+          </div>
+          <div data-lazy-mount-id="a17">
+            <!-- Dutch interface: social line "<Name> vindt dit leuk". -->
+            <div role="listitem" componentkey="update-card-focus1017FeedType_MAIN_FEED_RELEVANCE" data-gold="suggested">
+              <div class="_4b0d"><p componentkey="c-52"><span><a href="/in/ella-norr"><strong>Ella Norr</strong></a><span> </span>vindt dit leuk</span></p></div>
+              <div class="_9c2e"><div><button aria-label="Menu"></button><button aria-label="Verbergen"></button><p componentkey="c-53"><span>Timo Aalto</span></p></div></div>
+              <div class="_77aa"><p componentkey="c-54"><span>Ons team groeit.</span></p></div>
             </div>
           </div>
         </div>

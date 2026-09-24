@@ -43,6 +43,21 @@ export function hasWordLine(raw: string, words: ReadonlySet<string>): boolean {
   return words.size > 0 && raw.split(/\n/).some((line) => words.has(labelKey(line)));
 }
 
+/** Longer than this, a line is post text, not a "<Name> likes this" header. */
+const MAX_ENDING_LINE = 120;
+
+/**
+ * Whether any line is "<something> <ending>" for one of `endings` (lower case):
+ * "Sam Doe likes this". The ending alone, with no name before it, does not count.
+ */
+export function hasLineEnding(raw: string, endings: readonly string[]): boolean {
+  if (endings.length === 0) return false;
+  return raw.split(/\n/).some((line) => {
+    const key = labelKey(line);
+    return key.length <= MAX_ENDING_LINE && endings.some((e) => key.endsWith(' ' + e) && key.length > e.length + 1);
+  });
+}
+
 /**
  * Some sites render the label as its own line inside a longer header
  * ("Company name\nPromoted"). Any single line that is a marker counts.

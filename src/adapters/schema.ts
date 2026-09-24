@@ -42,6 +42,12 @@ export const AdapterSchema = z.object({
       labelSelectors: z.array(z.string()).optional(),
       labelNodeLimit: z.number().int().positive().optional(),
       words: z.array(z.string()).default([]),
+      /**
+       * Social-proof lines that name someone first: "<Name> likes this". Checked
+       * against the unit's first non-empty label only (the card's top line); a
+       * line counts when it ends with a space and one of these, and is short.
+       */
+      lineEndings: z.array(z.string()).optional(),
     })
     .optional(),
   /**

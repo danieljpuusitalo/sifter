@@ -72,6 +72,41 @@ describe('detectMarker on LinkedIn', () => {
     expect(detectMarker(unit(deepAd), { ...linkedin, labelNodeLimit: undefined }, 'https://www.linkedin.com/')).not.toBeNull());
 });
 
+describe('suggested on LinkedIn: social lines and Follow/Connect', () => {
+  const base = 'https://www.linkedin.com/';
+  const on = { suggested: true };
+  const EMPTY = '<button aria-label="menu"></button><button aria-label="hide"></button>';
+  const social = (verb: string, rest = '') =>
+    `<div role="listitem" componentkey="update-card-focus1"><p componentkey="s"><span><a href="/in/x"><strong>Ella Norr</strong></a><span> </span>${verb}</span></p>${EMPTY}<p componentkey="n"><span>Timo Aalto</span></p>${rest}<p componentkey="b"><span>Body.</span></p></div>`;
+  const plain = (afterName: string, body: string) =>
+    `<div role="listitem" componentkey="update-card-focus1"><p componentkey="n"><span>Timo Aalto</span></p>${EMPTY}<p componentkey="t"><span>Designer · 2h</span></p>${afterName}<p componentkey="b"><span>${body}</span></p></div>`;
+
+  it('hides "<Name> likes this"', () => expect(detectMarker(unit(social('likes this')), linkedin, base, on)?.category).toBe('suggested'));
+  it('hides the other reactions and a Dutch one', () => {
+    for (const v of ['celebrates this', 'finds this insightful', 'commented on this', 'vindt dit leuk']) {
+      expect(detectMarker(unit(social(v)), linkedin, base, on), v).not.toBeNull();
+    }
+  });
+  it('keeps "<Name> reposted this"', () => expect(detectMarker(unit(social('reposted this')), linkedin, base, on)).toBeNull());
+  it('needs a name before the ending: a bare "likes this" does not count', () =>
+    expect(detectMarker(unit(plain('', 'x').replace('Timo Aalto', 'likes this')), linkedin, base, on)).toBeNull());
+  it('keeps a body line ending "likes this": endings read only the top line', () =>
+    expect(detectMarker(unit(plain('', 'The dog likes this')), linkedin, base, on)).toBeNull());
+  it('negative control: the same body line as the top line would hide', () =>
+    expect(detectMarker(unit(plain('', 'x').replace('Timo Aalto', 'The dog likes this')), linkedin, base, on)).not.toBeNull());
+  it('hides a Follow or Connect button in the header', () => {
+    expect(detectMarker(unit(plain('<button><span>Follow</span></button>', 'Hi.')), linkedin, base, on)).not.toBeNull();
+    expect(detectMarker(unit(plain('<button><span>Connect</span></button>', 'Hi.')), linkedin, base, on)).not.toBeNull();
+  });
+  it('keeps a reshare whose inner author has a Follow button past the header', () =>
+    expect(detectMarker(unit(plain('<p componentkey="i"><span>Rune Dahl</span></p><button><span>Follow</span></button>', 'Hi.')), linkedin, base, on)).toBeNull());
+  it('keeps a long body with a "Connect" line inside the header window', () =>
+    expect(detectMarker(unit(plain('', `${'Long post. '.repeat(30)}<br>Connect`)), linkedin, base, on)).toBeNull());
+  it('negative control: the same line in a short body would hide', () =>
+    expect(detectMarker(unit(plain('', 'Short post.<br>Connect')), linkedin, base, on)).not.toBeNull());
+  it('does nothing with suggested off', () => expect(detectMarker(unit(social('likes this')), linkedin, base)).toBeNull());
+});
+
 describe('detectMarker, structural and link markers', () => {
   it('hits a Google text ad structurally', () =>
     expect(detectMarker(unit('<div data-text-ad="1"><a href="https://x.example/">X</a></div>'), google, 'https://www.google.com/')?.kind).toBe(

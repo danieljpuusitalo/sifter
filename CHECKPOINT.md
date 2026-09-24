@@ -14,8 +14,8 @@ toggle and per-site overrides.
 | Gate | State |
 |---|---|
 | `pnpm typecheck` | passes |
-| `pnpm test` | 123/123, including the audit regressions (below) |
-| `pnpm eval:mock` | 8 fixtures, tp=42 fp=0 fn=0 |
+| `pnpm test` | 139/139, including the audit regressions (below) |
+| `pnpm eval:mock` | 8 fixtures, tp=56 fp=0 fn=0 (suggested pass included) |
 | `pnpm test:e2e` | 10/10, 30/30 with `--repeat-each=3`. One earlier run failed "muted words..." while a `pnpm dev` Chromium was also running (55 s vs a normal 24 s); not reproduced since. Watch it in CI |
 | `pnpm bench:scroll` | scrolling p50 and p95 are the same with the extension off and on (16.7 / 16.9 ms), 0 slices over budget while scrolling. One long task at load (75–81 ms, initial scan about 340 ms of idle-sliced work); max slice at load 27–33 ms. That load slice is the only thing over budget |
 | `pnpm build` | `.output/sifter-1.0.0-chrome.zip`, 110 kB |
@@ -24,12 +24,12 @@ toggle and per-site overrides.
 
 | Site | Sponsored | Suggested |
 |---|---|---|
-| LinkedIn | live DOM inspected 2026-09-24; Daniel confirmed | words UNVERIFIED |
+| LinkedIn | live DOM inspected 2026-09-24; Daniel confirmed | **live 2026-09-24**: social lines, Follow/Connect; "Suggested" word and NL/DE/FR UNVERIFIED |
 | Reddit | Daniel confirmed it works; markup not inspected by an agent | UNVERIFIED |
 | Google | markup inspected; **Daniel to re-check** All + Shopping | n/a |
 | X | built from known markup | UNVERIFIED |
-| Instagram | built from known markup | UNVERIFIED |
-| Facebook | **UNVERIFIED live** | UNVERIFIED |
+| Instagram | live 2026-09-24 (ig_redirect, 6/6) | **live 2026-09-24**: Follow / "Suggested for you" articles, people module; NL/DE/FR UNVERIFIED |
+| Facebook | rail live; **feed ads UNVERIFIED live** | **live 2026-09-24**: Follow, Join, Reels, group suggestions; NL/DE/FR UNVERIFIED |
 | Threads | **UNVERIFIED live** | UNVERIFIED |
 
 These need a logged-in `pnpm dev` session. An agent can't provide one, since logging in means entering credentials.
@@ -91,7 +91,12 @@ Not fixed, noted:
      - The right-rail "Sponsored" module is hidden: the smallest div holding the h3 and the `a[aria-label=Advertiser]` cards. It is a block with `innermost`, because its `:has()` rule also matches every ancestor up to the whole rail.
      - The "Suggested for you" groups carousel is a suggested marker.
      - **No sponsored feed post appeared in 51 posts, so feed-ad detection on Facebook is still unverified live.** Re-check when one shows up.
-   - After this: hide posts from accounts the user doesn't follow (a "Follow" button by the author), per site. Probably an extension of the suggested category.
+   - **"Only my network", 2026-09-24, in the suggested category** (off by default; the dev profile has per-site overrides ON for facebook, instagram and linkedin):
+     - Facebook: posts with a Follow or Join button in the author header, the Reels unit (h3 "Reels"), "Your group suggestions" (aria-label "Join group"). Live: 20 Follow + 6 Join + 2 module units hidden, 21 shown, none of the shown with either button.
+     - Instagram: articles with a Follow button or "Suggested for you" (articles no longer have a `<header>`), and the people carousel as an innermost block. Live: 0 visible "Suggested for you".
+     - LinkedIn: "<Name> likes/celebrates/loves/... this" (new `suggested.lineEndings`, checked on the card's top line only) and Follow/Connect in the 5-node header. Reposts are kept, including a connection's reshare of a stranger's post. Live: every hidden unit carried a signal; the 2 shown units with a Follow button were both reshares.
+     - Suggested labels over 300 chars are treated as post body and skipped.
+     - NL/DE/FR strings are baseline guesses; Daniel's UI is English, so only English is checked.
 2. **Licence:** MIT (`LICENSE`), done.
 3. **Store assets:** the screenshots and promo tile are done (`pnpm store:assets` writes them to `docs/store/`). **Daniel** still has to choose where the privacy policy is hosted: GitHub Pages needs the repo public, or it can go on danieluusitalo.com. After that, the store submission itself is his: a developer account ($5 one-off) and uploading `.output/sifter-1.0.0-chrome.zip`.
 4. M2 (tier-1 model classification, BRIEF.md §9) has not started. `http://localhost/*` stays in `optional_host_permissions` for its local providers.

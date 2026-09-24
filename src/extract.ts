@@ -1,11 +1,13 @@
 import { normaliseText } from './fingerprint';
-import { hasMarkerLine, hasWordLine, isAdClickUrl, isMarkerText } from './rules/markers';
+import { hasLineEnding, hasMarkerLine, hasWordLine, isAdClickUrl, isMarkerText } from './rules/markers';
 import type { Adapter } from './adapters/schema';
 import type { UnitPayload } from './types';
 
 const MAX_TEXT = 600;
 const MAX_LABELS = 5;
 const MAX_LABEL_LEN = 40;
+/** Suggested labels longer than this are post text, not header chrome. */
+const MAX_SUGGESTED_LABEL = 300;
 const MAX_LINK_HOSTS = 5;
 
 const CTA_TEXT = /^(shop now|buy now|learn more|install|install now|sign up|download|get offer|order now|book now|apply now|get started|subscribe|try (it )?(for )?free)$/i;
@@ -263,18 +265,34 @@ function wordSet(block: { words: string[] }): ReadonlySet<string> {
   return s;
 }
 
+const endingLists = new WeakMap<object, readonly string[]>();
+function endingList(block: { lineEndings?: string[] }): readonly string[] {
+  let l = endingLists.get(block);
+  if (!l) endingLists.set(block, (l = (block.lineEndings ?? []).map((e) => e.toLowerCase())));
+  return l;
+}
+
 function detectSuggested(unit: Element, adapter: Adapter, adapterLabels: string[]): MarkerHit | null {
   const block = adapter.suggested!;
   for (const sel of block.selectors) {
     if (safeMatches(unit, sel) || safeQueryAll(unit, sel).length > 0) return { kind: 'structural', category: 'suggested', detail: sel };
   }
   const words = wordSet(block);
-  if (words.size === 0) return null;
+  const endings = endingList(block);
+  if (words.size === 0 && endings.length === 0) return null;
   const texts = block.labelSelectors
     ? labelNodes(unit, adapter, block.labelSelectors, block.labelNodeLimit).map((n) => labelText(n, unit))
     : adapterLabels;
+  // A social line ("<Name> likes this") heads the card, so only the first label
+  // counts for endings: a post body that says "everyone likes this" must not hide.
+  const first = texts.find((t) => t.trim());
   for (const t of texts) {
-    if (hasWordLine(t, words)) return { kind: 'label', category: 'suggested', detail: normaliseText(t).slice(0, MAX_LABEL_LEN) };
+    // A label node this long is post text that a broad selector reached, not a
+    // header: a line reading "Follow" inside it is the author's, not the site's.
+    if (t.length > MAX_SUGGESTED_LABEL) continue;
+    if (hasWordLine(t, words) || (t === first && hasLineEnding(t, endings))) {
+      return { kind: 'label', category: 'suggested', detail: normaliseText(t).slice(0, MAX_LABEL_LEN) };
+    }
   }
   return null;
 }

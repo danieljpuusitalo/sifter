@@ -8,9 +8,26 @@
   "adSelectors": ["a[href*=\"facebook.com/ads/ig_redirect\"]"],
   "suggested": {
     "selectors": [],
-    "labelSelectors": ["header span", "header div"],
-    "labelNodeLimit": 12,
-    "words": ["Suggested for you", "Suggested posts", "Voorgesteld voor jou"]
+    "labelSelectors": ["div[role=\"button\"]", "span"],
+    "labelNodeLimit": 16,
+    "words": [
+      "Suggested for you",
+      "Suggested posts",
+      "Follow",
+      "Voorgesteld voor jou",
+      "Volgen",
+      "Vorschläge für dich",
+      "Folgen",
+      "Suggestions pour vous",
+      "Suivre"
+    ]
   },
-  "verified": "2026-09-24 live DOM, home feed: every sponsored article (6/6) carried a link to facebook.com/ads/ig_redirect; no organic article did. The 'Sponsored' label is not a stable element, and usernames are links, so author links are ignored as labels. Suggested words are UNVERIFIED live."
+  "blocks": [
+    {
+      "selector": "main div:has(a[href^=\"/explore/people\"]):has(div[role=\"button\"])",
+      "category": "suggested",
+      "innermost": true
+    }
+  ],
+  "verified": "2026-09-24 live DOM, home feed: every sponsored article (6/6) carried a link to facebook.com/ads/ig_redirect; no organic article did. The 'Sponsored' label is not a stable element, and usernames are links, so author links are ignored as labels. Suggested (live, English UI): articles no longer have a <header>; a post or reel from an account you don't follow shows 'Suggested for you' as a span and a div[role=button] reading exactly 'Follow' near the top. The people carousel ('Suggested for you', See all -> /explore/people/, Follow buttons) sits outside any article; the smallest div holding that link and a button is the module. Dutch, German and French strings are baseline guesses, UNVERIFIED live."
 }

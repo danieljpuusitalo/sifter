@@ -49,6 +49,28 @@
           <div class="img" role="img" aria-label="Photo"></div>
           <div><span>Suggested for you: more sleep. Signed, your body.</span></div>
         </article>
+        <!-- Live 2026-09-24: no <header>; a post or reel from an account you don't follow shows a Follow button. -->
+        <article data-gold="suggested">
+          <div><div><a href="/coastreels/"><span>coastreels</span></a><span> • </span><span>3d</span></div><div><span>Suggested for you</span></div><div role="button" tabindex="0"><div>Follow</div></div></div>
+          <div class="img" role="img" aria-label="Video"></div>
+          <div><span>Wave season is here.</span></div>
+        </article>
+        <!-- Same shape, Follow only, German interface. -->
+        <article data-gold="suggested">
+          <div><div><a href="/bergblick/"><span>bergblick</span></a><span> • </span><span>1d</span></div><div role="button" tabindex="0"><div>Folgen</div></div></div>
+          <div class="img" role="img" aria-label="Photo"></div>
+        </article>
+        <!-- Followed account: no Follow button; the caption starts with "Follow": must not hide. -->
+        <article data-gold="none">
+          <div><div><a href="/aino.v/"><span>aino.v</span></a><span> • </span><span>5h</span></div></div>
+          <div class="img" role="img" aria-label="Photo"></div>
+          <div><span>Follow your nose to the bakery on the corner.</span></div>
+        </article>
+        <!-- People suggestions module outside any article (live 2026-09-24): the smallest div holding the See all link and a button. -->
+        <div data-gold="suggested">
+          <div><span>Suggested for you</span><a href="/explore/people/"><span>See all</span></a></div>
+          <div><div><a href="/pinecone.studio/"><span>pinecone.studio</span></a><span>Followed by aino.v</span><div role="button" tabindex="0"><div>Follow</div></div></div></div>
+        </div>
         <article data-gold="sponsored">
           <header><div><a href="/fjordshoes/"><span>fjordshoes</span></a></div><div><span>Ad</span></div></header>
           <div class="img" role="img" aria-label="Shoes"></div>

@@ -1,7 +1,7 @@
 // Builds the GitHub Pages site into _site/: the privacy policy, converted from
 // PRIVACY.md, plus a one-paragraph index that links to it and the repo.
 // `pnpm pages` runs this locally; the pages.yml workflow runs it on push.
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { marked } from 'marked';
 
@@ -39,10 +39,20 @@ const privacyMd = readFileSync(join(ROOT, 'PRIVACY.md'), 'utf8');
 const privacyHtml = page('Sifter privacy policy', marked.parse(privacyMd));
 writeFileSync(join(OUT, 'privacy', 'index.html'), privacyHtml);
 
+copyFileSync(join(ROOT, 'docs', 'store', 'screenshot-1-feed.png'), join(OUT, 'feed.png'));
+
 const indexHtml = page(
-  'Sifter',
-  `<p>Sifter is a Chrome extension that hides the sponsored posts your ad blocker
-misses. Read the <a href="privacy/">privacy policy</a> or see the
-<a href="${REPO_URL}">source on GitHub</a>.</p>`,
+  'Sifter: hide sponsored posts',
+  `<h1>Sifter</h1>
+<p>A Chrome extension that hides the ads your ad blocker misses: sponsored posts and
+promoted results inside the feed. Ad blockers work on the network, and these units
+are served by the site itself, so Sifter reads the label the site shows instead and
+collapses the post. Everything runs in your browser.</p>
+<img src="feed.png" alt="The same feed without and with Sifter" style="width:100%;height:auto;border-radius:6px">
+<ul>
+  <li><a href="${REPO_URL}">Source and install instructions on GitHub</a></li>
+  <li><a href="${REPO_URL}/releases/latest">Latest release</a></li>
+  <li><a href="privacy/">Privacy policy</a></li>
+</ul>`,
 );
 writeFileSync(join(OUT, 'index.html'), indexHtml);

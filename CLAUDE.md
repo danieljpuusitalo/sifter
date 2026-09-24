@@ -24,7 +24,7 @@ Use `pnpm` (installed globally). On this Windows machine, run from Git Bash or P
 
 First e2e run on a new machine: `pnpm exec playwright install chromium`.
 
-`pnpm dev` needs `web-ext` (a devDependency; without it WXT silently prints "load manually"). Branded Chrome 137+ ignores `--load-extension`, so a gitignored `web-ext.config.ts` points `binaries.chrome` at Playwright's Chromium with a persistent `.dev-profile/` (create the folder first). Copy that pattern on a new machine.
+`pnpm dev` needs `web-ext` (a devDependency; without it WXT silently prints "load manually"). Branded Chrome 137+ ignores `--load-extension`, so a gitignored `web-ext.config.ts` points `binaries.chrome` at a browser that still honours it, with a persistent `.dev-profile*/` folder (create it first). Copy that pattern on a new machine. **On this ARM64 laptop use Edge (native), not Playwright's Chromium**: that build is x64 and runs emulated, and the whole page janks with Sifter off. Judge scroll smoothness only in a native browser, and only by A/B with the site toggled off.
 
 ## Hard rules (BRIEF.md §3, verbatim)
 
@@ -52,6 +52,11 @@ First e2e run on a new machine: `pnpm exec playwright install chromium`.
   Content scripts get settings and overrides only by message (`src/messages.ts`).
 - **innerText is not a visibility check.** For an element that is itself
   `display:none`, it returns the full text. Label nodes go through `renderedWithin`.
+- **Never read innerText in the content script.** On a live feed mid-scroll it
+  forces a synchronous layout of the whole page (13 ms for one unit on LinkedIn).
+  `renderedText` walks computed style instead (a style pass, no layout), and
+  leaves skip even that. LoAF does not attribute isolated-world scripts, so an
+  A/B toggle is the only honest measure of what Sifter costs a real page.
 - **Keep selectors simple.** happy-dom ignores complex `:not(a b)`, so a selector
   that works in Chrome can silently mis-judge in the evals. The scanner keeps
   innermost units only, so prefer that over exclusion selectors.

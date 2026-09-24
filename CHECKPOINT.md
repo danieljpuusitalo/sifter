@@ -73,7 +73,16 @@ Not fixed, noted:
 
 ## Next
 
-1. **Daniel:** in `pnpm dev`, log in and check Facebook, Threads and the suggested words on each site. Re-check Google.
+1. **Daniel:** in `pnpm dev` (now Edge, fresh profile: log in again), check Facebook, Threads and the suggested words on each site. Re-check Google. Also judge scrolling there.
+   - Scroll smoothness, 2026-09-24:
+     - Most of the lag was the dev browser: x64 Chromium emulated on ARM64.
+     - Sifter's only measured cost was a 12–13 ms forced layout from `innerText`, now removed.
+     - Reddit A/B in native Edge: long frames 13/10 with Sifter on vs 26/12 off, 0 slow slices.
+   - Not yet measured:
+     - the layout jump when a visible post collapses to its placeholder
+     - LinkedIn and Facebook in Edge (need a login)
+   - Facebook: one visible "Sponsored" h3 (probably the right rail) is not hidden. Uninvestigated.
+   - After this: hide posts from accounts the user doesn't follow (a "Follow" button by the author), per site. Probably an extension of the suggested category.
 2. **Licence:** MIT (`LICENSE`), done.
 3. **Store assets:** the screenshots and promo tile are done (`pnpm store:assets` writes them to `docs/store/`). **Daniel** still has to choose where the privacy policy is hosted: GitHub Pages needs the repo public, or it can go on danieluusitalo.com. After that, the store submission itself is his: a developer account ($5 one-off) and uploading `.output/sifter-1.0.0-chrome.zip`.
 4. M2 (tier-1 model classification, BRIEF.md §9) has not started. `http://localhost/*` stays in `optional_host_permissions` for its local providers.
@@ -91,6 +100,7 @@ Not fixed, noted:
 ## Do not undo
 
 - **`renderedWithin` in `src/extract.ts`:** innerText returns the full text of an element that is itself `display:none`.
+- **`renderedText`, not innerText, for labels:** innerText forces whole-page layout mid-scroll.
 - **`isAdClickUrl`:** matches `/aclk` only as a whole path segment on google.* hosts.
 - **The Google `unitSelector`:** avoids complex `:not()`, which happy-dom ignores.
 - **Scanner slicing:**

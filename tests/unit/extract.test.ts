@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { adapterFor } from '../../src/adapters/index';
 import type { Adapter } from '../../src/adapters/schema';
-import { buildPayload, detectMarker, renderedWithin } from '../../src/extract';
+import { buildPayload, detectMarker, renderedText, renderedWithin } from '../../src/extract';
 
 const linkedin = adapterFor('www.linkedin.com') as Adapter;
 const google = adapterFor('www.google.com') as Adapter;
@@ -29,6 +29,27 @@ describe('renderedWithin', () => {
   it('sees visibility:hidden', () => {
     const u = unit('<div><span class="inv">Promoted</span></div>');
     expect(renderedWithin(u.querySelector('span') as Element, u)).toBe(false);
+  });
+});
+
+describe('renderedText', () => {
+  // innerText forces a full-page layout; the whole point of renderedText is to avoid it.
+  const noInnerText = (el: Element) =>
+    Object.defineProperty(el, 'innerText', { get: () => { throw new Error('innerText read'); } });
+
+  it('joins a word split around a hidden decoy, without reading innerText', () => {
+    const u = unit('<p>Pro<span class="vh">zq</span>moted</p>');
+    u.querySelectorAll('*').forEach(noInnerText);
+    noInnerText(u);
+    expect(renderedText(u)).toBe('Promoted');
+  });
+  it('drops visibility:hidden text but keeps a visible child of a hidden parent', () => {
+    const u = unit('<p><span class="inv">zq<span style="visibility:visible">Ad</span></span></p>');
+    expect(renderedText(u)).toBe('Ad');
+  });
+  it('breaks lines at block boxes and <br>, not at inline ones', () => {
+    const u = unit('<div><span>Sofia</span> <span>Lind</span><div>Promoted</div>Follow<br>now</div>');
+    expect(renderedText(u).split('\n').map((l) => l.trim()).filter(Boolean)).toEqual(['Sofia Lind', 'Promoted', 'Follow', 'now']);
   });
 });
 

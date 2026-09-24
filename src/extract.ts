@@ -10,10 +10,56 @@ const MAX_LINK_HOSTS = 5;
 
 const CTA_TEXT = /^(shop now|buy now|learn more|install|install now|sign up|download|get offer|order now|book now|apply now|get started|subscribe|try (it )?(for )?free)$/i;
 
-/** Visible text. innerText skips display:none decoy spans; textContent does not. */
-export function visibleText(el: Element): string {
-  const html = el as HTMLElement;
-  return typeof html.innerText === 'string' ? html.innerText : (el.textContent ?? '');
+const SKIP_TEXT_IN = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);
+const BLOCK_DISPLAY = /^(block|flex|grid|list-item|table|flow-root)/;
+/** Label nodes are short; past this their text can't be a marker line anyway. */
+const MAX_RENDERED = 400;
+
+/** Chrome always computes visibility; happy-dom leaves it empty unless set, meaning "inherit". */
+const shows = (visibility: string, parent: boolean): boolean => (visibility ? visibility === 'visible' : parent);
+
+/**
+ * The text a label node shows, without forcing layout. innerText skips decoy spans
+ * but lays out the whole page when it is dirty, which on a live feed mid-scroll
+ * cost 12-13 ms for a single unit. Computed style costs a style pass only, so walk
+ * the node: drop display:none, opacity:0 and visibility:hidden text, and break
+ * lines at block boxes and <br> the way innerText does. Split words
+ * ("Pro<span>moted</span>") still join, because inline boxes add no break.
+ */
+export function renderedText(node: Element): string {
+  const view = node.ownerDocument.defaultView;
+  if (!view) return node.textContent ?? '';
+  const parts: string[] = [];
+  let len = 0;
+  const walk = (el: Element, visible: boolean): void => {
+    for (let n = el.firstChild; n && len < MAX_RENDERED; n = n.nextSibling) {
+      if (n.nodeType === 3) {
+        const t = n.nodeValue ?? '';
+        if (visible && t) {
+          parts.push(t);
+          len += t.length;
+        }
+        continue;
+      }
+      if (n.nodeType !== 1) continue;
+      const child = n as Element;
+      const name = child.localName.toUpperCase();
+      if (SKIP_TEXT_IN.has(name)) continue;
+      if (name === 'BR') {
+        parts.push('\n');
+        continue;
+      }
+      const cs = view.getComputedStyle(child);
+      if (cs.display === 'none' || cs.opacity === '0') continue;
+      // visibility inherits, and a visible child of a hidden parent does show.
+      const block = BLOCK_DISPLAY.test(cs.display);
+      if (block) parts.push('\n');
+      walk(child, shows(cs.visibility, visible));
+      if (block) parts.push('\n');
+    }
+  };
+  walk(node, shows(view.getComputedStyle(node).visibility, true));
+  return parts.join('');
 }
 
 /**
@@ -34,9 +80,14 @@ export function renderedWithin(node: Element, unit: Element): boolean {
   return true;
 }
 
-/** Visible text of a node inside a unit; '' when the node is not rendered. */
+/**
+ * Visible text of a node inside a unit; '' when the node is not rendered. Most
+ * label nodes are leaves, and a rendered leaf shows exactly its text, so only
+ * nodes with children pay for the walk.
+ */
 function labelText(node: Element, unit: Element): string {
-  return renderedWithin(node, unit) ? visibleText(node) : '';
+  if (!renderedWithin(node, unit)) return '';
+  return node.firstElementChild ? renderedText(node) : (node.textContent ?? '');
 }
 
 function safeQueryAll(root: Element, selector: string): Element[] {
@@ -115,7 +166,6 @@ export function hasCta(unit: Element): boolean {
 
 /** Past this much text a unit's identity and muted-word check are settled. */
 const MAX_UNIT_TEXT = 5000;
-const SKIP_TEXT_IN = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);
 
 /**
  * A unit's text, for its fingerprint and muted words. Deliberately NOT innerText:
@@ -174,7 +224,7 @@ const MAX_LABELLEDBY = 40;
 /**
  * Tier 0 marker detection for one unit. Returns the first sponsored hit, else the
  * first suggested hit (only when asked for), else null. Cheap checks first;
- * innerText and computed style (which force layout) last.
+ * computed style (a style pass, never layout) last.
  */
 export function detectMarker(unit: Element, adapter: Adapter | null, base: string, opts: DetectOptions = {}): MarkerHit | null {
   const sponsored = (kind: MarkerHit['kind'], detail: string): MarkerHit => ({ kind, category: 'sponsored', detail });
@@ -254,7 +304,7 @@ function genericLabelHit(unit: Element): string | null {
   const candidates = safeQueryAll(unit, 'span, div, p, small, a, li, header *').slice(0, 300);
   for (const el of candidates) {
     const raw = el.textContent ?? '';
-    if (raw.length > 60) continue; // skip containers before paying for innerText
+    if (raw.length > 60) continue; // skip containers before paying for computed style
     if (!isMarkerText(raw)) continue; // cheap reject before paying for layout
     const t = labelText(el, unit);
     if (isMarkerText(t)) return normaliseText(t);

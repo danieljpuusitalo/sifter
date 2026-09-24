@@ -15,7 +15,7 @@ evals/results/
 test-results/
 playwright-report/
 web-ext.config.ts
-.dev-profile/
+.dev-profile*/
 
 # Benchmark outputs
 bench/results/

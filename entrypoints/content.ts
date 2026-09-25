@@ -2,8 +2,29 @@ import { browser } from 'wxt/browser';
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { adapterFor } from '../src/adapters';
 import { Scanner } from '../src/content/scanner';
-import type { BgRequest, SiteContext, TabRequest } from '../src/messages';
+import { defaultContext, type BgRequest, type SiteContext, type TabRequest } from '../src/messages';
 import { LAUNCH_MATCHES } from '../src/sites';
+
+/** Backoff between retries of a service-worker message that may still be waking up. */
+const CONTEXT_RETRY_DELAYS_MS = [300, 900];
+
+/**
+ * Send a message and retry on rejection (the service worker asleep or mid-update
+ * both reject the promise, rather than answering late). Rejects with the last
+ * error once the delays are exhausted, so callers decide the fallback.
+ */
+async function withRetry<T>(send: () => Promise<T>, delaysMs: number[]): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await send();
+    } catch (e) {
+      lastErr = e;
+      if (attempt >= delaysMs.length) throw lastErr;
+      await new Promise((r) => setTimeout(r, delaysMs[attempt]));
+    }
+  }
+}
 
 /**
  * Probe for an instance already on this page. A live one answers; one orphaned by
@@ -27,7 +48,12 @@ export default defineContentScript({
 
     const hostname = location.hostname;
     const send = <T>(msg: BgRequest) => browser.runtime.sendMessage(msg) as Promise<T>;
-    const context = await send<SiteContext>({ type: 'sifter:getContext', hostname });
+    const context = await withRetry(() => send<SiteContext>({ type: 'sifter:getContext', hostname }), CONTEXT_RETRY_DELAYS_MS).catch(
+      (e: unknown) => {
+        console.warn('[sifter] could not load settings', e);
+        return defaultContext(hostname);
+      },
+    );
 
     const scanner = new Scanner({
       doc: document,
@@ -55,7 +81,7 @@ export default defineContentScript({
 
     let resumeTimer: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {
-      const ctx = await send<SiteContext>({ type: 'sifter:getContext', hostname });
+      const ctx = await withRetry(() => send<SiteContext>({ type: 'sifter:getContext', hostname }), CONTEXT_RETRY_DELAYS_MS);
       scanner.applyContext(ctx);
       // Answer with the re-decided page, not a half-done one; but never hang the popup.
       await Promise.race([scanner.settled(), new Promise((r) => setTimeout(r, SETTLE_CAP_MS))]);

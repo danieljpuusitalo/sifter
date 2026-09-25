@@ -66,6 +66,29 @@ export function siteKey(hostname: string): string {
 /** A plain hostname: what may go into a match pattern. Rejects wildcards, ports, paths. */
 export const HOSTNAME_RE = /^(?=.{4,253}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/;
 
+/**
+ * Match patterns for opt-in hosts the user has both switched on and granted
+ * permission to (host_permissions or the "on all sites" wildcard). Pure so it can
+ * be shared by content-script registration and the post-install/update tab
+ * injection without either drifting from the other.
+ */
+export function optInScriptMatches(hosts: string[], grantedOrigins: string[]): string[] {
+  const origins = new Set(grantedOrigins);
+  return hosts
+    .flatMap((h) => [`https://${h}/*`, `https://www.${h}/*`])
+    .filter((m) => origins.has(m) || origins.has('https://*/*'));
+}
+
+/**
+ * Every match pattern whose already-open tabs need the content script
+ * force-injected after install/update. Chrome only auto-injects
+ * `content_scripts` into tabs opened after the extension loads, so tabs open
+ * beforehand (launch sites, and opt-in sites already granted) are missed.
+ */
+export function injectTargetMatches(optInMatches: string[]): string[] {
+  return [...LAUNCH_MATCHES, ...optInMatches];
+}
+
 /** The sites Sifter ships an adapter for, by site key, in the order the UI lists them. */
 export const LAUNCH_SITES: { key: string; name: string }[] = [
   { key: 'linkedin.com', name: 'LinkedIn' },

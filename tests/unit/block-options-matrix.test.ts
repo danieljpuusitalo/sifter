@@ -34,6 +34,9 @@ const SITES: SiteFixture[] = [
   { id: 'google-ad-containers', fixture: 'google-ad-containers.html', host: 'www.google.com' },
 ];
 
+/** Fixtures that carry `data-gold="suggested"` units; the others prove only the sponsored path. */
+const SITES_WITH_SUGGESTED = new Set(['linkedin', 'facebook', 'instagram', 'x']);
+
 // Includes `<head>` (not just `<body>`): some fixtures use a CSS-hidden decoy
 // (e.g. a `display:none` "Promoted" span) to prove the scanner's visibility-aware
 // text extraction ignores it, which only works if the `<style>` rule is actually
@@ -109,6 +112,13 @@ describe.each(SITES)('$id: categories', ({ id, fixture, host }) => {
     const all = goldEls();
     const hAll = new Set(all.filter(isHidden));
     expect(hAll.size, `${id}: nothing hidden to test against`).toBeGreaterThan(0);
+    // The "keeps the other category hidden" half of this test only says something
+    // where the fixture has both kinds of unit hidden. Reddit, Threads and Google
+    // carry no suggested gold, so state that here rather than pass on an empty loop.
+    const hasSuggested = [...hAll].some((el) => el.getAttribute('data-gold') === 'suggested');
+    const hasSponsored = [...hAll].some((el) => el.getAttribute('data-gold') === 'sponsored');
+    expect(hasSponsored, `${id}: no sponsored unit hidden at baseline`).toBe(true);
+    expect(hasSuggested, `${id}: suggested gold present in the fixture`).toBe(SITES_WITH_SUGGESTED.has(id));
 
     apply(s, host, { categories: { sponsored: false, suggested: true, custom: true } });
     for (const el of all) if (el.getAttribute('data-gold') === 'sponsored') expect(isHidden(el), `${id}: sponsored unit still hidden with sponsored off`).toBe(false);

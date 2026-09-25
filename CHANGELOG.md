@@ -38,7 +38,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   children (`> div:first-child span`), and Sifter's own placeholder had become
   the unit's first child, so a rescan no longer saw the "Sponsored" label. The
   scanner now detaches the placeholder while it reads a hidden unit, so every
-  adapter sees the post exactly as the site rendered it.
+  adapter sees the post exactly as the site rendered it. A read that throws
+  mid-rescan (the case `decide` already survives) now restores the placeholder
+  and the hide before the error propagates; before, that unit came back as a
+  visible post with no placeholder and stayed that way.
+- `PageState.settled` tells a caller whether the scanner has finished the last
+  refresh, so the e2e matrix waits for the real count instead of the 1 s
+  snapshot `sifter:refresh` answers with on a slow machine.
+- An ad-click link (`googleadservices.com`, `doubleclick.net`, Google's own
+  `/aclk`) now marks a unit as sponsored only on Google Search and on opted-in
+  generic sites. On a social feed a post that links to one of those hosts in its
+  body (a thread about tracking, an adtech job ad) is a real post and stays.
+- An element rule that would hide most of a page (`##*`, `##div`, `##body`) is
+  now rejected at save time with a reason, and skipped by the scanner if one
+  reaches storage another way (an edited backup). The scanner hides the
+  innermost match, so `##div` used to blank every leaf of the feed.
+- Turning Sifter on for another site now rejects a malformed hostname before it
+  is stored, and re-registering the opt-in content script updates the existing
+  registration in place. Before, the sync unregistered first and registered
+  second, so a refused pattern list left every opted-in site without a script
+  until the next successful sync.
+- The settings page's Sites table says when Chrome no longer grants access to
+  a site you added (revoked in chrome://extensions), instead of showing it "On"
+  while Sifter cannot run there.
+- Store listing and privacy policy: "hide completely" leaves no note (only
+  collapse and blur do), and the Google host permission covers 19 country
+  domains, not just google.com.
 - A throwing `decide()` (a bad adapter selector, for instance) no longer
   kills the scanner. `scanNow()`'s `running` guard used to mean an
   unhandled exception inside one unit's decision stopped every future scan

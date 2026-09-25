@@ -4,7 +4,11 @@ import { defineConfig } from '@playwright/test';
 // `pnpm test:e2e` builds first; the fixture pages are served by request routing.
 export default defineConfig({
   testDir: 'tests/e2e',
-  timeout: 30_000,
+  timeout: 60_000,
+  // The scanner works in idle slices, so on a starved runner the first hide can
+  // take well over Playwright's 5 s default; a taller expect timeout costs nothing
+  // on a green run and stops a slow CI box from failing a correct build.
+  expect: { timeout: 15_000 },
   workers: 1,
   retries: process.env.CI ? 2 : 0,
   reporter: [['list']],

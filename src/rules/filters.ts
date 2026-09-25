@@ -61,6 +61,49 @@ function closed(selector: string): boolean {
   return quote === null && stack.length === 0;
 }
 
+/** Split a selector list at its top-level commas (not inside quotes, brackets or parentheses). */
+function topLevelParts(selector: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let start = 0;
+  for (let i = 0; i < selector.length; i++) {
+    const ch = selector[i] as string;
+    if (ch === '\\') {
+      i++;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth--;
+    else if (ch === ',' && depth === 0) {
+      parts.push(selector.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(selector.slice(start));
+  return parts.map((p) => p.trim());
+}
+
+/**
+ * A rule that would match most of a page: `*`, a bare tag name (`div`, `a`), or
+ * anything whose subject is `html` or `body`. The scanner hides the innermost
+ * match with a placeholder, so `##div` blanks every leaf of the feed and `##body`
+ * the page; no user means that, and an ad blocker's filter syntax invites the
+ * typo. Checked per comma-separated part, since the scanner joins rules with ", ".
+ */
+export function tooBroad(selector: string): boolean {
+  return topLevelParts(selector).some((part) => {
+    if (!part) return true;
+    if (/^\*$/.test(part) || /^[a-z][a-z0-9-]*$/i.test(part)) return true;
+    // The subject is the last compound: after the last combinator outside brackets.
+    const subject = part.split(/[\s>+~]+(?![^([]*[)\]])/).pop() ?? '';
+    return /^(html|body)(?![a-z0-9-])/i.test(subject) || subject === '*';
+  });
+}
+
 export type ParsedRule = { site: string; selector: string };
 export type RuleError = { line: number; text: string; reason: string };
 
@@ -90,6 +133,8 @@ export function parseRules(text: string, isValid: (selector: string) => boolean)
       errors.push({ line: i + 1, text: line, reason: `"${rawSite}" isn't a site name` });
     } else if (!selector || !closed(selector) || !isValid(selector)) {
       errors.push({ line: i + 1, text: line, reason: 'the selector is not valid CSS' });
+    } else if (tooBroad(selector)) {
+      errors.push({ line: i + 1, text: line, reason: 'the selector would hide most of the page (a bare tag, *, html or body)' });
     } else if (rules.length >= MAX_RULES) {
       errors.push({ line: i + 1, text: line, reason: `more than ${MAX_RULES} rules` });
     } else {

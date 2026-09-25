@@ -31,7 +31,7 @@ Uninstalling Sifter deletes it.
 
 | Permission | Why |
 |---|---|
-| Access to linkedin.com, reddit.com, google.com, x.com, twitter.com, instagram.com, facebook.com, threads.com, threads.net | to find and hide sponsored posts on those sites |
+| Access to linkedin.com, reddit.com, x.com, twitter.com, instagram.com, facebook.com, threads.com, threads.net, and Google Search on google.com plus 18 country domains (google.nl, google.de, google.co.uk, …; the full list is `GOOGLE_DOMAINS` in `src/sites.ts`) | to find and hide sponsored posts on those sites |
 | Other sites (optional, only when you ask) | when you choose "Hide ads on this site" in the popup, Chrome asks you to grant that one site |
 | `storage` | to keep your settings on your device |
 | `scripting` | to start Sifter on a site you've just turned on, without a reload |

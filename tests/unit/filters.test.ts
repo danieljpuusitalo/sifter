@@ -6,7 +6,7 @@ import { Scanner } from '../../src/content/scanner';
 import { detectMarker, mutedWordRendered, unitText } from '../../src/extract';
 import { fingerprint, stableText } from '../../src/fingerprint';
 import { defaultContext, type SiteContext } from '../../src/messages';
-import { MAX_RULES, mutedWordHit, mutedWordPattern, parseRules, selectorsFor } from '../../src/rules/filters';
+import { MAX_RULES, mutedWordHit, mutedWordPattern, parseRules, selectorsFor, tooBroad } from '../../src/rules/filters';
 import { decideTier0 } from '../../src/rules/tier0';
 import { siteKey } from '../../src/storage/settings';
 
@@ -67,6 +67,18 @@ describe('element rules', () => {
       { site: '', selector: 'aside.ad' },
     ]);
     expect(errors.map((e) => e.line)).toEqual([5, 6, 7, 8]);
+  });
+  it('rejects a rule that would hide most of the page', () => {
+    for (const bad of ['*', 'div', 'a', 'body', 'html', 'body.dark', '.x, *', '.x, span', 'main > body']) {
+      expect(tooBroad(bad), bad).toBe(true);
+    }
+    for (const ok of ['div.promo', '#ad', '[data-ad]', 'a[href~="x"]', 'div:has(> span.sponsored)', '.feed div', 'body .promo', 'aside.ad, .x']) {
+      expect(tooBroad(ok), ok).toBe(false);
+    }
+    const { rules, errors } = parseRules('##*\nreddit.com##div\n##.fine', validCss);
+    expect(rules).toEqual([{ site: '', selector: '.fine' }]);
+    expect(errors.map((e) => e.line)).toEqual([1, 2]);
+    expect(errors[0]?.reason).toMatch(/most of the page/);
   });
   it('caps the number of rules', () => {
     const text = Array.from({ length: MAX_RULES + 5 }, (_, i) => `##.r${i}`).join('\n');
@@ -212,6 +224,13 @@ describe('scanner: blocks, custom rules, context menu', () => {
     expect(document.querySelector('#promo-box')!.firstElementChild?.getAttribute('data-sifter-placeholder')).toBe('custom');
     setup('x.com', xPage, { customSelectors: ['#promo-box'], categories: { sponsored: true, suggested: false, custom: false } });
     expect(hidden('#promo-box')).toBe(false);
+  });
+  it('a too-broad rule that reached storage is skipped by the scanner, not applied', () => {
+    // Positive control: a scoped rule from the same list still hides.
+    setup('x.com', xPage, { customSelectors: ['div', '*', 'body', '#promo-box'] });
+    expect(hidden('#promo-box')).toBe(true);
+    expect(hidden('body')).toBe(false);
+    expect(document.querySelectorAll(`.${HIDDEN_CLASS}, [data-sifter-placeholder]`).length).toBeLessThan(4);
   });
   it('muted words hide the post as custom, and the placeholder says which word', () => {
     setup('x.com', xPage, { mutedWords: ['plain'] });

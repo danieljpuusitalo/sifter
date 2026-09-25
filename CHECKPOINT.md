@@ -21,6 +21,27 @@ The e2e run found a real bug on Threads: its `> div:first-child span` label sele
 stopped matching once Sifter's placeholder became the unit's first child, so every
 refresh released and re-hid the sponsored posts. `decide()` now detaches the placeholder
 around its reads (`tests/unit/rescan-placeholder.test.ts`, failing before the fix).
+Session 10 (same day, `fix/audit-hardening`) audited sessions 8 and 9 and then ran an
+adversarial read-only audit over the whole tree. Fixed from the first pass: a read
+that throws mid-rescan restores the placeholder and the hide (try/finally in
+`decide()`, negative-controlled); `PageState.settled` plus polling in the e2e matrix,
+because `sifter:refresh` answers with a 1 s snapshot on a slow machine (the one flake
+seen, X 2 vs 3, was that); the matrix's suggested assertions no longer pass vacuously
+on sites with no suggested gold; Playwright expect timeout 15 s / test 60 s. Fixed from
+the adversarial pass, in the auditor's order: the store listing promised a note on
+"every hidden post" while hide mode leaves none; ad-click URLs marked a unit on every
+adapter although the comment said Google-only (now `!adapter || adapter.id ===
+'google'`); `##*`, `##div`, `##body` were accepted as element rules (`tooBroad()` in
+filters.ts, checked at save and again in the scanner); `setSiteEnabled` stored any
+hostname and `doSync` unregistered the opt-in script before a registration that could
+fail (now `HOSTNAME_RE` gate + `updateContentScripts` in place); the Sites table showed
+an opt-in host "On" after Chrome revoked its grant. Deferred: rejecting `:has(` in
+user rules (the shipped adapters use it; cost is bounded by the dirty-subtree path);
+Reddit shadow-DOM DevTools check and Facebook "Suggested for you" live markup remain
+Daniel's. Incident: the ops maintenance runner's disposable worktree (`sifter-probe`)
+ran `pnpm install` and relinked this repo's `node_modules` to its own store, which then
+vanished; `pnpm install --frozen-lockfile` repaired it. Under one busy-loop process the
+e2e suite still passed 24/24.
 Session 5 landed and tagged `v1.0.0` (`050e41f`); session 4 was the agent-driven
 audit; session 3 shipped the seven adapters, popup, options and store docs.
 
@@ -343,7 +364,9 @@ path is still unverified live (no sponsored feed post appeared this session eith
 - **Suggested rule ids** (`suggested.rules[].id`) are storage keys: renaming one silently resets every user's switch for it.
 - **Background `authorize()`:** a content script's hostname comes from `sender.url`, never from the message.
 - **Placeholder CSS through one adopted sheet** (`placeholderSheet` in `src/content/hider.ts`): a `<style>` per placeholder re-parses the same CSS on every hide. Keep the `<style>` fallback for realms without constructable sheets.
-- **`rel=sponsored` is global, `/aclk` is Google-only.** Decided 2026-09-25; the reasoning sits above the check in `src/extract.ts`.
+- **`rel=sponsored` is global; ad-click URLs count only on Google and on opted-in generic sites** (`adLinks` gate in `detectMarker`, session 10). Decided 2026-09-25; the reasoning sits above the check in `src/extract.ts`.
+- **`tooBroad()` runs twice**, at save (`parseRules`) and in `compileContext`: storage is data, and an imported backup skips the options page.
+- **`doSync` updates the opt-in registration in place** (`updateContentScripts`), and unregisters only when the match list is empty. Unregister-then-register left every opt-in site dark when the register step was refused.
 - **The placeholder is the unit's first child, not a sibling** (session 6): LinkedIn's virtualised feed parks a 0-height slot off-screen with its siblings. Collapse and blur go through `UNIT_CSS` on the unit's children; only `hide` mode writes inline style to the unit.
 - **`content.ts` registers the probe listener before its first `await`:** install-time `executeScript` and `content_scripts` can start in the same tick, and a late listener lets both instances run.
 - **Foreign-hidden check is gated on `hider.isHidden(unit)` first** (session 7): the unmask window lifts classes only; hide mode's inline `display:none` stays, and without the gate a rescan unhides Sifter's own hides.

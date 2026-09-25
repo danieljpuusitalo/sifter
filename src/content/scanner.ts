@@ -3,7 +3,7 @@ import type { Adapter } from '../adapters/schema';
 import { detectMarker, mutedWordRendered, unitText } from '../extract';
 import { changeSignature, fingerprint } from '../fingerprint';
 import type { PageState, ScanPerf, SiteContext } from '../messages';
-import { mutedWordHit, mutedWordPattern } from '../rules/filters';
+import { mutedWordHit, mutedWordPattern, tooBroad } from '../rules/filters';
 import { decideTier0 } from '../rules/tier0';
 import type { BlockCategory, HideCategory, OverrideAction } from '../types';
 import { BLUR_CLASS, COLLAPSE_CLASS, Hider, HIDDEN_CLASS, PLACEHOLDER_ATTR } from './hider';
@@ -176,6 +176,7 @@ export class Scanner {
       const probe = this.deps.doc.createDocumentFragment();
       for (const selector of customSelectors) {
         // The options page validates rules, but storage is data: re-check before use (hard rule 2).
+        if (tooBroad(selector)) continue;
         try {
           probe.querySelector(selector);
           blocks.push({ selector, category: 'custom' });
@@ -303,6 +304,7 @@ export class Scanner {
       canSuggest: !!this.deps.adapter?.suggested || !!this.deps.adapter?.blocks.some((b) => b.category === 'suggested'),
       rules: (this.deps.adapter?.suggested?.rules ?? []).map((r) => ({ id: r.id, label: r.label, on: !this.offRules.has(r.id) })),
       hiddenNow: this.hider.hiddenUnits().length,
+      settled: !this.running && this.debounceTimer === null,
       noUnitsMatched: this.noUnitsMatched,
       perf: { ...this.perf, pending: this.pending.length + this.carried.length },
     };
@@ -717,28 +719,37 @@ export class Scanner {
     // Both moves are placeholder-only childList records, which onMutations ignores.
     const placeholder = this.hider.placeholderOf(unit);
     if (placeholder) placeholder.remove();
-    const marker = detectMarker(unit, adapter, baseUrl, { suggested: categories.suggested, offRules: this.offRules });
-    const text = unitText(unit, adapter);
-    // Something other than Sifter (another ad blocker's cosmetic filter, invisible
-    // to the page CSSOM) already hid the element the marker matched. Hiding it
-    // again would stack a placeholder on content the user can never get back with
-    // Show, so treat the unit as already handled: no decision, ever, from this
-    // marker. checkVisibility is a style pass, not layout (hard rule 7), and only
-    // runs when a marker was found. happy-dom may lack it; then treat as visible.
-    // A unit Sifter hid itself is never foreign: "hide" mode puts an inline
-    // display:none on the unit that the unmask above does not lift.
-    const foreignHidden =
-      !this.hider.isHidden(unit) &&
-      !!marker?.node &&
-      typeof marker.node.checkVisibility === 'function' &&
-      !marker.node.checkVisibility();
-    // unitText also feeds the fingerprint, so it must read the same hidden or
-    // shown (see its own comment); a custom hide must not fire on a word that
-    // only exists in text a style hides, so confirm the hit is actually rendered.
-    const wordHit = mutedWordHit(text, this.muted);
-    const custom = wordHit && this.muted && mutedWordRendered(unit, this.muted) ? wordHit : null;
-    if (placeholder) unit.prepend(placeholder);
-    if (maskedClasses.length) unit.classList.add(...maskedClasses);
+    let marker: ReturnType<typeof detectMarker>;
+    let text: string;
+    let foreignHidden: boolean;
+    let custom: string | null;
+    try {
+      marker = detectMarker(unit, adapter, baseUrl, { suggested: categories.suggested, offRules: this.offRules });
+      text = unitText(unit, adapter);
+      // Something other than Sifter (another ad blocker's cosmetic filter, invisible
+      // to the page CSSOM) already hid the element the marker matched. Hiding it
+      // again would stack a placeholder on content the user can never get back with
+      // Show, so treat the unit as already handled: no decision, ever, from this
+      // marker. checkVisibility is a style pass, not layout (hard rule 7), and only
+      // runs when a marker was found. happy-dom may lack it; then treat as visible.
+      // A unit Sifter hid itself is never foreign: "hide" mode puts an inline
+      // display:none on the unit that the unmask above does not lift.
+      foreignHidden =
+        !this.hider.isHidden(unit) &&
+        !!marker?.node &&
+        typeof marker.node.checkVisibility === 'function' &&
+        !marker.node.checkVisibility();
+      // unitText also feeds the fingerprint, so it must read the same hidden or
+      // shown (see its own comment); a custom hide must not fire on a word that
+      // only exists in text a style hides, so confirm the hit is actually rendered.
+      const wordHit = mutedWordHit(text, this.muted);
+      custom = wordHit && this.muted && mutedWordRendered(unit, this.muted) ? wordHit : null;
+    } finally {
+      // A throwing read (decideSafely catches it) must not leave a hidden post
+      // unmasked and its placeholder detached: restore before the error propagates.
+      if (placeholder) unit.prepend(placeholder);
+      if (maskedClasses.length) unit.classList.add(...maskedClasses);
+    }
     if (foreignHidden) {
       this.perf.foreignHidden++;
       const fp = fingerprint(site, text || structuralKey(unit));

@@ -55,6 +55,8 @@ export type PageState = {
   /** This site's named suggested rules, each with whether it is on here. */
   rules: { id: string; label: string; on: boolean }[];
   hiddenNow: number;
+  /** No scan is queued or running: the counts above are the settled answer, not a snapshot mid-slice. */
+  settled: boolean;
   /** A full scan found a substantial feed root but matched zero units in it: this site's rules may be stale. */
   noUnitsMatched: boolean;
   /** Scanner self-cost on this page (hard rule 7), for the popup and the scroll bench. */

@@ -6,6 +6,9 @@ revealing nothing, muted-words audit) plus a hardening pass, on
 first five complaints (PR #10). **Nothing is released for either round yet**: `main`
 carries the fixes, `v1.0.0` is still the only tag, the CHANGELOG has an
 `[Unreleased]` section.
+Session 8 (same day, PR #12, on main as 31fd4e6) tagged Facebook **Experimental** in the
+popup, the options page, README, CHANGELOG and store listing, after Daniel reported it
+still leaky; one note in LAUNCH_SITES drives every surface, and a test pins the README row.
 Session 5 landed and tagged `v1.0.0` (`050e41f`); session 4 was the agent-driven
 audit; session 3 shipped the seven adapters, popup, options and store docs.
 

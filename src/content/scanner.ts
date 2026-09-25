@@ -1,6 +1,6 @@
 import { findGenericUnits, innermost } from '../adapters/generic';
 import type { Adapter } from '../adapters/schema';
-import { detectMarker, unitText } from '../extract';
+import { detectMarker, mutedWordRendered, unitText } from '../extract';
 import { changeSignature, fingerprint } from '../fingerprint';
 import type { PageState, ScanPerf, SiteContext } from '../messages';
 import { mutedWordHit, mutedWordPattern } from '../rules/filters';
@@ -64,6 +64,16 @@ function firstHint(text: string): string | undefined {
   const line = text.split('\n').find((l) => l.trim());
   const trimmed = line?.trim();
   return trimmed ? trimmed.slice(0, MAX_HINT) : undefined;
+}
+
+/** For category "custom", the placeholder says why, not the post's first line. */
+function wordHint(word: string): string {
+  return `muted word “${word}”`.slice(0, MAX_HINT);
+}
+
+/** Same, for a custom hide from an element rule (a whole matched module). */
+function ruleHint(selector: string): string {
+  return `rule ${selector}`.slice(0, MAX_HINT);
 }
 
 const EMPTY_PERF: Omit<ScanPerf, 'pending'> = {
@@ -607,7 +617,10 @@ export class Scanner {
         custom: cat === 'custom' ? block.selector : null,
         categories,
       });
-      if (decision.action === 'hide') return { unit, fp, hide: decision.category, block: true };
+      if (decision.action === 'hide') {
+        const hint = cat === 'custom' ? ruleHint(block.selector) : undefined;
+        return { unit, fp, hide: decision.category, block: true, hint };
+      }
       return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;
     }
     if (this.blockHidden.has(unit) && !this.isUnit(unit)) {
@@ -629,6 +642,11 @@ export class Scanner {
     // marker. checkVisibility is a style pass, not layout (hard rule 7), and only
     // runs when a marker was found. happy-dom may lack it; then treat as visible.
     const foreignHidden = !!marker?.node && typeof marker.node.checkVisibility === 'function' && !marker.node.checkVisibility();
+    // unitText also feeds the fingerprint, so it must read the same hidden or
+    // shown (see its own comment); a custom hide must not fire on a word that
+    // only exists in text a style hides, so confirm the hit is actually rendered.
+    const wordHit = mutedWordHit(text, this.muted);
+    const custom = wordHit && this.muted && mutedWordRendered(unit, this.muted) ? wordHit : null;
     if (maskedClasses.length) unit.classList.add(...maskedClasses);
     if (foreignHidden) {
       this.perf.foreignHidden++;
@@ -647,10 +665,13 @@ export class Scanner {
     const decision = decideTier0({
       override: this.ctx.overrides[fp],
       marker,
-      custom: mutedWordHit(text, this.muted),
+      custom,
       categories,
     });
-    if (decision.action === 'hide') return { unit, fp, hide: decision.category, hint: firstHint(text) };
+    if (decision.action === 'hide') {
+      const hint = decision.category === 'custom' && custom ? wordHint(custom) : firstHint(text);
+      return { unit, fp, hide: decision.category, hint };
+    }
     return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;
   }
 

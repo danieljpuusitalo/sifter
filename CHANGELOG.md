@@ -16,6 +16,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   adapter needs at least two independent sponsored signals, or a one-line
   allowlist reason, so a weak new adapter or a removed signal fails CI on
   purpose.
+- Facebook is tagged **Experimental** in the popup, the settings page and the
+  README: it runs and hides what it can, but some "Suggested for you" posts and
+  feed ads still get through, and Facebook's markup changes often.
 - A real-Chromium selector canary (`tests/e2e/selector-canary.spec.ts`):
   every selector string in every adapter runs through `querySelectorAll` on
   a blank page, because happy-dom silently accepts selectors Chrome rejects.

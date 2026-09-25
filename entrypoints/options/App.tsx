@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { browser } from 'wxt/browser';
 import { bg } from '../../src/bg';
 import { MAX_WORDS, parseRules, type RuleError } from '../../src/rules/filters';
-import { LAUNCH_SITES } from '../../src/sites';
+import { experimentalNote, LAUNCH_SITES } from '../../src/sites';
 import {
   clearOverrides,
   exportBackup,
@@ -215,6 +215,11 @@ function Sites(props: { settings: Settings; onChange: () => void }) {
                 <tr key={key} class={on ? '' : 'off'}>
                   <th scope="row">
                     {nameOf(key)}
+                    {experimentalNote(key) && (
+                      <span class="badge" title={experimentalNote(key) ?? undefined}>
+                        Experimental
+                      </span>
+                    )}
                     {!launch(key) && <span class="muted small block">added by you</span>}
                   </th>
                   <td>

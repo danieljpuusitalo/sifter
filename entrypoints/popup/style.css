@@ -12,6 +12,7 @@ button.link:hover { color: var(--fg); }
 .blocks { display: grid; gap: 8px; }
 .blocks h2 { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: none; }
 .small { font-size: 12px; }
+.badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--muted); vertical-align: 1px; }
 .switch.sub { padding-left: 26px; font-size: 13px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .foot { font-size: 12px; border-top: 1px solid var(--line); padding-top: 10px; }

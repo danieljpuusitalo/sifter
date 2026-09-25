@@ -9,6 +9,18 @@ carries the fixes, `v1.0.0` is still the only tag, the CHANGELOG has an
 Session 8 (same day, PR #12, on main as 31fd4e6) tagged Facebook **Experimental** in the
 popup, the options page, README, CHANGELOG and store listing, after Daniel reported it
 still leaky; one note in LAUNCH_SITES drives every surface, and a test pins the README row.
+Session 9 (same day, PR #14, `fix/block-options-matrix`) answered "I turned off 'posts your
+network liked' and it's still hiding them": live inspection showed the post also carried
+a Follow button, so the `follow` rule held it, and the placeholder gave no clue. Now the
+placeholder names the rule ("Hidden suggestion · People and pages you don't follow").
+Every block option's on and off path is pinned on every site by a unit matrix
+(`tests/unit/block-options-matrix.test.ts`, 38 cases: categories, each named rule as a
+strict real subset, all rules off, site enable, muted word, element rule) and an e2e
+matrix through the real popup messaging (`tests/e2e/block-options.spec.ts`, 8 cases).
+The e2e run found a real bug on Threads: its `> div:first-child span` label selector
+stopped matching once Sifter's placeholder became the unit's first child, so every
+refresh released and re-hid the sponsored posts. `decide()` now detaches the placeholder
+around its reads (`tests/unit/rescan-placeholder.test.ts`, failing before the fix).
 Session 5 landed and tagged `v1.0.0` (`050e41f`); session 4 was the agent-driven
 audit; session 3 shipped the seven adapters, popup, options and store docs.
 

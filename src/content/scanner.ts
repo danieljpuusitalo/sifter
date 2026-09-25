@@ -53,7 +53,7 @@ export type ScannerDeps = {
 
 type Seen = { sig: string; fp: string };
 /** A whole page module hidden by rule: an adapter block, or one of the user's element rules. */
-type Block = { selector: string; category: BlockCategory; innermost?: boolean; anchor?: string };
+type Block = { selector: string; category: BlockCategory; innermost?: boolean; anchor?: string; rule?: string };
 type Decision = { unit: Element; fp: string; hide: HideCategory | null; block?: boolean; hint?: string };
 
 /** Past this many characters a placeholder's hint is post body, not a label. */
@@ -74,6 +74,18 @@ function wordHint(word: string): string {
 /** Same, for a custom hide from an element rule (a whole matched module). */
 function ruleHint(selector: string): string {
   return `rule ${selector}`.slice(0, MAX_HINT);
+}
+
+/**
+ * For a suggested hide, the placeholder names the switch that hid it ("People
+ * and pages you don't follow"), not the post's first line: a post can match two
+ * rules at once (liked by a connection, from someone you don't follow), and the
+ * user has to see which switch is still on when they turn one off.
+ */
+function suggestedHint(adapter: Adapter | null, rule: string | undefined): string | undefined {
+  if (!rule) return undefined;
+  const label = adapter?.suggested?.rules.find((r) => r.id === rule)?.label;
+  return label ? label.slice(0, MAX_HINT) : undefined;
 }
 
 const EMPTY_PERF: Omit<ScanPerf, 'pending'> = {
@@ -683,7 +695,7 @@ export class Scanner {
         categories,
       });
       if (decision.action === 'hide') {
-        const hint = cat === 'custom' ? ruleHint(block.selector) : undefined;
+        const hint = cat === 'custom' ? ruleHint(block.selector) : suggestedHint(adapter, block.rule);
         return { unit, fp, hide: decision.category, block: true, hint };
       }
       return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;
@@ -698,6 +710,13 @@ export class Scanner {
     // in between, so this never flashes the content back.
     const maskedClasses = [HIDDEN_CLASS, COLLAPSE_CLASS, BLUR_CLASS].filter((c) => unit.classList.contains(c));
     if (maskedClasses.length) unit.classList.remove(...maskedClasses);
+    // The placeholder is the unit's first child, so a selector that counts children
+    // ("> div:first-child span") would miss the real header on a rescan and release
+    // the unit, only to hide it again on the next pass. Read the unit as the site
+    // built it: lift the placeholder out for the reads and put it straight back.
+    // Both moves are placeholder-only childList records, which onMutations ignores.
+    const placeholder = this.hider.placeholderOf(unit);
+    if (placeholder) placeholder.remove();
     const marker = detectMarker(unit, adapter, baseUrl, { suggested: categories.suggested, offRules: this.offRules });
     const text = unitText(unit, adapter);
     // Something other than Sifter (another ad blocker's cosmetic filter, invisible
@@ -718,6 +737,7 @@ export class Scanner {
     // only exists in text a style hides, so confirm the hit is actually rendered.
     const wordHit = mutedWordHit(text, this.muted);
     const custom = wordHit && this.muted && mutedWordRendered(unit, this.muted) ? wordHit : null;
+    if (placeholder) unit.prepend(placeholder);
     if (maskedClasses.length) unit.classList.add(...maskedClasses);
     if (foreignHidden) {
       this.perf.foreignHidden++;
@@ -740,7 +760,10 @@ export class Scanner {
       categories,
     });
     if (decision.action === 'hide') {
-      const hint = decision.category === 'custom' && custom ? wordHint(custom) : firstHint(text);
+      const hint =
+        decision.category === 'custom' && custom
+          ? wordHint(custom)
+          : (decision.category === 'suggested' ? suggestedHint(adapter, marker?.rule) : undefined) ?? firstHint(text);
       return { unit, fp, hide: decision.category, hint };
     }
     return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;

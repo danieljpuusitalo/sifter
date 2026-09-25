@@ -25,6 +25,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The placeholder for a suggested post now names the switch that hid it
+  ("Hidden suggestion · People and pages you don't follow") instead of the
+  post's first line. A post can match two rules at once (a connection liked it
+  and its author is someone you don't follow), so turning one rule off left it
+  hidden by the other with nothing on screen saying so; it looked like the off
+  switch had failed. Every block option's on and off path is now pinned by a
+  matrix test across all sites (`tests/unit/block-options-matrix.test.ts`,
+  `tests/e2e/block-options.spec.ts`).
+- Threads: hidden sponsored posts flapped on every popup toggle (released on one
+  refresh, hidden again on the next). The adapter's label selector counts
+  children (`> div:first-child span`), and Sifter's own placeholder had become
+  the unit's first child, so a rescan no longer saw the "Sponsored" label. The
+  scanner now detaches the placeholder while it reads a hidden unit, so every
+  adapter sees the post exactly as the site rendered it.
 - A throwing `decide()` (a bad adapter selector, for instance) no longer
   kills the scanner. `scanNow()`'s `running` guard used to mean an
   unhandled exception inside one unit's decision stopped every future scan

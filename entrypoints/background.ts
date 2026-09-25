@@ -2,7 +2,7 @@ import { browser, type Browser } from 'wxt/browser';
 import { defineBackground } from 'wxt/utils/define-background';
 import { isBgRequest, type BgRequest, type SiteContext, type TabRequest } from '../src/messages';
 import { parseRules, selectorsFor } from '../src/rules/filters';
-import { injectTargetMatches, isLaunchHost, LAUNCH_MATCHES, LAUNCH_SITES, optInScriptMatches } from '../src/sites';
+import { HOSTNAME_RE, injectTargetMatches, isLaunchHost, LAUNCH_MATCHES, LAUNCH_SITES, optInScriptMatches } from '../src/sites';
 import {
   isSiteEnabled,
   loadOverrides,
@@ -129,8 +129,11 @@ async function handle(msg: BgRequest): Promise<unknown> {
     case 'sifter:setSiteEnabled': {
       const key = siteKey(msg.hostname);
       // Opt-in hosts become match patterns, so they keep the real hostname (minus
-      // "www."), not the aliased key.
+      // "www."), not the aliased key. The storage schema drops a malformed host on
+      // the next load, but a bad match pattern would already have failed the
+      // registration below, so reject it before it is stored at all.
       const host = msg.hostname.toLowerCase().replace(/^www\./, '');
+      if (!HOSTNAME_RE.test(host)) return { error: 'invalid hostname' };
       const optIn = !isLaunch(msg.hostname) && msg.enabled;
       await updateSettings((s) => ({
         ...s,
@@ -216,15 +219,20 @@ async function doSync(): Promise<string[]> {
   const settings = await loadSettings();
   const hosts = settings.optInHosts.filter((h) => settings.sites[siteKey(h)]?.enabled !== false);
   const existing = await browser.scripting.getRegisteredContentScripts({ ids: [OPT_IN_SCRIPT_ID] });
-  if (existing.length > 0) await browser.scripting.unregisterContentScripts({ ids: [OPT_IN_SCRIPT_ID] });
   const granted = await browser.permissions.getAll();
   const matches = optInScriptMatches(hosts, granted.origins ?? []);
   // "Hide this post" belongs wherever the script runs.
   await browser.contextMenus.update(MENU_ID, { documentUrlPatterns: [...LAUNCH_MATCHES, ...matches] }).catch(() => undefined);
-  if (matches.length === 0) return matches;
-  await browser.scripting.registerContentScripts([
-    { id: OPT_IN_SCRIPT_ID, js: ['content-scripts/content.js'], matches, runAt: 'document_idle', persistAcrossSessions: true },
-  ]);
+  if (matches.length === 0) {
+    if (existing.length > 0) await browser.scripting.unregisterContentScripts({ ids: [OPT_IN_SCRIPT_ID] });
+    return matches;
+  }
+  // Update in place rather than unregister-then-register: if the new pattern list
+  // is refused, the previous registration stays and every other opt-in site keeps
+  // its script, instead of all of them going dark until the next successful sync.
+  const script = { id: OPT_IN_SCRIPT_ID, js: ['content-scripts/content.js'], matches, runAt: 'document_idle' as const, persistAcrossSessions: true };
+  if (existing.length > 0) await browser.scripting.updateContentScripts([script]);
+  else await browser.scripting.registerContentScripts([script]);
   return matches;
 }
 

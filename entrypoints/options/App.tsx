@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { browser } from 'wxt/browser';
 import { bg } from '../../src/bg';
 import { MAX_WORDS, parseRules, type RuleError } from '../../src/rules/filters';
-import { experimentalNote, LAUNCH_SITES } from '../../src/sites';
+import { experimentalNote, LAUNCH_SITES, optInScriptMatches } from '../../src/sites';
 import {
   clearOverrides,
   exportBackup,
@@ -182,6 +182,14 @@ function Sites(props: { settings: Settings; onChange: () => void }) {
   const keys = [...LAUNCH_SITES.map((s) => s.key), ...settings.optInHosts.filter((h) => !LAUNCH_SITES.some((s) => s.key === h))];
   const nameOf = (key: string) => LAUNCH_SITES.find((s) => s.key === key)?.name ?? key;
   const launch = (key: string) => LAUNCH_SITES.some((s) => s.key === key);
+  // "On" for a site you added is only true while Chrome still grants the origin:
+  // a grant revoked in chrome://extensions leaves the setting on and the script
+  // unable to run, so say so instead of showing a switch that does nothing.
+  const [origins, setOrigins] = useState<string[] | null>(null);
+  useEffect(() => {
+    browser.permissions.getAll().then((p) => setOrigins(p.origins ?? []), () => setOrigins([]));
+  }, [settings]);
+  const granted = (key: string) => origins === null || optInScriptMatches([key], origins).length > 0;
 
   const setEnabled = (key: string, enabled: boolean) =>
     void bg({ type: 'sifter:setSiteEnabled', hostname: key, enabled }).then(props.onChange);
@@ -220,7 +228,10 @@ function Sites(props: { settings: Settings; onChange: () => void }) {
                         Experimental
                       </span>
                     )}
-                    {!launch(key) && <span class="muted small block">added by you</span>}
+                    {!launch(key) && granted(key) && <span class="muted small block">added by you</span>}
+                    {!launch(key) && !granted(key) && (
+                      <span class="muted small block">added by you; Chrome no longer grants access, so Sifter can't run here. Open the site and choose "Hide ads on this site" to grant it again.</span>
+                    )}
                   </th>
                   <td>
                     <input

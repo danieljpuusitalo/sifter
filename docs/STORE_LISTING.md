@@ -23,9 +23,8 @@ WHAT IT HIDES
 
 YOU'RE IN CONTROL
 • Choose what to block, globally or per site, like an ad blocker's filter lists
-• Every hidden post leaves a one-line note: open it, or mark it "Not an ad"
+• Collapse (the default) or blur a hidden post: a one-line note stays, to open it or mark it "Not an ad". Or hide completely, with no note
 • Missed one? Right-click it and choose "Hide this post with Sifter"
-• Collapse, blur or hide completely
 • Pause for an hour, or turn any site off
 • Turn it on for other sites from the popup
 

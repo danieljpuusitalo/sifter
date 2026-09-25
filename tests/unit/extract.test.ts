@@ -116,6 +116,18 @@ describe('detectMarker, structural and link markers', () => {
     expect(detectMarker(unit('<div><a href="https://www.googleadservices.com/pagead/aclk?a=1">Deal</a></div>'), null, 'https://news.example/')?.kind).toBe(
       'ad-link',
     ));
+  it('hits an ad-click link on Google itself', () =>
+    expect(detectMarker(unit('<div><a href="https://www.google.com/aclk?sa=l">Deal</a></div>'), google, 'https://www.google.com/')?.kind).toBe(
+      'ad-link',
+    ));
+  it('a social post linking to an ad-click host in its body is not an ad (hard rule 6)', () =>
+    expect(
+      detectMarker(
+        unit(post('Some Company', '<p componentkey="b"><span>How tracking works: <a href="https://ad.doubleclick.net/ddm/clk/1">read this</a></span></p>')),
+        linkedin,
+        'https://www.linkedin.com/',
+      ),
+    ).toBeNull());
   it('hits an exact aria-label', () =>
     expect(detectMarker(unit('<div><span aria-label="Sponsored"></span>text</div>'), null, 'https://x.example/')?.kind).toBe('aria'));
   it('ignores a non-marker aria-label', () =>

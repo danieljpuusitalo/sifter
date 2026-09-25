@@ -308,13 +308,18 @@ export function detectMarker(unit: Element, adapter: Adapter | null, base: strin
     const node = safeQuery(unit, sel);
     if (node) return sponsored('structural', sel, node);
   }
+  // An ad-click URL marks a unit only where such a link can't be a user's own: on
+  // Google itself and on opted-in generic sites (a news page's ad slot). On a
+  // social feed a post can link to doubleclick.net or googleadservices.com in its
+  // body (a privacy thread, an adtech job ad) and stay a real post (hard rule 6).
+  const adLinks = !adapter || adapter.id === 'google';
   for (const a of safeQueryAll(unit, 'a[href]')) {
     const href = a.getAttribute('href') ?? '';
-    if (AD_CLICK_HINT.test(href) && isAdClickUrl(href, base)) return sponsored('ad-link', new URL(href, base).hostname, a);
+    if (adLinks && AD_CLICK_HINT.test(href) && isAdClickUrl(href, base)) return sponsored('ad-link', new URL(href, base).hostname, a);
     // rel=sponsored stays global (decided 2026-09-25): it is the publisher's own
     // declaration that a link is paid, none of the launch sites emit it on user
     // posts, and on an opted-in generic site a unit built around a paid link is
-    // what the user asked to hide. Ad-click URLs, by contrast, are Google-only.
+    // what the user asked to hide. Ad-click URLs, by contrast, are gated above.
     const rel = a.getAttribute('rel');
     if (rel && rel.split(/\s+/).includes('sponsored')) return sponsored('rel', 'rel=sponsored', a);
   }

@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { adapterFor } from '../../src/adapters/index';
 import { HIDDEN_CLASS, PLACEHOLDER_ATTR } from '../../src/content/hider';
 import { Scanner } from '../../src/content/scanner';
+import * as extract from '../../src/extract';
 import { defaultContext } from '../../src/messages';
 
 // Sifter's placeholder is the hidden unit's first child. A selector that counts
@@ -49,6 +50,40 @@ describe('rescan of a hidden unit whose label selector counts children', () => {
     // And the placeholder is back where it was after every read.
     for (const el of document.querySelectorAll('[data-gold="sponsored"]')) {
       expect(el.firstElementChild?.hasAttribute(PLACEHOLDER_ATTR)).toBe(true);
+    }
+  });
+
+  it('a read that throws on a rescan leaves the hidden unit masked, with its placeholder in place', () => {
+    load('threads-feed.html');
+    const host = 'www.threads.com';
+    const ctx = () => defaultContext('threads.com', { categories: ON });
+    const s = new Scanner({
+      doc: document,
+      hostname: host,
+      baseUrl: `https://${host}/`,
+      adapter: adapterFor(host),
+      context: ctx(),
+      persistOverride: () => undefined,
+      schedule: (fn) => fn(),
+    });
+    s.scanNow();
+    expect(hiddenGold(), 'positive control: first scan').toEqual([true, true]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const spy = vi.spyOn(extract, 'unitText').mockImplementation(() => {
+      throw new Error('boom');
+    });
+    try {
+      s.applyContext(ctx());
+      s.scanNow();
+      expect(s.state().perf.decideErrors, 'positive control: the read threw').toBeGreaterThan(0);
+      // Still hidden, placeholder still first child: the failed read restored both.
+      expect(hiddenGold()).toEqual([true, true]);
+      for (const el of document.querySelectorAll('[data-gold="sponsored"]')) {
+        expect(el.firstElementChild?.hasAttribute(PLACEHOLDER_ATTR)).toBe(true);
+      }
+    } finally {
+      spy.mockRestore();
+      warn.mockRestore();
     }
   });
 });

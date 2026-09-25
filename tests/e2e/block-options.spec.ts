@@ -30,9 +30,38 @@ type PageState = {
   canSuggest: boolean;
   rules: RuleState[];
   hiddenNow: number;
+  settled: boolean;
 };
 
 const EXT = resolve('.output/chrome-mv3');
+
+/**
+ * `sifter:refresh` re-decides every unit and answers with the page state, but it
+ * caps its wait at 1 s so a slow page can never hang the popup (SETTLE_CAP_MS in
+ * entrypoints/content.ts). On a loaded CI runner the idle slices can take longer
+ * than that, and the reply is then a mid-scan snapshot: a real count, just not the
+ * final one. Poll until the scanner reports `settled`, so every assertion below
+ * reads the finished state and never a race.
+ */
+async function refreshSettled(sw: { evaluate: <R, A>(fn: (a: A) => Promise<R>, a: A) => Promise<R> }, host: string): Promise<PageState> {
+  const url = `https://${host}/*`;
+  const tab = (type: string) =>
+    sw.evaluate(
+      async ({ u, t }) => {
+        const tabs = await chrome.tabs.query({ url: u });
+        return chrome.tabs.sendMessage(tabs[0]!.id!, { type: t });
+      },
+      { u: url, t: type },
+    ) as Promise<PageState>;
+  let state = await tab('sifter:refresh');
+  const deadline = Date.now() + 10_000;
+  while (!state.settled && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 50));
+    state = await tab('sifter:getPageState');
+  }
+  expect(state.settled, `${host}: scanner never settled after a refresh`).toBe(true);
+  return state;
+}
 const FIXTURES: Record<string, string> = {
   'www.linkedin.com': 'linkedin-feed.html',
   'www.google.com': 'google-search.html',
@@ -117,14 +146,8 @@ test.describe('Block on this site: every switch, every site', () => {
       const bg = (msg: Record<string, unknown>) => control.evaluate((m) => chrome.runtime.sendMessage(m), msg);
 
       // TabRequest, sent to this fixture's tab, as the service worker relays it for the
-      // popup: `sifter:refresh` re-decides every unit and answers with the settled
-      // PageState (entrypoints/content.ts), so this single call is both the action and
-      // the read.
-      const refresh = (): Promise<PageState> =>
-        sw!.evaluate(async (u) => {
-          const tabs = await chrome.tabs.query({ url: u });
-          return chrome.tabs.sendMessage(tabs[0]!.id!, { type: 'sifter:refresh' });
-        }, `https://${host}/*`) as Promise<PageState>;
+      // popup: the action and the (settled) read in one.
+      const refresh = (): Promise<PageState> => refreshSettled(sw!, host);
 
       const ruleIds = RULE_IDS[host]!;
 
@@ -218,11 +241,7 @@ test.describe('Block on this site: every switch, every site', () => {
     const controlId = new URL(sw!.url()).host;
     await control.goto(`chrome-extension://${controlId}/popup.html`);
     const bg = (msg: Record<string, unknown>) => control.evaluate((m) => chrome.runtime.sendMessage(m), msg);
-    const refresh = (): Promise<PageState> =>
-      sw!.evaluate(async (u) => {
-        const tabs = await chrome.tabs.query({ url: u });
-        return chrome.tabs.sendMessage(tabs[0]!.id!, { type: 'sifter:refresh' });
-      }, `https://${host}/*`) as Promise<PageState>;
+    const refresh = (): Promise<PageState> => refreshSettled(sw!, host);
 
     const targetIsHidden = () =>
       page.evaluate(() => {

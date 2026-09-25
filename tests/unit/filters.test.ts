@@ -193,7 +193,7 @@ describe('scanner: blocks, custom rules, context menu', () => {
   it('element rules hide as custom; an invalid rule is skipped, not fatal', () => {
     setup('x.com', xPage, { customSelectors: ['[[bad', '#promo-box'] });
     expect(hidden('#promo-box')).toBe(true);
-    expect(document.querySelector('#promo-box')!.previousElementSibling?.getAttribute('data-sifter-placeholder')).toBe('custom');
+    expect(document.querySelector('#promo-box')!.firstElementChild?.getAttribute('data-sifter-placeholder')).toBe('custom');
     setup('x.com', xPage, { customSelectors: ['#promo-box'], categories: { sponsored: true, suggested: false, custom: false } });
     expect(hidden('#promo-box')).toBe(false);
   });
@@ -291,7 +291,7 @@ describe('scanner: audit regressions', () => {
     // happy-dom's `.click()`, like a page script's `dispatchEvent`, produces an
     // untrusted event.
     setup('www.linkedin.com', card('d1', 'same body') + card('d2', 'same body'));
-    const host = document.getElementById('d1')!.previousElementSibling!;
+    const host = document.getElementById('d1')!.firstElementChild!;
     (host.shadowRoot!.querySelector('[data-act="not-ad"]') as HTMLElement).click();
     expect(hidden('d1')).toBe(true);
     expect(hidden('d2')).toBe(true);
@@ -299,7 +299,7 @@ describe('scanner: audit regressions', () => {
 
   it('positive control: a trusted click on "Not an ad" does reveal the post and its duplicates', () => {
     setup('www.linkedin.com', card('d3', 'same body 2') + card('d4', 'same body 2'));
-    const host = document.getElementById('d3')!.previousElementSibling!;
+    const host = document.getElementById('d3')!.firstElementChild!;
     trustedClick(host.shadowRoot!.querySelector('[data-act="not-ad"]') as HTMLElement);
     expect(hidden('d3')).toBe(false);
     expect(hidden('d4')).toBe(false);

@@ -1,3 +1,4 @@
+import { PLACEHOLDER_ATTR } from './content/hider';
 import { normaliseText } from './fingerprint';
 import { hasLineEnding, hasMarkerLine, hasWordLine, isAdClickUrl, isMarkerText } from './rules/markers';
 import type { Adapter } from './adapters/schema';
@@ -107,9 +108,15 @@ function labelText(node: Element, unit: Element, cache?: VisibilityCache): strin
   return node.firstElementChild ? renderedText(node) : (node.textContent ?? '');
 }
 
+/**
+ * The placeholder now lives inside the unit (its first child), so a broad label
+ * or link selector run against the unit can reach it too. It carries no light-DOM
+ * text or hrefs of its own (its content lives in its shadow root), but skip it
+ * anyway: it is never a candidate label, link or marker.
+ */
 function safeQueryAll(root: Element, selector: string): Element[] {
   try {
-    return Array.from(root.querySelectorAll(selector));
+    return Array.from(root.querySelectorAll(selector)).filter((el) => !el.hasAttribute(PLACEHOLDER_ATTR));
   } catch {
     return [];
   }

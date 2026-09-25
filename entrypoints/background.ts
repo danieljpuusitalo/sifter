@@ -2,7 +2,7 @@ import { browser, type Browser } from 'wxt/browser';
 import { defineBackground } from 'wxt/utils/define-background';
 import { isBgRequest, type BgRequest, type SiteContext, type TabRequest } from '../src/messages';
 import { parseRules, selectorsFor } from '../src/rules/filters';
-import { isLaunchHost, LAUNCH_MATCHES, LAUNCH_SITES } from '../src/sites';
+import { injectTargetMatches, isLaunchHost, LAUNCH_MATCHES, LAUNCH_SITES, optInScriptMatches } from '../src/sites';
 import {
   isSiteEnabled,
   loadOverrides,
@@ -44,6 +44,7 @@ export default defineBackground(() => {
         });
       })
       .then(() => syncOptInScripts())
+      .then((optInMatches) => injectIntoOpenTabs(injectTargetMatches(optInMatches)))
       .catch((e: unknown) => console.warn('[sifter] install setup failed', e));
   });
   browser.runtime.onStartup.addListener(() => void syncOptInScripts());
@@ -200,26 +201,50 @@ async function getContext(hostname: string): Promise<SiteContext> {
  * from settings each time so storage stays the single source of truth. Calls are
  * chained: two overlapping syncs would race unregister against register.
  */
-let syncChain: Promise<void> = Promise.resolve();
-function syncOptInScripts(): Promise<void> {
-  syncChain = syncChain.then(doSync).catch((e: unknown) => console.warn('[sifter] opt-in sync failed', e));
+let syncChain: Promise<string[]> = Promise.resolve([]);
+/** Resolves to the opt-in match patterns just (re)registered, so install/update
+ * can inject into tabs that were already open for them. */
+function syncOptInScripts(): Promise<string[]> {
+  syncChain = syncChain.then(doSync).catch((e: unknown) => {
+    console.warn('[sifter] opt-in sync failed', e);
+    return [];
+  });
   return syncChain;
 }
 
-async function doSync(): Promise<void> {
+async function doSync(): Promise<string[]> {
   const settings = await loadSettings();
   const hosts = settings.optInHosts.filter((h) => settings.sites[siteKey(h)]?.enabled !== false);
   const existing = await browser.scripting.getRegisteredContentScripts({ ids: [OPT_IN_SCRIPT_ID] });
   if (existing.length > 0) await browser.scripting.unregisterContentScripts({ ids: [OPT_IN_SCRIPT_ID] });
   const granted = await browser.permissions.getAll();
-  const origins = new Set(granted.origins ?? []);
-  const matches = hosts
-    .flatMap((h) => [`https://${h}/*`, `https://www.${h}/*`])
-    .filter((m) => origins.has(m) || origins.has('https://*/*'));
+  const matches = optInScriptMatches(hosts, granted.origins ?? []);
   // "Hide this post" belongs wherever the script runs.
   await browser.contextMenus.update(MENU_ID, { documentUrlPatterns: [...LAUNCH_MATCHES, ...matches] }).catch(() => undefined);
-  if (matches.length === 0) return;
+  if (matches.length === 0) return matches;
   await browser.scripting.registerContentScripts([
     { id: OPT_IN_SCRIPT_ID, js: ['content-scripts/content.js'], matches, runAt: 'document_idle', persistAcrossSessions: true },
   ]);
+  return matches;
+}
+
+/**
+ * Chrome never runs `content_scripts` (or newly registered opt-in scripts)
+ * against tabs that were already open when the extension installed or updated,
+ * so force it. Each tab is injected independently: a chrome:// tab, a discarded
+ * tab, or one Sifter is already running in (the content script's probe guard
+ * makes a second injection a no-op) all throw or no-op harmlessly.
+ */
+async function injectIntoOpenTabs(matches: string[]): Promise<void> {
+  if (matches.length === 0) return;
+  const tabs = await browser.tabs.query({ url: matches });
+  await Promise.all(
+    tabs
+      .filter((t): t is Browser.tabs.Tab & { id: number } => t.id !== undefined)
+      .map((t) =>
+        browser.scripting
+          .executeScript({ target: { tabId: t.id }, files: ['/content-scripts/content.js'] })
+          .catch(() => undefined),
+      ),
+  );
 }

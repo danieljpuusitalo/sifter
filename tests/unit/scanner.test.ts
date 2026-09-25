@@ -3,14 +3,25 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { evalFixture, passes, PASSES } from '../../evals/fixture-eval';
 import { adapterFor } from '../../src/adapters/index';
-import { HIDDEN_CLASS, Hider, PLACEHOLDER_ATTR, placeholderRoot, usesSharedSheet } from '../../src/content/hider';
+import {
+  BLUR_CLASS,
+  COLLAPSE_CLASS,
+  HIDDEN_CLASS,
+  Hider,
+  PLACEHOLDER_ATTR,
+  placeholderRoot,
+  unitStylesheetText,
+  usesSharedSheet,
+} from '../../src/content/hider';
 import { Scanner } from '../../src/content/scanner';
 import { defaultContext, type SiteContext } from '../../src/messages';
 
 const ctx = (over: Partial<SiteContext> = {}): SiteContext => defaultContext('linkedin.com', over);
+const noopCb = { onShow: () => {}, onNotAd: () => {}, onRehide: () => {} };
 
+/** The placeholder now lives inside the unit, as its first child. */
 function button(unit: Element, act: string): HTMLElement {
-  const host = unit.previousElementSibling;
+  const host = unit.firstElementChild;
   expect(host?.hasAttribute(PLACEHOLDER_ATTR)).toBe(true);
   return host?.shadowRoot?.querySelector(`[data-act="${act}"]`) as HTMLElement;
 }
@@ -29,32 +40,50 @@ describe('Hider', () => {
 
   it('hides without removing, and unhides back to the original style', () => {
     const u = document.getElementById('u') as HTMLElement;
-    const h = new Hider(document, 'collapse', { onShow: () => {}, onNotAd: () => {} });
+    const h = new Hider(document, 'collapse', noopCb);
     h.hide(u, 'sponsored');
     expect(u.isConnected).toBe(true);
     expect(u.classList.contains(HIDDEN_CLASS)).toBe(true);
-    expect(u.style.getPropertyValue('display')).toBe('none');
-    expect(u.previousElementSibling?.getAttribute(PLACEHOLDER_ATTR)).toBe('sponsored');
+    expect(u.classList.contains(COLLAPSE_CLASS)).toBe(true);
+    // The bug this fixes: a virtualised feed measures a display:none unit at 0 px
+    // and parks it (and any previous-sibling placeholder) off-screen. So the unit
+    // itself gets no inline display; only its children (not the placeholder) do,
+    // from the shared document stylesheet.
+    expect(u.style.getPropertyValue('display')).toBe('');
+    expect(u.firstElementChild?.getAttribute(PLACEHOLDER_ATTR)).toBe('sponsored');
+    expect(unitStylesheetText(document)).toContain(`.${HIDDEN_CLASS}.${COLLAPSE_CLASS} > :not([${PLACEHOLDER_ATTR}])`);
     h.unhide(u);
-    expect(u.getAttribute('style')).toBe('color: red;');
+    expect(u.getAttribute('style')).toBe('color: red');
     expect(u.classList.contains(HIDDEN_CLASS)).toBe(false);
+    expect(u.classList.contains(COLLAPSE_CLASS)).toBe(false);
     expect(document.querySelector(`[${PLACEHOLDER_ATTR}]`)).toBeNull();
+  });
+
+  it('blur mode styles children (and blurs them), not the placeholder, from the shared sheet', () => {
+    const u = document.getElementById('u') as HTMLElement;
+    const h = new Hider(document, 'blur', noopCb);
+    h.hide(u, 'sponsored');
+    expect(u.classList.contains(BLUR_CLASS)).toBe(true);
+    expect(u.style.getPropertyValue('filter')).toBe('');
+    expect(unitStylesheetText(document)).toContain(`.${HIDDEN_CLASS}.${BLUR_CLASS} > :not([${PLACEHOLDER_ATTR}])`);
+    expect(unitStylesheetText(document)).toContain('blur(12px)');
   });
 
   it('"hide" mode leaves no placeholder; switching mode restores one', () => {
     const u = document.getElementById('u') as HTMLElement;
-    const h = new Hider(document, 'hide', { onShow: () => {}, onNotAd: () => {} });
+    const h = new Hider(document, 'hide', noopCb);
     h.hide(u, 'sponsored');
     expect(document.querySelector(`[${PLACEHOLDER_ATTR}]`)).toBeNull();
+    expect(u.style.getPropertyValue('display')).toBe('none');
     h.setMode('blur');
     expect(u.style.getPropertyValue('display')).toBe('');
-    expect(u.style.getPropertyValue('filter')).toContain('blur');
+    expect(u.classList.contains(BLUR_CLASS)).toBe(true);
     expect(document.querySelector(`[${PLACEHOLDER_ATTR}]`)).not.toBeNull();
   });
 
   it('placeholders share one constructed stylesheet instead of a <style> each', () => {
     document.body.innerHTML = '<ul><li id="a">Ad one</li><li id="b">Ad two</li></ul>';
-    const h = new Hider(document, 'collapse', { onShow: () => {}, onNotAd: () => {} });
+    const h = new Hider(document, 'collapse', noopCb);
     h.hide(document.getElementById('a') as HTMLElement, 'sponsored');
     h.hide(document.getElementById('b') as HTMLElement, 'suggested');
     const hosts = Array.from(document.querySelectorAll(`[${PLACEHOLDER_ATTR}]`));
@@ -68,6 +97,58 @@ describe('Hider', () => {
       expect(root.querySelector('.row')).not.toBeNull();
     }
     expect(roots[0]!.adoptedStyleSheets[0]).toBe(roots[1]!.adoptedStyleSheets[0]);
+  });
+
+  it('hint appears in the label after a middle dot, capped to what the caller sent', () => {
+    const u = document.getElementById('u') as HTMLElement;
+    const h = new Hider(document, 'collapse', noopCb);
+    h.hide(u, 'sponsored', 'Remedy Entertainment');
+    const label = u.firstElementChild?.shadowRoot?.querySelector('.label');
+    expect(label?.textContent).toBe('Hidden sponsored post · Remedy Entertainment');
+  });
+
+  it('Show keeps a Hide button and drops out of hiddenUnits(); Hide re-hides', () => {
+    const u = document.getElementById('u') as HTMLElement;
+    const h = new Hider(document, 'collapse', noopCb);
+    h.hide(u, 'sponsored');
+    expect(h.hiddenUnits()).toEqual([u]);
+    h.show(u);
+    expect(h.hiddenUnits()).toEqual([]);
+    expect(u.classList.contains(HIDDEN_CLASS)).toBe(false);
+    const hideBtn = u.firstElementChild?.shadowRoot?.querySelector('[data-act="hide"]');
+    expect(hideBtn).not.toBeNull();
+    expect(u.firstElementChild?.shadowRoot?.querySelector('[data-act="show"]')).toBeNull();
+    const label = u.firstElementChild?.shadowRoot?.querySelector('.label');
+    expect(label?.textContent).toBe('Showing hidden sponsored post');
+
+    h.rehide(u);
+    expect(h.hiddenUnits()).toEqual([u]);
+    expect(u.classList.contains(HIDDEN_CLASS)).toBe(true);
+    expect(u.firstElementChild?.shadowRoot?.querySelector('[data-act="show"]')).not.toBeNull();
+  });
+
+  it('"Not an ad" after Show removes the placeholder entirely', () => {
+    const u = document.getElementById('u') as HTMLElement;
+    const notAdUnits: Element[] = [];
+    const h = new Hider(document, 'collapse', { onShow: () => {}, onNotAd: (unit) => notAdUnits.push(unit), onRehide: () => {} });
+    h.hide(u, 'sponsored');
+    h.show(u);
+    userClick(u.firstElementChild!.shadowRoot!.querySelector('[data-act="not-ad"]') as HTMLElement);
+    expect(notAdUnits).toEqual([u]);
+    h.unhide(u);
+    expect(document.querySelector(`[${PLACEHOLDER_ATTR}]`)).toBeNull();
+    expect(h.isHidden(u)).toBe(false);
+  });
+
+  it('prune re-seats a placeholder moved out of its unit', () => {
+    const u = document.getElementById('u') as HTMLElement;
+    const h = new Hider(document, 'collapse', noopCb);
+    h.hide(u, 'sponsored');
+    const placeholder = u.firstElementChild as HTMLElement;
+    u.parentElement?.append(placeholder); // knock it out to be a sibling again
+    expect(u.firstElementChild).toBeNull();
+    h.prune();
+    expect(u.firstElementChild).toBe(placeholder);
   });
 });
 
@@ -105,9 +186,30 @@ describe('Scanner', () => {
     const { scanner, persisted, byKey } = setup();
     userClick(button(byKey('1002'), 'show'));
     expect(byKey('1002').classList.contains(HIDDEN_CLASS)).toBe(false);
+    expect(scanner.state().hiddenNow).toBe(2); // dropped out of the count, but still tracked
     scanner.applyContext(ctx()); // a full rescan must not re-hide it
     expect(byKey('1002').classList.contains(HIDDEN_CLASS)).toBe(false);
     expect(persisted).toEqual([]);
+  });
+
+  it('Hide re-hides a shown unit, and a full rescan keeps it hidden', () => {
+    const { scanner, byKey } = setup();
+    userClick(button(byKey('1002'), 'show'));
+    expect(byKey('1002').classList.contains(HIDDEN_CLASS)).toBe(false);
+    userClick(button(byKey('1002'), 'hide'));
+    expect(byKey('1002').classList.contains(HIDDEN_CLASS)).toBe(true);
+    expect(scanner.state().hiddenNow).toBe(3);
+    scanner.applyContext(ctx());
+    expect(byKey('1002').classList.contains(HIDDEN_CLASS)).toBe(true);
+  });
+
+  it('"Not an ad" after Show removes the placeholder entirely and persists', () => {
+    const { persisted, byKey } = setup();
+    userClick(button(byKey('1002'), 'show'));
+    userClick(button(byKey('1002'), 'not-ad'));
+    expect(byKey('1002').querySelector(`[${PLACEHOLDER_ATTR}]`)).toBeNull();
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]![1]).toBe('not-ad');
   });
 
   it('Not an ad persists an override that survives a reload', () => {

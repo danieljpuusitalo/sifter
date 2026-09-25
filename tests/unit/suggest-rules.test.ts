@@ -85,6 +85,7 @@ describe('Facebook: one switch per kind of suggestion', () => {
       ['groups', true],
       ['follow', true],
       ['reels', false],
+      ['stories', true],
     ]);
   });
 });

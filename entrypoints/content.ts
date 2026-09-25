@@ -2,8 +2,29 @@ import { browser } from 'wxt/browser';
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { adapterFor } from '../src/adapters';
 import { Scanner } from '../src/content/scanner';
-import type { BgRequest, SiteContext, TabRequest } from '../src/messages';
+import { defaultContext, type BgRequest, type SiteContext, type TabRequest } from '../src/messages';
 import { LAUNCH_MATCHES } from '../src/sites';
+
+/** Backoff between retries of a service-worker message that may still be waking up. */
+const CONTEXT_RETRY_DELAYS_MS = [300, 900];
+
+/**
+ * Send a message and retry on rejection (the service worker asleep or mid-update
+ * both reject the promise, rather than answering late). Rejects with the last
+ * error once the delays are exhausted, so callers decide the fallback.
+ */
+async function withRetry<T>(send: () => Promise<T>, delaysMs: number[]): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await send();
+    } catch (e) {
+      lastErr = e;
+      if (attempt >= delaysMs.length) throw lastErr;
+      await new Promise((r) => setTimeout(r, delaysMs[attempt]));
+    }
+  }
+}
 
 /**
  * Probe for an instance already on this page. A live one answers; one orphaned by
@@ -25,11 +46,33 @@ export default defineContentScript({
     document.dispatchEvent(new CustomEvent<Probe>(PROBE_EVENT, { detail: probe }));
     if (probe.alive) return;
 
+    // Claim the page before the first await. Install-time injection and the
+    // content_scripts entry can both start within the same tick; a listener
+    // registered only after the settings round-trip lets both instances run and
+    // every hidden unit gets two placeholders.
+    let scanner: Scanner | null = null;
+    const onProbe = (e: Event) => {
+      const detail = (e as CustomEvent<Probe | null>).detail;
+      if (!detail) return; // not from one of our own instances
+      if (browser.runtime?.id) {
+        detail.alive = true;
+        return;
+      }
+      document.removeEventListener(PROBE_EVENT, onProbe);
+      scanner?.stop();
+    };
+    document.addEventListener(PROBE_EVENT, onProbe);
+
     const hostname = location.hostname;
     const send = <T>(msg: BgRequest) => browser.runtime.sendMessage(msg) as Promise<T>;
-    const context = await send<SiteContext>({ type: 'sifter:getContext', hostname });
+    const context = await withRetry(() => send<SiteContext>({ type: 'sifter:getContext', hostname }), CONTEXT_RETRY_DELAYS_MS).catch(
+      (e: unknown) => {
+        console.warn('[sifter] could not load settings', e);
+        return defaultContext(hostname);
+      },
+    );
 
-    const scanner = new Scanner({
+    const live = new Scanner({
       doc: document,
       hostname,
       baseUrl: location.href,
@@ -39,26 +82,15 @@ export default defineContentScript({
         void send({ type: 'sifter:setOverride', hostname, fp, action }).catch(() => undefined),
       dev: import.meta.env.DEV,
     });
-    scanner.start();
-
-    const onProbe = (e: Event) => {
-      const detail = (e as CustomEvent<Probe | null>).detail;
-      if (!detail) return; // not from one of our own instances
-      if (browser.runtime?.id) {
-        detail.alive = true;
-        return;
-      }
-      document.removeEventListener(PROBE_EVENT, onProbe);
-      scanner.stop();
-    };
-    document.addEventListener(PROBE_EVENT, onProbe);
+    scanner = live;
+    live.start();
 
     let resumeTimer: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {
-      const ctx = await send<SiteContext>({ type: 'sifter:getContext', hostname });
-      scanner.applyContext(ctx);
+      const ctx = await withRetry(() => send<SiteContext>({ type: 'sifter:getContext', hostname }), CONTEXT_RETRY_DELAYS_MS);
+      live.applyContext(ctx);
       // Answer with the re-decided page, not a half-done one; but never hang the popup.
-      await Promise.race([scanner.settled(), new Promise((r) => setTimeout(r, SETTLE_CAP_MS))]);
+      await Promise.race([live.settled(), new Promise((r) => setTimeout(r, SETTLE_CAP_MS))]);
       clearTimeout(resumeTimer);
       if (ctx.pausedUntil !== null && ctx.pausedUntil > Date.now()) {
         resumeTimer = setTimeout(() => void refresh().catch(() => undefined), ctx.pausedUntil - Date.now() + 50);
@@ -95,19 +127,19 @@ export default defineContentScript({
     browser.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
       const m = msg as TabRequest;
       if (m?.type === 'sifter:hideTarget') {
-        sendResponse({ ok: scanner.hideContaining(rightClicked()) });
+        sendResponse({ ok: live.hideContaining(rightClicked()) });
       } else if (m?.type === 'sifter:getPageState') {
-        sendResponse(scanner.state());
+        sendResponse(live.state());
       } else if (m?.type === 'sifter:resetPerfPeaks') {
-        scanner.resetPerfPeaks();
-        sendResponse(scanner.state());
+        live.resetPerfPeaks();
+        sendResponse(live.state());
       } else if (m?.type === 'sifter:showAll') {
-        scanner.showAll();
-        sendResponse(scanner.state());
+        live.showAll();
+        sendResponse(live.state());
       } else if (m?.type === 'sifter:refresh') {
         refresh().then(
-          () => sendResponse(scanner.state()),
-          () => sendResponse(scanner.state()),
+          () => sendResponse(live.state()),
+          () => sendResponse(live.state()),
         );
         return true;
       }

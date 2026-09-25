@@ -25,6 +25,13 @@
     <span id="lbl-sp-1" class="sr">Sponsored</span>
     <span id="lbl-time-1" class="sr">3 hours ago</span>
     <div role="main">
+      <!-- Stories bar (live 2026-09-25): div[role="region"] aria-label "Stories", above the
+           feed, not inside it, containing a[href*="/stories/create"]. Suggested, off by default. -->
+      <div role="region" aria-label="Stories" data-gold="suggested">
+        <a href="/stories/create/"><span>Create story</span></a>
+        <a href="/stories/1"><span>Aino Virtanen</span></a>
+        <a href="/stories/2"><span>Jonas Berg</span></a>
+      </div>
       <div role="feed">
         <div aria-posinset="1" aria-setsize="-1" data-gold="none">
           <div data-ad-rendering-role="profile_name"><h4><a href="/aino.v"><span>Aino Virtanen</span></a></h4></div>

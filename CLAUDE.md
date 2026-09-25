@@ -75,3 +75,11 @@ First e2e run on a new machine: `pnpm exec playwright install chromium`.
   `node -e` strings mangle `\.`, `\n` and `\u0000` (this corrupted a regex and put
   a NUL byte into a .tsx file in session 3).
 - Python is not used here. Node 24, pnpm 12.
+- **Two shapes for per-adapter evidence, not three.** For a whole page module
+  (a rail, a carousel), use `blocks[]` with an `anchor`: the scanner finds the
+  anchor cheaply in a dirty subtree and climbs to the module, instead of
+  evaluating the module's own selector document-wide. For per-unit signals (a
+  label word, a structural marker), use `suggested.rules[]` (or the top-level
+  `adSelectors`/`labelSelectors`/`words` fields for the sponsored case) rather
+  than inventing a third mechanism. A new adapter should never need its own
+  bespoke detection path.

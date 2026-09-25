@@ -82,6 +82,7 @@ const EMPTY_PERF: Omit<ScanPerf, 'pending'> = {
   unitsExamined: 0,
   unitsDecided: 0,
   foreignHidden: 0,
+  decideErrors: 0,
   slices: 0,
   totalMs: 0,
   maxSliceMs: 0,
@@ -129,6 +130,10 @@ export class Scanner {
   private plainSelector: string | null = null;
   private muted: RegExp | null = null;
   private offRules: ReadonlySet<string> = new Set();
+  /** One throwing unit must not spam the console: warn once per page. */
+  private decideErrorWarned = false;
+  /** A full scan found the feed root but no units in it: this site's adapter may be stale. */
+  private noUnitsMatched = false;
   private readonly now: () => number;
   private readonly schedule: (fn: () => void, ms: number) => unknown;
 
@@ -205,6 +210,7 @@ export class Scanner {
       this.hiddenFps.clear();
       this.hider.unhideAll();
       this.markFull();
+      this.noUnitsMatched = false;
       return;
     }
     // Hidden elements a full scan may no longer collect (a block whose category or
@@ -285,6 +291,7 @@ export class Scanner {
       canSuggest: !!this.deps.adapter?.suggested || !!this.deps.adapter?.blocks.some((b) => b.category === 'suggested'),
       rules: (this.deps.adapter?.suggested?.rules ?? []).map((r) => ({ id: r.id, label: r.label, on: !this.offRules.has(r.id) })),
       hiddenNow: this.hider.hiddenUnits().length,
+      noUnitsMatched: this.noUnitsMatched,
       perf: { ...this.perf, pending: this.pending.length + this.carried.length },
     };
   }
@@ -367,11 +374,35 @@ export class Scanner {
       const units = full
         ? innermost(withoutPlaceholders(root.querySelectorAll(adapter.unitSelector)))
         : dirtyUnits(adapter.unitSelector, touched, added);
+      if (full) this.updateNoUnitsMatched(root, Array.isArray(units) ? units.length : units.size);
       const out = adapter.adContainerSelector ? collapseToContainers(units, adapter.adContainerSelector) : [...units];
       return blocks.length ? [...out, ...blocks] : out;
     } catch {
       return blocks;
     }
+  }
+
+  /**
+   * A local "rules may be stale" signal (no telemetry, hard rule 1): the feed root
+   * exists and clearly holds content (more than 5 element children), but a full
+   * scan's unitSelector matched nothing in it. A quiet page (feed still loading,
+   * or genuinely empty) does not trip this; a feed root with a fat body and zero
+   * matches usually means the site's markup moved under the adapter.
+   */
+  private updateNoUnitsMatched(root: Element, matchedCount: number): void {
+    const selector = this.deps.adapter?.feedRootSelector;
+    if (!selector) {
+      this.noUnitsMatched = false;
+      return;
+    }
+    let feedRoot: Element | null;
+    try {
+      feedRoot = root.querySelector(selector);
+    } catch {
+      this.noUnitsMatched = false;
+      return;
+    }
+    this.noUnitsMatched = !!feedRoot && feedRoot.children.length > 5 && matchedCount === 0;
   }
 
   /**
@@ -501,7 +532,7 @@ export class Scanner {
     const start = this.now();
     const carried = this.carried;
     this.carried = [];
-    for (const d of carried) this.apply(d);
+    for (const d of carried) this.applySafely(d);
     const carriedMs = this.now() - start;
     let collected = false;
     let collectMs = 0;
@@ -535,7 +566,7 @@ export class Scanner {
       this.queued.delete(unit);
       const decidedBefore = this.perf.unitsDecided;
       const t0 = this.now();
-      const d = this.decide(unit);
+      const d = this.decideSafely(unit);
       if (this.perf.unitsDecided > decidedBefore) {
         const cost = this.now() - t0;
         this.perf.maxDecideMs = Math.max(this.perf.maxDecideMs, cost);
@@ -548,7 +579,7 @@ export class Scanner {
     // Writes: count against the budget too, and carry what does not fit.
     let applied = 0;
     while (applied < decisions.length) {
-      this.apply(decisions[applied++] as Decision);
+      this.applySafely(decisions[applied++] as Decision);
       if (applied < decisions.length && this.now() - start >= budget) break;
     }
     if (applied < decisions.length) this.carried = decisions.slice(applied);
@@ -578,6 +609,40 @@ export class Scanner {
       this.running = false;
       this.settle();
     }
+  }
+
+  /**
+   * A bad adapter selector, or anything else `decide` or `apply` throws, must not
+   * take the scanner down: `scanNow`'s `if (!this.running)` guard means a dead
+   * `running` flag never schedules another slice, so the whole page would stop
+   * being scanned. Record the unit as seen (its current signature) so a throwing
+   * unit is not retried every slice, count the failure, and warn at most once.
+   */
+  private decideSafely(unit: Element): Decision | null {
+    try {
+      return this.decide(unit);
+    } catch (e) {
+      this.recordDecideError(e);
+      const sig = changeSignature(unit.textContent ?? '');
+      const fp = fingerprint(this.ctx.siteKey, structuralKey(unit));
+      this.seen.set(unit, { sig, fp });
+      return null;
+    }
+  }
+
+  private applySafely(d: Decision): void {
+    try {
+      this.apply(d);
+    } catch (e) {
+      this.recordDecideError(e);
+    }
+  }
+
+  private recordDecideError(e: unknown): void {
+    this.perf.decideErrors++;
+    if (this.decideErrorWarned) return;
+    this.decideErrorWarned = true;
+    console.warn('[sifter] decide failed', e);
   }
 
   /** DOM reads only. Returns null when nothing about the unit needs to change. */

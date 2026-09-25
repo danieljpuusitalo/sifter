@@ -185,6 +185,11 @@ export class Hider {
     return [...this.hidden];
   }
 
+  /** The placeholder Sifter put inside a tracked unit, so a read can lift it out of the way. */
+  placeholderOf(unit: Element): HTMLElement | null {
+    return this.records.get(unit)?.placeholder ?? null;
+  }
+
   /** The category a unit is currently hidden or shown under, if Sifter is tracking it. */
   categoryOf(unit: Element): HideCategory | undefined {
     return this.records.get(unit)?.category;

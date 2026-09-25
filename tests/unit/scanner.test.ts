@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { evalFixture, passes, PASSES } from '../../evals/fixture-eval';
 import { adapterFor } from '../../src/adapters/index';
-import { HIDDEN_CLASS, Hider, PLACEHOLDER_ATTR } from '../../src/content/hider';
+import { HIDDEN_CLASS, Hider, PLACEHOLDER_ATTR, placeholderRoot, usesSharedSheet } from '../../src/content/hider';
 import { Scanner } from '../../src/content/scanner';
 import { defaultContext, type SiteContext } from '../../src/messages';
 
@@ -50,6 +50,24 @@ describe('Hider', () => {
     expect(u.style.getPropertyValue('display')).toBe('');
     expect(u.style.getPropertyValue('filter')).toContain('blur');
     expect(document.querySelector(`[${PLACEHOLDER_ATTR}]`)).not.toBeNull();
+  });
+
+  it('placeholders share one constructed stylesheet instead of a <style> each', () => {
+    document.body.innerHTML = '<ul><li id="a">Ad one</li><li id="b">Ad two</li></ul>';
+    const h = new Hider(document, 'collapse', { onShow: () => {}, onNotAd: () => {} });
+    h.hide(document.getElementById('a') as HTMLElement, 'sponsored');
+    h.hide(document.getElementById('b') as HTMLElement, 'suggested');
+    const hosts = Array.from(document.querySelectorAll(`[${PLACEHOLDER_ATTR}]`));
+    expect(hosts).toHaveLength(2);
+    // Positive control: happy-dom supports constructable sheets, so the shared path is on.
+    expect(usesSharedSheet(document)).toBe(true);
+    const roots = hosts.map((host) => placeholderRoot(host)!);
+    for (const root of roots) {
+      expect(root.querySelector('style')).toBeNull();
+      expect(root.adoptedStyleSheets).toHaveLength(1);
+      expect(root.querySelector('.row')).not.toBeNull();
+    }
+    expect(roots[0]!.adoptedStyleSheets[0]).toBe(roots[1]!.adoptedStyleSheets[0]);
   });
 });
 

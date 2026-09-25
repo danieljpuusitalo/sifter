@@ -268,6 +268,10 @@ export function detectMarker(unit: Element, adapter: Adapter | null, base: strin
   for (const a of safeQueryAll(unit, 'a[href]')) {
     const href = a.getAttribute('href') ?? '';
     if (AD_CLICK_HINT.test(href) && isAdClickUrl(href, base)) return sponsored('ad-link', new URL(href, base).hostname);
+    // rel=sponsored stays global (decided 2026-09-25): it is the publisher's own
+    // declaration that a link is paid, none of the launch sites emit it on user
+    // posts, and on an opted-in generic site a unit built around a paid link is
+    // what the user asked to hide. Ad-click URLs, by contrast, are Google-only.
     const rel = a.getAttribute('rel');
     if (rel && rel.split(/\s+/).includes('sponsored')) return sponsored('rel', 'rel=sponsored');
   }

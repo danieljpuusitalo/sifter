@@ -19,7 +19,8 @@
     "bench:scroll": "wxt build && tsx bench/scroll.ts",
     "icons": "node scripts/render-icons.mjs",
     "store:assets": "wxt build && node scripts/store-assets.mjs",
-    "pages": "node scripts/build-pages.mjs"
+    "pages": "node scripts/build-pages.mjs",
+    "readme:gif": "wxt build && node scripts/readme-gif.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",

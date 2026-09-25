@@ -20,6 +20,7 @@ Use `pnpm` (installed globally). On this Windows machine, run from Git Bash or P
 | `pnpm test:e2e` | builds, then Playwright against the built extension with fixtures served at the real site URLs; all other network is aborted |
 | `pnpm bench:scroll` | builds, then scrolls a synthetic feed with the extension off vs on (4x CPU throttle); frame, layout and scanner counters (incl. `worstSlice`, the longest slice's phase breakdown), and a verdict line per run. Args: `--site linkedin\|facebook --start --seconds --runs --cpu --strict` (`--strict` exits 1 when the on-run breaks the budget; `facebook` adds a rail with a sponsored module so the anchored block rules are on the path). The 4x run is the frame A/B; **`--cpu 1` is the hard-rule-7 check** (slice budget in real ms), run both after a scanner change |
 | `pnpm store:assets` | builds, then renders the store screenshots and promo tile into `docs/store/` from the fixtures |
+| `pnpm readme:gif` | builds, then renders `docs/readme.gif` (before / with Sifter / Show) from the LinkedIn fixture; needs `ffmpeg` on PATH |
 | `pnpm verify` | typecheck + test + eval:mock (what CI runs) |
 
 First e2e run on a new machine: `pnpm exec playwright install chromium`.

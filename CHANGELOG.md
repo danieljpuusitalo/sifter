@@ -24,10 +24,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Live-verified against a logged-in feed: LinkedIn (sponsored + suggested),
   Instagram (sponsored + suggested), Reddit, X, Facebook (feed and right rail,
   plus suggested), Google Search text ads.
-- Google: one live report of the top "Sponsored products" carousel staying
-  visible could not be reproduced from the markup (EN and NL) or the fixtures;
-  under re-check. Promoted places in the local pack were never served during
-  inspection, so they are unverified, and Google Maps is not covered.
+- Google: both known shapes of the top "Sponsored products" carousel are
+  covered (verified live, EN and NL). Google serves markup by experiment, so a
+  new shape can appear; it is a one-line adapter fix. Promoted places in the
+  local pack were never served during inspection, so they are unverified, and
+  Google Maps is not covered.
 - Threads: runs without hiding organic posts; no ad has appeared live yet to
   confirm the ad path.
 - Dutch, German and French marker strings on Facebook, Instagram and LinkedIn

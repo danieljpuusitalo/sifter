@@ -16,7 +16,12 @@
   <img src="https://img.shields.io/badge/data%20leaving%20your%20browser-none-1f6f5c" alt="No data leaves your browser">
 </p>
 
-![The same LinkedIn feed without and with Sifter. With Sifter, each sponsored post is collapsed to a one-line placeholder with Show and Not an ad.](docs/store/screenshot-1-feed.png)
+<p align="center">
+  <img src="docs/readme.gif" width="620" alt="A LinkedIn feed without Sifter, then with Sifter: the sponsored post collapses to a one-line placeholder with Show and Not an ad, and Show brings it back.">
+</p>
+
+The feed above is a synthetic fixture, not a real account: every screenshot and
+test in this repo is rendered from `fixtures/public/`.
 
 ## Why this exists
 
@@ -62,7 +67,7 @@ Works in Chrome 116 or newer and in other Chromium browsers such as Edge and Bra
 |---|---|---|---|
 | LinkedIn | yes | yes | sponsored: yes · suggested: yes (English; NL/DE/FR unchecked) |
 | Reddit | yes | – | works in use; markup not inspected against the adapter |
-| Google Search | yes (text ads, shopping units) | – | markup inspected (EN and NL); one report of the top shopping carousel staying visible is being re-checked. Maps and promoted places: not covered |
+| Google Search | yes (text ads, shopping units) | – | yes (EN and NL), both shapes of the top "Sponsored products" carousel. Google rotates its markup by experiment, so a new shape is a one-line adapter fix. Maps and promoted places in the local pack: not covered |
 | X | yes | "Who to follow" | yes |
 | Instagram | yes | yes | sponsored: yes · suggested: yes (English; NL/DE/FR unchecked) |
 | Facebook | yes | yes | feed and right-rail ads: yes · suggested: yes (English) |

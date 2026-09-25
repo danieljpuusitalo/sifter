@@ -1,7 +1,10 @@
 # Sifter checkpoint
 
-Updated 2026-09-24, session 4: a second, agent-driven audit of the whole repo
-(security, scanner cost, settings, CI) on branch `audit/v1-hardening`. Session 3
+Updated 2026-09-25, session 5: release landing. The session-4 audit branch is
+merged (PR #8, `c87e1e1`), `main` is protected, the two open decisions are made,
+the placeholder stylesheet follow-up is done, the README has its GIF, and the
+`v1.0.0` tag is the next step (see "Session 5" below for receipts). Session 4 was
+the second, agent-driven audit (security, scanner cost, settings, CI). Session 3
 shipped the seven adapters, popup and options page, icons and store docs.
 
 ## Where it stands
@@ -26,10 +29,10 @@ Settings store only the rules switched off (`sites[key].rules`).
 | Gate | State |
 |---|---|
 | `pnpm typecheck` | passes |
-| `pnpm test` | 168/168 (session 4 added 15: settings caps and timestamps, `closed()` trailing backslash, adapter defaults parity, scanner change signature, trusted-click guard) |
+| `pnpm test` | 169/169 (session 5 added the shared-stylesheet test; session 4 added 15: settings caps and timestamps, `closed()` trailing backslash, adapter defaults parity, scanner change signature, trusted-click guard) |
 | `pnpm eval:mock` | 8 fixtures, tp=60 fp=0 fn=0 (suggested pass included; both Google top-carousel shapes added 2026-09-24; with the pre-fix adapter the `#atvcap` shape is fn=1 and the eval FAILs, so the case discriminates) |
-| `pnpm test:e2e` | 14 passed, 1 fixme (session 4 added the `setOverride` rejection test; it must send from an extension page, a service worker cannot message itself). One earlier run failed "muted words..." while a `pnpm dev` Chromium was also running (55 s vs a normal 24 s); not reproduced since. Watch it in CI |
-| `pnpm bench:scroll` | **`--cpu 1 --strict`, 2 runs per site, 2026-09-24 late**: all OK. Frames p50/p95/p99 off vs on: LinkedIn 16.7/17.0/18.1 vs 16.7/17.2/19.1; Facebook 16.7/17.3/19.1 vs 16.7/17.3/19.2. 0 long tasks, 0 slices over budget, max scroll slice 5.5–11.4 ms, max single decide 1.1–1.9 ms, scanner total 45–65 ms per 15 s scroll. The 4x-throttle run is the frame A/B only: on this laptop's emulated x64 Chromium it shows random 10–17 ms spikes with the extension off too, so its slice counters are noise (verdict now scales with `--cpu`) |
+| `pnpm test:e2e` | 15 passed, 1 fixme (session 5 added the placeholder constructed-sheet test; session 4 added the `setOverride` rejection test; it must send from an extension page, a service worker cannot message itself). One earlier run failed "muted words..." while a `pnpm dev` Chromium was also running (55 s vs a normal 24 s); not reproduced since. Watch it in CI |
+| `pnpm bench:scroll` | **`--cpu 1 --strict`, 2 runs per site, 2026-09-25 after the shared placeholder sheet**: all OK. LinkedIn p50/p95/p99 off vs on 16.7/17.5/24.9 vs 16.7/17.2/18.9 and 16.7/17.2/17.5 vs 16.7/17.2/19.4; Facebook 16.7/17.5/18.3 vs 16.7/16.9/18.4 and 16.7/17.1/19.0 vs 16.7/17.1/25.3. 0 long tasks in every run, 0 slices over budget, max scroll slice 3.2–8.6 ms, worst-slice apply phase 0–1.1 ms, `initialScanMs` 53–85 (that figure is the scanner's summed load-time work across idle slices, not one task: `longTasks` is 0, so the "75–81 ms long task at load" noted on 09-24 was this counter, not a main-thread stall). **Previous, 2026-09-24 late**: all OK. Frames p50/p95/p99 off vs on: LinkedIn 16.7/17.0/18.1 vs 16.7/17.2/19.1; Facebook 16.7/17.3/19.1 vs 16.7/17.3/19.2. 0 long tasks, 0 slices over budget, max scroll slice 5.5–11.4 ms, max single decide 1.1–1.9 ms, scanner total 45–65 ms per 15 s scroll. The 4x-throttle run is the frame A/B only: on this laptop's emulated x64 Chromium it shows random 10–17 ms spikes with the extension off too, so its slice counters are noise (verdict now scales with `--cpu`) |
 | `pnpm build` | `.output/sifter-1.0.0-chrome.zip`, 92 kB (was 110 kB; content.js 40 kB, was 122 kB, after zod left the content script) |
 
 ## Live verification (from each adapter's `verified` field)
@@ -113,7 +116,44 @@ on the branch. What changed:
 
 Disclosures from the implementer run: it ran `taskkill` on stray `node.exe` processes once to unstick a hung Vitest (contention with a parallel run), and its new e2e test had not been executed when handed over; it failed on the first run (service worker messaging itself) and was rewritten to send from the popup page.
 
-Not done, a possible follow-up with no receipt yet: a shared constructed `CSSStyleSheet` (`adoptedStyleSheets`) for the placeholders. One LinkedIn apply phase measured 7.9 ms at real speed; a shared sheet would avoid a style element per placeholder.
+The shared constructed `CSSStyleSheet` for placeholders, listed here on 09-24 as
+a follow-up, was done in session 5 (below).
+
+## Session 5 (2026-09-25): landing v1.0.0
+
+Daniel: "proceed, let's get this truly production ready." Done, with receipts:
+
+- **Merged `audit/v1-hardening`** into `main` via PR #8 (merge commit `c87e1e1`), CI
+  `verify` green on the branch head `547714c`.
+- **Branch protection on `main`** (GitHub API, read back): required status check
+  `verify` (strict), force-push blocked, deletion blocked, `enforce_admins` off so a
+  direct checkpoint push by the owner still works. Everything else goes through a PR.
+- **Decision, `document_start` CSS: no, not in v1.** A CSS hide before the script runs
+  would have no placeholder and no one-click undo (hard rule 5), and every hide today
+  is a scanner decision, not a selector. The first-visit flash is bounded by the first
+  idle slice. BRIEF.md M4 (learned rules) is where `document_start` injection belongs,
+  with its own verification loop.
+- **Decision, `rel=sponsored`: stays global; ad-click URLs stay Google-only.** Reasoning
+  is in the comment above the check in `src/extract.ts`. It is the publisher's own
+  declaration that a link is paid, no launch site emits it on user posts, and on an
+  opted-in generic site a unit built around a paid link is what the user asked to hide.
+- **Shared placeholder stylesheet** (`src/content/hider.ts`): one constructed
+  `CSSStyleSheet` per document, adopted by every placeholder's shadow root; falls back
+  to a `<style>` element where constructable sheets are missing. Unit test asserts two
+  placeholders share one sheet and carry no `<style>`; e2e asserts the row computes
+  `display: flex` from the adopted sheet in real Chromium. Bench re-run at `--cpu 1
+  --strict` (table above): OK on both sites, worst-slice apply 0–1.1 ms.
+- **README GIF** (`docs/readme.gif`, 168 kB, 97 frames, 620x560): rendered by
+  `pnpm readme:gif` from the LinkedIn fixture, without / with Sifter / a short scroll /
+  "Show". The scroll stops above the fixture's trap units, which would read as misses.
+- **Store assets** re-rendered from the current build: byte-identical to the committed
+  PNGs, so the 09-24 note that they predate the per-rule switches was wrong or moot.
+- README coverage table and CHANGELOG no longer describe the Google carousel as
+  "under re-check"; it was resolved on 09-24 (`#atvcap` shape).
+
+Still Daniel's, unchanged: the Web Store developer account and the submission itself
+(ROADMAP Phase 4), a first run of the release zip in regular Chrome with a normal
+profile, and the live recall checks (Threads ad, X suggested, NL/DE/FR words).
 
 ## Next
 
@@ -144,7 +184,7 @@ Not done, a possible follow-up with no receipt yet: a shared constructed `CSSSty
      - NL/DE/FR strings are baseline guesses; Daniel's UI is English, so only English is checked.
    - **Per-rule switches** (commit 46434ef): live-checked only for Facebook "Groups you're not in". Still to click live: the Reels switch (no Reels unit appeared that session), and the Instagram and LinkedIn switches. `scratchpad`-style CDP check: open popup.html in its own window with `chrome.tabs.query` patched to return the site tab, click `label.sub`, count units by header button.
    - **Store screenshots predate the per-rule switches and the live count.** Re-run `pnpm store:assets` before submitting if the popup shot should show them.
-   - **Daniel's calls after the session-4 audit** (none block the Unlisted submission): merge `audit/v1-hardening` once CI is green; enable branch protection on `main` (require CI, no force-push); decide whether the content script should inject its hide CSS at `document_start` (removes a flash before the first idle slice, costs an early script); decide whether `rel=sponsored` / ad-click URL matching should stay scoped to Google only; a README GIF; then tag `v1.0.0`.
+   - **Daniel's calls after the session-4 audit**: all closed in session 5 (merge, branch protection, `document_start` = no for v1, `rel=sponsored` = global, README GIF). Tag `v1.0.0` follows once the session-5 PR is merged.
 2. **Licence:** MIT (`LICENSE`), done.
 3. **Privacy policy URL** is live: `https://danieljpuusitalo.github.io/sifter/privacy/` (repo made public 2026-09-24, Pages deploys from `pages.yml`). Submission steps are in `docs/ROADMAP.md` Phase 4; they are Daniel's.
 4. M2 (tier-1 model classification, BRIEF.md §9) has not started. `http://localhost/*` was removed from `optional_host_permissions` on 2026-09-24 (an unused permission is a review question); M2 re-adds it for its local providers.
@@ -172,3 +212,5 @@ Not done, a possible follow-up with no receipt yet: a shared constructed `CSSSty
 - **`closed()` in `src/rules/filters.ts`:** Chrome auto-closes an unfinished selector on its own, but inside the joined block selector it swallows its neighbours.
 - **Suggested rule ids** (`suggested.rules[].id`) are storage keys: renaming one silently resets every user's switch for it.
 - **Background `authorize()`:** a content script's hostname comes from `sender.url`, never from the message.
+- **Placeholder CSS through one adopted sheet** (`placeholderSheet` in `src/content/hider.ts`): a `<style>` per placeholder re-parses the same CSS on every hide. Keep the `<style>` fallback for realms without constructable sheets.
+- **`rel=sponsored` is global, `/aclk` is Google-only.** Decided 2026-09-25; the reasoning sits above the check in `src/extract.ts`.

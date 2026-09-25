@@ -65,6 +65,38 @@ button:hover { opacity: 1; }
 button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; border-radius: 2px; }
 `;
 
+/**
+ * One constructed stylesheet per document, shared by every placeholder through
+ * `adoptedStyleSheets`. A `<style>` element per placeholder made the browser parse
+ * the same CSS once per hide (one LinkedIn apply phase measured 7.9 ms). `null`
+ * means the document's realm has no constructable sheets; then fall back to a
+ * `<style>` element.
+ */
+const sheets = new WeakMap<Document, CSSStyleSheet | null>();
+
+function placeholderSheet(doc: Document): CSSStyleSheet | null {
+  const known = sheets.get(doc);
+  if (known !== undefined) return known;
+  let sheet: CSSStyleSheet | null = null;
+  try {
+    // The sheet must come from the page's own realm, or adopting it throws.
+    const Ctor = doc.defaultView?.CSSStyleSheet;
+    if (Ctor && typeof Ctor.prototype.replaceSync === 'function') {
+      sheet = new Ctor();
+      sheet.replaceSync(PLACEHOLDER_CSS);
+    }
+  } catch {
+    sheet = null;
+  }
+  sheets.set(doc, sheet);
+  return sheet;
+}
+
+/** Test-only accessor: whether placeholders in this document share one constructed sheet. */
+export function usesSharedSheet(doc: Document): boolean {
+  return placeholderSheet(doc) !== null;
+}
+
 export class Hider {
   private records = new WeakMap<Element, Record_>();
   private hidden = new Set<Element>();
@@ -191,8 +223,21 @@ export class Hider {
     // it can locate by attribute regardless of shadow mode.
     const root = host.attachShadow({ mode: 'open' });
     shadowRoots.set(host, root);
-    const style = this.doc.createElement('style');
-    style.textContent = PLACEHOLDER_CSS;
+    let adopted = false;
+    const sheet = placeholderSheet(this.doc);
+    if (sheet) {
+      try {
+        root.adoptedStyleSheets = [sheet];
+        adopted = true;
+      } catch {
+        adopted = false;
+      }
+    }
+    if (!adopted) {
+      const style = this.doc.createElement('style');
+      style.textContent = PLACEHOLDER_CSS;
+      root.append(style);
+    }
     const row = this.doc.createElement('div');
     row.className = 'row';
     row.setAttribute('role', 'group');
@@ -202,7 +247,7 @@ export class Hider {
     const show = this.button('Show', 'show', () => this.cb.onShow(unit));
     const notAd = this.button(KEEP_LABELS[category], 'not-ad', () => this.cb.onNotAd(unit));
     row.append(label, show, notAd);
-    root.append(style, row);
+    root.append(row);
     return host;
   }
 

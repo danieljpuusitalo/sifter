@@ -77,6 +77,25 @@ test('hides sponsored units and leaves organic ones on every launch site', async
   }
 });
 
+test('the placeholder is styled by its shared constructed sheet', async ({ page }) => {
+  await page.goto('https://www.linkedin.com/');
+  await expect(page.locator('[data-sifter-placeholder]').first()).toBeAttached();
+  const styled = await page.evaluate(() => {
+    const hosts = Array.from(document.querySelectorAll('[data-sifter-placeholder]'));
+    return hosts.map((host) => {
+      const root = host.shadowRoot!;
+      const row = root.querySelector('.row') as HTMLElement;
+      return {
+        styleElements: root.querySelectorAll('style').length,
+        adopted: root.adoptedStyleSheets.length,
+        display: getComputedStyle(row).display,
+      };
+    });
+  });
+  expect(styled.length).toBeGreaterThan(1);
+  for (const s of styled) expect(s).toEqual({ styleElements: 0, adopted: 1, display: 'flex' });
+});
+
 test('Show reveals the unit for this page only', async ({ page }) => {
   await page.goto('https://www.linkedin.com/');
   await expect(card(page, '1002')).toBeHidden();

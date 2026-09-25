@@ -28,6 +28,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   backoff) if the service worker is asleep or mid-update, falling back to
   `defaultContext` and logging a warning instead of never starting the
   scanner.
+- A muted word hidden by a `display:none`/`visibility:hidden` decoy no longer
+  hides the post: a hit is now confirmed against rendered text before it counts.
+- The placeholder for a custom hide now says why: "Hidden by your filter ·
+  muted word "layoffs"" or "· rule &lt;selector&gt;", instead of repeating the
+  post's own first line.
+- The options page now flags a muted word over the 100-character cap at save
+  time (it used to say "Saved" and then silently drop it on the next load).
+- A muted word under 2 characters is now flagged as too short to match
+  anything, instead of being accepted with no effect.
 
 ## [1.0.0] - 2026-09-24
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { browser } from 'wxt/browser';
 import { bg } from '../../src/bg';
-import { MAX_WORDS, parseRules } from '../../src/rules/filters';
+import { MAX_WORDS, parseRules, type RuleError } from '../../src/rules/filters';
 import { LAUNCH_SITES } from '../../src/sites';
 import {
   clearOverrides,
@@ -10,6 +10,7 @@ import {
   isSiteEnabled,
   loadOverrides,
   loadSettings,
+  MAX_WORD_LEN,
   siteCategories,
   type Overrides,
   type Settings,
@@ -59,17 +60,34 @@ function validCss(selector: string): boolean {
   }
 }
 
-/** Muted words as typed: one per line or comma-separated. */
-function parseWords(text: string): string[] {
+/**
+ * Muted words as typed: one per line or comma-separated. Line numbers are the
+ * textarea's own lines, so a comma-separated word on line 3 still reports as
+ * line 3. A word the storage schema would drop (too short, too long) is
+ * reported here instead of silently vanishing on the next load.
+ */
+export function parseWords(text: string): { words: string[]; errors: RuleError[] } {
   const seen = new Set<string>();
-  const out: string[] = [];
-  for (const w of text.split(/[\n,]/)) {
-    const t = w.trim();
-    if (t.length < 2 || seen.has(t.toLowerCase())) continue;
-    seen.add(t.toLowerCase());
-    out.push(t);
-  }
-  return out.slice(0, MAX_WORDS);
+  const words: string[] = [];
+  const errors: RuleError[] = [];
+  text.split(/\r?\n/).forEach((line, i) => {
+    for (const raw of line.split(',')) {
+      const t = raw.trim();
+      if (!t) continue;
+      if (t.length < 2) {
+        errors.push({ line: i + 1, text: t, reason: `'${t}' is too short to be a muted word` });
+        continue;
+      }
+      if (t.length > MAX_WORD_LEN) {
+        errors.push({ line: i + 1, text: t, reason: `'${t}' is longer than ${MAX_WORD_LEN} characters` });
+        continue;
+      }
+      if (seen.has(t.toLowerCase())) continue;
+      seen.add(t.toLowerCase());
+      words.push(t);
+    }
+  });
+  return { words: words.slice(0, MAX_WORDS), errors };
 }
 
 export function App() {
@@ -241,7 +259,15 @@ function Filters(props: { settings: Settings; onSaved: (s: Settings) => void }) 
   const [rules, setRules] = useState(props.settings.rulesText);
   const [status, setStatus] = useState<string | null>(null);
   const parsed = useMemo(() => parseRules(rules, validCss), [rules]);
-  const wordList = useMemo(() => parseWords(words), [words]);
+  const parsedWords = useMemo(() => parseWords(words), [words]);
+  const wordList = parsedWords.words;
+  const errors = useMemo(
+    () => [
+      ...parsedWords.errors.map((e) => ({ ...e, field: 'Muted words' })),
+      ...parsed.errors.map((e) => ({ ...e, field: 'Element rules' })),
+    ],
+    [parsedWords.errors, parsed.errors],
+  );
   const storedWords = props.settings.mutedWords.join('\n');
   const storedRules = props.settings.rulesText;
   const dirty = words !== storedWords || rules !== storedRules;
@@ -293,11 +319,11 @@ function Filters(props: { settings: Settings; onSaved: (s: Settings) => void }) 
             onInput={(e) => (setRules((e.currentTarget as HTMLTextAreaElement).value), setStatus(null))}
           />
         </label>
-        {parsed.errors.length > 0 && (
+        {errors.length > 0 && (
           <ul class="errors" aria-live="polite">
-            {parsed.errors.slice(0, 10).map((err) => (
-              <li key={err.line} class="error small">
-                Line {err.line}: {err.reason}. This line is ignored.
+            {errors.slice(0, 10).map((err, i) => (
+              <li key={`${err.field}:${err.line}:${i}`} class="error small">
+                {err.field}, line {err.line}: {err.reason}. This line is ignored.
               </li>
             ))}
           </ul>

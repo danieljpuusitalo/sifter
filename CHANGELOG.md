@@ -2,6 +2,24 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Facebook: a "Stories bar at the top" suggested rule, hiding the Stories
+  module on the home feed (off by default, like every suggested rule).
+
+### Fixed
+
+- The content script is now force-injected into launch-site (and granted
+  opt-in) tabs that were already open at install or update. Chrome never runs
+  `content_scripts` against pre-existing tabs, so Sifter previously did
+  nothing on an open tab until the popup was used to toggle the site.
+- The content script's initial settings load now retries (300 ms, 900 ms
+  backoff) if the service worker is asleep or mid-update, falling back to
+  `defaultContext` and logging a warning instead of never starting the
+  scanner.
+
 ## [1.0.0] - 2026-09-24
 
 ### Added

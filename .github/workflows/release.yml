@@ -41,7 +41,7 @@ jobs:
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
           awk -v ver="## [$PKG_VERSION]" '
-            $0 ~ "^" ver { found=1; print; next }
+            index($0, ver) == 1 { found=1; print; next }
             found && /^## \[/ { exit }
             found { print }
           ' CHANGELOG.md > RELEASE_NOTES.md

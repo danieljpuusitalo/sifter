@@ -706,7 +706,13 @@ export class Scanner {
     // Show, so treat the unit as already handled: no decision, ever, from this
     // marker. checkVisibility is a style pass, not layout (hard rule 7), and only
     // runs when a marker was found. happy-dom may lack it; then treat as visible.
-    const foreignHidden = !!marker?.node && typeof marker.node.checkVisibility === 'function' && !marker.node.checkVisibility();
+    // A unit Sifter hid itself is never foreign: "hide" mode puts an inline
+    // display:none on the unit that the unmask above does not lift.
+    const foreignHidden =
+      !this.hider.isHidden(unit) &&
+      !!marker?.node &&
+      typeof marker.node.checkVisibility === 'function' &&
+      !marker.node.checkVisibility();
     // unitText also feeds the fingerprint, so it must read the same hidden or
     // shown (see its own comment); a custom hide must not fire on a word that
     // only exists in text a style hides, so confirm the hit is actually rendered.

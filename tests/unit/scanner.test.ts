@@ -402,6 +402,27 @@ describe('Scanner: foreign-hidden (a unit whose ad content another extension alr
     expect(t1.classList.contains(HIDDEN_CLASS)).toBe(true);
     expect(scanner.state().perf.foreignHidden).toBe(0);
   });
+
+  it('a unit Sifter hid in "hide" mode (inline display:none on the unit itself) stays hidden on rescan', () => {
+    document.body.innerHTML = unit(false);
+    const ctx = { ...defaultContext('x.com'), hideMode: 'hide' as const };
+    const scanner = new Scanner({
+      doc: document,
+      hostname: 'x.com',
+      baseUrl: 'https://x.com/',
+      adapter: adapterFor('x.com'),
+      context: ctx,
+      persistOverride: () => {},
+      schedule: (fn) => fn(),
+    });
+    scanner.scanNow();
+    const t1 = document.getElementById('t1') as HTMLElement;
+    expect(t1.classList.contains(HIDDEN_CLASS)).toBe(true);
+    expect(t1.style.display).toBe('none');
+    scanner.applyContext({ ...ctx }); // full rescan while our own inline hide is in place
+    expect(t1.classList.contains(HIDDEN_CLASS)).toBe(true);
+    expect(scanner.state().perf.foreignHidden).toBe(0);
+  });
 });
 
 describe('public fixtures (same judge as pnpm eval:mock)', () => {

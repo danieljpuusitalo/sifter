@@ -122,20 +122,14 @@ function safeQueryAll(root: Element, selector: string): Element[] {
   }
 }
 
-/** Whether the unit is, or contains, a match: the element itself, or the first descendant found by `querySelector`. */
+/**
+ * The unit itself when it matches, else the first descendant match, else null,
+ * including when the selector is invalid (hard rule 2).
+ */
 function safeQuery(unit: Element, selector: string): Element | null {
   try {
     if (unit.matches(selector)) return unit;
     return unit.querySelector(selector);
-  } catch {
-    return null;
-  }
-}
-
-/** The first match inside root, or null when the selector is missing or invalid (hard rule 2). */
-function safeQuery(root: Element, selector: string): Element | null {
-  try {
-    return root.querySelector(selector);
   } catch {
     return null;
   }

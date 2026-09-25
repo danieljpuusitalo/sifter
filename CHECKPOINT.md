@@ -116,7 +116,44 @@ on the branch. What changed:
 
 Disclosures from the implementer run: it ran `taskkill` on stray `node.exe` processes once to unstick a hung Vitest (contention with a parallel run), and its new e2e test had not been executed when handed over; it failed on the first run (service worker messaging itself) and was rewritten to send from the popup page.
 
-Not done, a possible follow-up with no receipt yet: a shared constructed `CSSStyleSheet` (`adoptedStyleSheets`) for the placeholders. One LinkedIn apply phase measured 7.9 ms at real speed; a shared sheet would avoid a style element per placeholder.
+The shared constructed `CSSStyleSheet` for placeholders, listed here on 09-24 as
+a follow-up, was done in session 5 (below).
+
+## Session 5 (2026-09-25): landing v1.0.0
+
+Daniel: "proceed, let's get this truly production ready." Done, with receipts:
+
+- **Merged `audit/v1-hardening`** into `main` via PR #8 (merge commit `c87e1e1`), CI
+  `verify` green on the branch head `547714c`.
+- **Branch protection on `main`** (GitHub API, read back): required status check
+  `verify` (strict), force-push blocked, deletion blocked, `enforce_admins` off so a
+  direct checkpoint push by the owner still works. Everything else goes through a PR.
+- **Decision, `document_start` CSS: no, not in v1.** A CSS hide before the script runs
+  would have no placeholder and no one-click undo (hard rule 5), and every hide today
+  is a scanner decision, not a selector. The first-visit flash is bounded by the first
+  idle slice. BRIEF.md M4 (learned rules) is where `document_start` injection belongs,
+  with its own verification loop.
+- **Decision, `rel=sponsored`: stays global; ad-click URLs stay Google-only.** Reasoning
+  is in the comment above the check in `src/extract.ts`. It is the publisher's own
+  declaration that a link is paid, no launch site emits it on user posts, and on an
+  opted-in generic site a unit built around a paid link is what the user asked to hide.
+- **Shared placeholder stylesheet** (`src/content/hider.ts`): one constructed
+  `CSSStyleSheet` per document, adopted by every placeholder's shadow root; falls back
+  to a `<style>` element where constructable sheets are missing. Unit test asserts two
+  placeholders share one sheet and carry no `<style>`; e2e asserts the row computes
+  `display: flex` from the adopted sheet in real Chromium. Bench re-run at `--cpu 1
+  --strict` (table above): OK on both sites, worst-slice apply 0–1.1 ms.
+- **README GIF** (`docs/readme.gif`, 168 kB, 97 frames, 620x560): rendered by
+  `pnpm readme:gif` from the LinkedIn fixture, without / with Sifter / a short scroll /
+  "Show". The scroll stops above the fixture's trap units, which would read as misses.
+- **Store assets** re-rendered from the current build: byte-identical to the committed
+  PNGs, so the 09-24 note that they predate the per-rule switches was wrong or moot.
+- README coverage table and CHANGELOG no longer describe the Google carousel as
+  "under re-check"; it was resolved on 09-24 (`#atvcap` shape).
+
+Still Daniel's, unchanged: the Web Store developer account and the submission itself
+(ROADMAP Phase 4), a first run of the release zip in regular Chrome with a normal
+profile, and the live recall checks (Threads ad, X suggested, NL/DE/FR words).
 
 ## Next
 

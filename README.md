@@ -70,12 +70,19 @@ Works in Chrome 116 or newer and in other Chromium browsers such as Edge and Bra
 | Google Search | yes (text ads, shopping units) | – | yes (EN and NL), both shapes of the top "Sponsored products" carousel. Google rotates its markup by experiment, so a new shape is a one-line adapter fix. Maps and promoted places in the local pack: not covered |
 | X | yes | "Who to follow" | yes |
 | Instagram | yes | yes | sponsored: yes · suggested: yes (English; NL/DE/FR unchecked) |
-| Facebook | yes | yes | feed and right-rail ads: yes · suggested: yes (English) |
+| Facebook **(experimental)** | partial | partial | right-rail ads and the Stories bar: yes · "Follow" suggestions: yes · some "Suggested for you" posts and feed ads still get through (English only) |
 | Threads | yes | – | runs without hiding organic posts; no ad has shown up yet to confirm the ad path |
 
 "Not yet" means the rules come from known markup and pass the synthetic fixtures,
 but nobody has watched them work on a logged-in feed. Each adapter's `verified`
 field in `src/adapters/` records exactly what was checked and when.
+
+**Experimental** means Sifter runs there and hides what it can, but coverage is
+known to be partial. Facebook changes its markup often, renders its labels in ways
+that are hard to read reliably, and serves different post shapes to different
+accounts, so some sponsored and suggested posts get through. The popup and the
+settings page show the same tag. It is on by default like every other site, and
+turning it off is one switch.
 
 **Any other site** can be turned on from the popup ("Hide ads on this site"). There
 Sifter uses general detection: it hides elements whose whole visible label is

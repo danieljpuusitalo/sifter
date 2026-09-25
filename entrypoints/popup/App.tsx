@@ -3,6 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { browser } from 'wxt/browser';
 import { bg } from '../../src/bg';
 import type { PageState, SiteContext, TabRequest } from '../../src/messages';
+import { experimentalNote } from '../../src/sites';
 import { loadSettings, siteKey, type Settings } from '../../src/storage/settings';
 import type { BlockCategory, HideCategory } from '../../src/types';
 
@@ -139,8 +140,11 @@ function Running(props: { tab: Tab; state: PageState; settings: Settings; onChan
         <span>
           <strong>{state.siteKey}</strong>
           <span class="muted">{state.enabled ? (state.paused ? ' · paused' : ' · on') : ' · off'}</span>
+          {experimentalNote(state.siteKey) && <span class="badge">Experimental</span>}
         </span>
       </label>
+
+      {experimentalNote(state.siteKey) && <p class="muted small">{experimentalNote(state.siteKey)}</p>}
 
       {state.enabled && state.noUnitsMatched && (
         <p class="muted small">

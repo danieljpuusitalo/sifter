@@ -89,13 +89,26 @@ export function injectTargetMatches(optInMatches: string[]): string[] {
   return [...LAUNCH_MATCHES, ...optInMatches];
 }
 
-/** The sites Sifter ships an adapter for, by site key, in the order the UI lists them. */
-export const LAUNCH_SITES: { key: string; name: string }[] = [
+/**
+ * The sites Sifter ships an adapter for, by site key, in the order the UI lists
+ * them. `experimental` marks a site whose coverage is known to be partial: the
+ * popup, the options page and the README show the same note.
+ */
+export const LAUNCH_SITES: { key: string; name: string; experimental?: string }[] = [
   { key: 'linkedin.com', name: 'LinkedIn' },
   { key: 'reddit.com', name: 'Reddit' },
   { key: 'google.com', name: 'Google Search' },
   { key: 'x.com', name: 'X' },
   { key: 'instagram.com', name: 'Instagram' },
-  { key: 'facebook.com', name: 'Facebook' },
+  {
+    key: 'facebook.com',
+    name: 'Facebook',
+    experimental: 'Facebook changes its markup often and hides its labels; some sponsored and suggested posts get through.',
+  },
   { key: 'threads.com', name: 'Threads' },
 ];
+
+/** The experimental note for a site key, or null when the site is fully supported (or not a launch site). */
+export function experimentalNote(key: string): string | null {
+  return LAUNCH_SITES.find((s) => s.key === key)?.experimental ?? null;
+}

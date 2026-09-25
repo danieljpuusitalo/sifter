@@ -131,6 +131,15 @@ function safeHas(unit: Element, selector: string): boolean {
   }
 }
 
+/** The first match inside root, or null when the selector is missing or invalid (hard rule 2). */
+function safeQuery(root: Element, selector: string): Element | null {
+  try {
+    return root.querySelector(selector);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Label nodes in document order: nodes inside the adapter's ignore selector (author
  * links) are dropped first, then the list is capped at the node limit. The ignore
@@ -205,7 +214,7 @@ const MAX_UNIT_TEXT = 5000;
  * the same either way, and cost no layout.
  */
 export function unitText(unit: Element, adapter: Adapter | null): string {
-  const root = adapter?.textRootSelector ? (unit.querySelector(adapter.textRootSelector) ?? unit) : unit;
+  const root = adapter?.textRootSelector ? (safeQuery(unit, adapter.textRootSelector) ?? unit) : unit;
   const doc = root.ownerDocument;
   const walker = doc.createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);
   const parts: string[] = [];

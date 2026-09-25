@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { evalFixture, passes, PASSES } from '../../evals/fixture-eval';
 import { adapterFor } from '../../src/adapters/index';
+import * as extract from '../../src/extract';
 import {
   BLUR_CLASS,
   COLLAPSE_CLASS,
@@ -265,6 +266,79 @@ describe('Scanner', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('a throwing decide does not kill the scanner: other units in the feed still hide, and a later mutation still scans', async () => {
+    // Positive control: stub unitText to throw for exactly one unit (1002), the
+    // way a bad adapter selector would (BRIEF.md hard rule 2 territory).
+    const original = extract.unitText;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const unitTextSpy = vi.spyOn(extract, 'unitText').mockImplementation((unit, adapter) => {
+      if (unit.getAttribute('componentkey')?.startsWith('update-card-focus1002')) throw new Error('boom');
+      return original(unit, adapter);
+    });
+    vi.useFakeTimers();
+    try {
+      document.head.innerHTML = `<style>${style}</style>`;
+      document.body.innerHTML = body;
+      const scanner = new Scanner({
+        doc: document,
+        hostname: 'www.linkedin.com',
+        baseUrl: 'https://www.linkedin.com/',
+        adapter: adapterFor('www.linkedin.com'),
+        context: ctx(),
+        persistOverride: () => {},
+      });
+      const byKey = (k: string) => document.querySelector(`[componentkey^="update-card-focus${k}"]`) as HTMLElement;
+      scanner.start();
+      await vi.advanceTimersByTimeAsync(50);
+
+      // The throwing unit is skipped, not hidden...
+      expect(byKey('1002').classList.contains(HIDDEN_CLASS)).toBe(false);
+      // ...but the other sponsored units in the same feed still hide: the slice's
+      // normal completion path ran, it did not abort partway through.
+      expect(byKey('1004').classList.contains(HIDDEN_CLASS)).toBe(true);
+      expect(byKey('1006').classList.contains(HIDDEN_CLASS)).toBe(true);
+      expect(scanner.state().perf.decideErrors).toBeGreaterThan(0);
+      expect(warn).toHaveBeenCalledTimes(1); // at most once per page
+
+      // A later mutation must still trigger a scan: if `running` were stuck true
+      // (the bug this fixes), scanNow's guard would never schedule another slice.
+      const feed = document.querySelector('[data-testid="mainFeed"]') as HTMLElement;
+      const extraWrap = document.createElement('div');
+      extraWrap.innerHTML =
+        '<div role="listitem" componentkey="update-card-focus2002xFeedType_MAIN_FEED_RELEVANCE" id="late"><div><p componentkey="z1"><span>Late Co</span></p><p componentkey="z2"><span>Promoted</span></p></div><p componentkey="z3"><span>New ad body.</span></p></div>';
+      feed.append(extraWrap);
+      await vi.advanceTimersByTimeAsync(300);
+      expect(document.getElementById('late')?.classList.contains(HIDDEN_CLASS)).toBe(true);
+
+      scanner.stop();
+    } finally {
+      vi.useRealTimers();
+      unitTextSpy.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it('noUnitsMatched: false when units match (positive control); true when unitSelector finds none in a fat feed root', () => {
+    const { scanner } = setup();
+    expect(scanner.state().noUnitsMatched).toBe(false); // positive control: real units do match
+
+    // Break the adapter's unitSelector, the way a site redesign would, and rescan.
+    document.head.innerHTML = `<style>${style}</style>`;
+    document.body.innerHTML = body;
+    const brokenAdapter = { ...adapterFor('www.linkedin.com')!, unitSelector: '[data-sifter-no-such-thing]' };
+    const stale = new Scanner({
+      doc: document,
+      hostname: 'www.linkedin.com',
+      baseUrl: 'https://www.linkedin.com/',
+      adapter: brokenAdapter,
+      context: ctx(),
+      persistOverride: () => {},
+      schedule: (fn) => fn(),
+    });
+    stale.scanNow();
+    expect(stale.state().noUnitsMatched).toBe(true);
   });
 });
 

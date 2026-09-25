@@ -8,9 +8,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Facebook: a "Stories bar at the top" suggested rule, hiding the Stories
   module on the home feed (off by default, like every suggested rule).
+- A local "rules may be stale" signal, no telemetry: when an adapter's feed
+  root exists and clearly holds content but `unitSelector` matches nothing in
+  it, the popup shows a quiet line under the site toggle linking to the
+  issues page.
+- An adapter minimum-signal test (`tests/unit/adapters.test.ts`): every
+  adapter needs at least two independent sponsored signals, or a one-line
+  allowlist reason, so a weak new adapter or a removed signal fails CI on
+  purpose.
+- A real-Chromium selector canary (`tests/e2e/selector-canary.spec.ts`):
+  every selector string in every adapter runs through `querySelectorAll` on
+  a blank page, because happy-dom silently accepts selectors Chrome rejects.
 
 ### Fixed
 
+- A throwing `decide()` (a bad adapter selector, for instance) no longer
+  kills the scanner. `scanNow()`'s `running` guard used to mean an
+  unhandled exception inside one unit's decision stopped every future scan
+  on the page. `decide` and `apply` are now caught per unit: the failure is
+  counted (`perf.decideErrors`), warned once per page, the unit is recorded
+  as seen so it isn't retried every slice, and the slice's normal
+  completion (and later scans) still run.
+- `unit.querySelector(adapter.textRootSelector)` (extract.ts) is now guarded
+  the same way as the file's other selector lookups: an invalid selector
+  falls back to the unit itself instead of throwing.
 - LinkedIn hidden posts vanished with their Show row: the virtualised feed
   measures a `display:none` unit at 0px and parks the whole slot off-screen,
   taking a sibling placeholder with it. The placeholder now lives inside the

@@ -55,6 +55,8 @@ export type PageState = {
   /** This site's named suggested rules, each with whether it is on here. */
   rules: { id: string; label: string; on: boolean }[];
   hiddenNow: number;
+  /** A full scan found a substantial feed root but matched zero units in it: this site's rules may be stale. */
+  noUnitsMatched: boolean;
   /** Scanner self-cost on this page (hard rule 7), for the popup and the scroll bench. */
   perf: ScanPerf;
 };
@@ -80,6 +82,8 @@ export type ScanPerf = {
   unitsExamined: number;
   /** Units that went through marker detection. */
   unitsDecided: number;
+  /** Times `decide` or `apply` threw for a unit: caught, skipped, counted, warned once. */
+  decideErrors: number;
   slices: number;
   totalMs: number;
   /** Longest slice, including the collect step it started with. `resetPerfPeaks` zeroes it. */

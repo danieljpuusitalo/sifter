@@ -209,7 +209,9 @@ Root causes, verified live over CDP in his logged-in Chrome:
   popup line, CLAUDE.md convention on blocks vs suggested rules.
 
 Not done: Facebook "Suggested for you" posts (needs markup), a release tag (Daniel
-decides), the Facebook feed-ad path is still unverified live.
+decides), the Facebook feed-ad path is still unverified live. Facebook is labelled
+Experimental everywhere (session 8) until that path is fixed; drop the note in
+`src/sites.ts` when it is, and the README test will demand the row change with it.
 
 ## Session 6 (2026-09-25): first real use in Chrome, audit and fixes
 

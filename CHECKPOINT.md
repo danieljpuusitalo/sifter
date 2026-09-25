@@ -6,6 +6,9 @@ revealing nothing, muted-words audit) plus a hardening pass, on
 first five complaints (PR #10). **Nothing is released for either round yet**: `main`
 carries the fixes, `v1.0.0` is still the only tag, the CHANGELOG has an
 `[Unreleased]` section.
+Session 8 (same day, PR #12, on main as 31fd4e6) tagged Facebook **Experimental** in the
+popup, the options page, README, CHANGELOG and store listing, after Daniel reported it
+still leaky; one note in LAUNCH_SITES drives every surface, and a test pins the README row.
 Session 5 landed and tagged `v1.0.0` (`050e41f`); session 4 was the agent-driven
 audit; session 3 shipped the seven adapters, popup, options and store docs.
 
@@ -206,7 +209,9 @@ Root causes, verified live over CDP in his logged-in Chrome:
   popup line, CLAUDE.md convention on blocks vs suggested rules.
 
 Not done: Facebook "Suggested for you" posts (needs markup), a release tag (Daniel
-decides), the Facebook feed-ad path is still unverified live.
+decides), the Facebook feed-ad path is still unverified live. Facebook is labelled
+Experimental everywhere (session 8) until that path is fixed; drop the note in
+`src/sites.ts` when it is, and the README test will demand the row change with it.
 
 ## Session 6 (2026-09-25): first real use in Chrome, audit and fixes
 

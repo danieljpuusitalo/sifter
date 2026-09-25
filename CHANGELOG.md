@@ -2,6 +2,20 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- LinkedIn hidden posts vanished with their Show row: the virtualised feed
+  measures a `display:none` unit at 0px and parks the whole slot off-screen,
+  taking a sibling placeholder with it. The placeholder now lives inside the
+  unit as its first child, so it moves and resizes with the post instead of
+  disappearing. Collapse and blur modes hide the unit's own content through a
+  shared stylesheet rather than the unit itself, and the placeholder names
+  what it hid (e.g. "Hidden sponsored post · Remedy Entertainment").
+- Show is reversible: a shown post keeps its "Showing hidden sponsored post"
+  bar with a Hide button, instead of losing the placeholder until reload.
+
 ## [1.0.0] - 2026-09-24
 
 ### Added

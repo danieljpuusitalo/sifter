@@ -6,7 +6,7 @@ import type { PageState, ScanPerf, SiteContext } from '../messages';
 import { mutedWordHit, mutedWordPattern } from '../rules/filters';
 import { decideTier0 } from '../rules/tier0';
 import type { BlockCategory, HideCategory, OverrideAction } from '../types';
-import { Hider, PLACEHOLDER_ATTR } from './hider';
+import { BLUR_CLASS, COLLAPSE_CLASS, Hider, HIDDEN_CLASS, PLACEHOLDER_ATTR } from './hider';
 
 // Content-script pipeline: extract -> fingerprint -> tier 0 -> apply
 // (BRIEF.md §5). Tier 1 (model) plugs in at the "unknown" branch in M2.
@@ -54,7 +54,17 @@ export type ScannerDeps = {
 type Seen = { sig: string; fp: string };
 /** A whole page module hidden by rule: an adapter block, or one of the user's element rules. */
 type Block = { selector: string; category: BlockCategory; innermost?: boolean; anchor?: string };
-type Decision = { unit: Element; fp: string; hide: HideCategory | null; block?: boolean };
+type Decision = { unit: Element; fp: string; hide: HideCategory | null; block?: boolean; hint?: string };
+
+/** Past this many characters a placeholder's hint is post body, not a label. */
+const MAX_HINT = 60;
+
+/** The first non-empty rendered line of an already-extracted unit text, capped for the placeholder. */
+function firstHint(text: string): string | undefined {
+  const line = text.split('\n').find((l) => l.trim());
+  const trimmed = line?.trim();
+  return trimmed ? trimmed.slice(0, MAX_HINT) : undefined;
+}
 
 const EMPTY_PERF: Omit<ScanPerf, 'pending'> = {
   scans: 0,
@@ -118,6 +128,7 @@ export class Scanner {
     this.hider = new Hider(deps.doc, deps.context.hideMode, {
       onShow: (unit) => this.userShow(unit),
       onNotAd: (unit) => this.userNotAd(unit),
+      onRehide: (unit) => this.userRehide(unit),
     });
     this.compileContext();
   }
@@ -343,7 +354,7 @@ export class Scanner {
     if (!adapter) return [...this.collectGeneric(root, full, touched, added), ...blocks];
     try {
       const units = full
-        ? innermost(root.querySelectorAll(adapter.unitSelector))
+        ? innermost(withoutPlaceholders(root.querySelectorAll(adapter.unitSelector)))
         : dirtyUnits(adapter.unitSelector, touched, added);
       const out = adapter.adContainerSelector ? collapseToContainers(units, adapter.adContainerSelector) : [...units];
       return blocks.length ? [...out, ...blocks] : out;
@@ -602,8 +613,15 @@ export class Scanner {
       // Its rule or category was switched off, and it isn't a post in its own right.
       return { unit, fp: this.blockHidden.get(unit) as string, hide: null };
     }
+    // Collapse/blur hide children via a shared stylesheet rule, which a rescan of an
+    // already-hidden unit would otherwise see through getComputedStyle: the post's own
+    // marker/text would read as unrendered. Unmask for this read only; nothing paints
+    // in between, so this never flashes the content back.
+    const maskedClasses = [HIDDEN_CLASS, COLLAPSE_CLASS, BLUR_CLASS].filter((c) => unit.classList.contains(c));
+    if (maskedClasses.length) unit.classList.remove(...maskedClasses);
     const marker = detectMarker(unit, adapter, baseUrl, { suggested: categories.suggested, offRules: this.offRules });
     const text = unitText(unit, adapter);
+    if (maskedClasses.length) unit.classList.add(...maskedClasses);
     // Skeleton units have no text yet; come back when they fill in, unless a
     // structural marker already settles it.
     if (!text && !marker) return null;
@@ -618,15 +636,25 @@ export class Scanner {
       custom: mutedWordHit(text, this.muted),
       categories,
     });
-    if (decision.action === 'hide') return { unit, fp, hide: decision.category };
+    if (decision.action === 'hide') return { unit, fp, hide: decision.category, hint: firstHint(text) };
     return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;
   }
 
   /** DOM writes only. */
   private apply(d: Decision): void {
-    if (!d.unit.isConnected || this.userShown.has(d.unit)) return;
+    if (!d.unit.isConnected) return;
+    if (this.userShown.has(d.unit)) {
+      if (d.hide) return; // stays shown (with its "Hide" bar) until the user hides it again
+      // The user showed it, and this decision no longer hides it at all (its
+      // category or rule went off): drop the "Showing…" bar and the record.
+      this.userShown.delete(d.unit);
+      this.hider.unhide(d.unit);
+      this.hiddenFps.delete(d.fp);
+      this.blockHidden.delete(d.unit);
+      return;
+    }
     if (d.hide) {
-      this.hider.hide(d.unit, d.hide);
+      this.hider.hide(d.unit, d.hide, d.hint);
       this.hiddenFps.set(d.fp, d.hide);
       if (d.block) this.blockHidden.set(d.unit, d.fp);
       else this.blockHidden.delete(d.unit);
@@ -648,7 +676,16 @@ export class Scanner {
     this.userShown.add(unit);
     const fp = this.seen.get(unit)?.fp;
     if (fp) this.hiddenFps.delete(fp);
-    this.hider.unhide(unit);
+    this.hider.show(unit);
+  }
+
+  /** "Hide" on a placeholder the user showed: puts the unit back into the count and the hidden state. */
+  private userRehide(unit: Element): void {
+    this.userShown.delete(unit);
+    const fp = this.seen.get(unit)?.fp;
+    const category = this.hider.categoryOf(unit);
+    if (fp && category) this.hiddenFps.set(fp, category);
+    this.hider.rehide(unit);
   }
 
   private userNotAd(unit: Element): void {
@@ -658,7 +695,11 @@ export class Scanner {
       this.hiddenFps.delete(fp);
       this.deps.persistOverride(fp, 'not-ad');
     }
-    this.userShow(unit);
+    // Hard reset, not the soft show: the placeholder is removed entirely and
+    // the override is what keeps it from coming back, not the userShown bar.
+    this.userShown.delete(unit);
+    this.blockHidden.delete(unit);
+    this.hider.unhide(unit);
     if (fp) this.redecideAll();
   }
 }
@@ -684,6 +725,26 @@ function isOwnMutation(r: MutationRecord): boolean {
   return true;
 }
 
+/** A unit-selector query result, minus our own placeholders (they live inside the unit now, and can match a broad selector). */
+function withoutPlaceholders(nodes: Iterable<Element>): Element[] {
+  const out: Element[] = [];
+  for (const n of nodes) if (!n.hasAttribute(PLACEHOLDER_ATTR)) out.push(n);
+  return out;
+}
+
+/** Whether `el` holds another unit-selector match, ignoring its own placeholder (its first child, never a real unit). */
+function hasInnerUnit(el: Element, selector: string): boolean {
+  try {
+    const matches = el.querySelectorAll(selector);
+    for (let i = 0; i < matches.length; i++) {
+      if (!matches[i]!.hasAttribute(PLACEHOLDER_ATTR)) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The innermost units that contain a changed node or sit inside an added
  * subtree: the same answer innermost() gives over the whole page, restricted to
@@ -692,7 +753,7 @@ function isOwnMutation(r: MutationRecord): boolean {
 function dirtyUnits(selector: string, touched: Set<Node>, added: Set<Element>): Set<Element> {
   const out = new Set<Element>();
   const consider = (u: Element | null | undefined) => {
-    if (u && u.isConnected && !out.has(u) && !u.querySelector(selector)) out.add(u);
+    if (u && u.isConnected && !out.has(u) && !hasInnerUnit(u, selector)) out.add(u);
   };
   for (const n of touched) {
     const el = n.nodeType === 1 ? (n as Element) : n.parentElement;
@@ -702,7 +763,10 @@ function dirtyUnits(selector: string, touched: Set<Node>, added: Set<Element>): 
     if (!el.isConnected) continue;
     consider(el.closest(selector));
     const inner = el.querySelectorAll(selector);
-    for (let i = 0; i < inner.length; i++) consider(inner[i]);
+    for (let i = 0; i < inner.length; i++) {
+      const m = inner[i]!;
+      if (!m.hasAttribute(PLACEHOLDER_ATTR)) consider(m);
+    }
   }
   return out;
 }

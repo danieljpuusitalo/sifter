@@ -60,7 +60,12 @@ const test = base.extend<{ context: BrowserContext; page: Page }>({
 
 const card = (page: Page, key: string) => page.locator(`[componentkey^="update-card-focus${key}"]`);
 const placeholderFor = (page: Page, key: string) =>
-  page.locator(`[data-sifter-placeholder]:has(+ [componentkey^="update-card-focus${key}"])`);
+  page.locator(`[componentkey^="update-card-focus${key}"] > [data-sifter-placeholder]`);
+// The unit itself keeps a real box now (the placeholder lives inside it), so Playwright's
+// box-based toBeHidden()/toBeVisible() no longer says whether Sifter hid it. Assert the
+// class it actually toggles instead.
+const expectHidden = (page: Page, key: string) => expect(card(page, key)).toHaveClass(/\bsifter-hidden\b/);
+const expectShown = (page: Page, key: string) => expect(card(page, key)).not.toHaveClass(/\bsifter-hidden\b/);
 
 test('hides sponsored units and leaves organic ones on every launch site', async ({ page }) => {
   for (const [host, file] of Object.entries(FIXTURES)) {
@@ -79,7 +84,8 @@ test('hides sponsored units and leaves organic ones on every launch site', async
 
 test('the placeholder is styled by its shared constructed sheet', async ({ page }) => {
   await page.goto('https://www.linkedin.com/');
-  await expect(page.locator('[data-sifter-placeholder]').first()).toBeAttached();
+  // Decisions land in idle slices; wait for the page to converge on all 3 sponsored units.
+  await expect(page.locator('[data-sifter-placeholder]')).toHaveCount(3);
   const styled = await page.evaluate(() => {
     const hosts = Array.from(document.querySelectorAll('[data-sifter-placeholder]'));
     return hosts.map((host) => {
@@ -96,33 +102,39 @@ test('the placeholder is styled by its shared constructed sheet', async ({ page 
   for (const s of styled) expect(s).toEqual({ styleElements: 0, adopted: 1, display: 'flex' });
 });
 
-test('Show reveals the unit for this page only', async ({ page }) => {
+test('Show reveals the unit for this page only, and Hide puts it back', async ({ page }) => {
   await page.goto('https://www.linkedin.com/');
-  await expect(card(page, '1002')).toBeHidden();
+  await expectHidden(page, '1002');
   await expect(placeholderFor(page, '1002')).toContainText('Hidden sponsored post');
   await placeholderFor(page, '1002').locator('[data-act="show"]').click();
-  await expect(card(page, '1002')).toBeVisible();
-  await expect(placeholderFor(page, '1002')).toHaveCount(0);
+  await expectShown(page, '1002');
+  // The placeholder stays, now as a reversible "Showing…" bar with a Hide button.
+  await expect(placeholderFor(page, '1002')).toContainText('Showing hidden sponsored post');
+  await expect(placeholderFor(page, '1002').locator('[data-act="hide"]')).toBeVisible();
+
+  await placeholderFor(page, '1002').locator('[data-act="hide"]').click();
+  await expectHidden(page, '1002');
+  await expect(placeholderFor(page, '1002')).toContainText('Hidden sponsored post');
 
   await page.reload();
-  await expect(card(page, '1002')).toBeHidden();
+  await expectHidden(page, '1002');
 });
 
 test('"Not an ad" reveals the unit and remembers it across reloads', async ({ page }) => {
   await page.goto('https://www.linkedin.com/');
-  await expect(card(page, '1004')).toBeHidden();
+  await expectHidden(page, '1004');
   await placeholderFor(page, '1004').locator('[data-act="not-ad"]').click();
-  await expect(card(page, '1004')).toBeVisible();
+  await expectShown(page, '1004');
 
   await page.reload();
-  await expect(card(page, '1002')).toBeHidden(); // the extension is running
-  await expect(card(page, '1004')).toBeVisible(); // and the override held
+  await expectHidden(page, '1002'); // the extension is running
+  await expectShown(page, '1004'); // and the override held
   await expect(placeholderFor(page, '1004')).toHaveCount(0);
 });
 
 test('popup renders, and the page reports counts to it', async ({ context, page }) => {
   await page.goto('https://www.linkedin.com/');
-  await expect(card(page, '1002')).toBeHidden();
+  await expectHidden(page, '1002');
 
   // The message the popup sends to the active tab, sent from the service worker.
   // Decisions land in idle slices, so poll until the page has converged.
@@ -145,7 +157,7 @@ test('popup renders, and the page reports counts to it', async ({ context, page 
 
 test('units added by infinite scroll are hidden too', async ({ page }) => {
   await page.goto('https://www.linkedin.com/');
-  await expect(card(page, '1002')).toBeHidden();
+  await expectHidden(page, '1002');
   await page.evaluate(() => {
     const wrap = document.createElement('div');
     wrap.innerHTML =
@@ -153,8 +165,8 @@ test('units added by infinite scroll are hidden too', async ({ page }) => {
       '<div role="listitem" componentkey="update-card-focus3002x"><div><p componentkey="s4"><span>A Person</span></p><p componentkey="s5"><span>Teacher · 1h</span></p></div><p componentkey="s6"><span>Scrolled-in organic post.</span></p></div>';
     document.querySelector('[data-testid="mainFeed"]')?.append(wrap);
   });
-  await expect(card(page, '3001')).toBeHidden();
-  await expect(card(page, '3002')).toBeVisible();
+  await expectHidden(page, '3001');
+  await expectShown(page, '3002');
 });
 
 /** Change stored settings from the service worker, as the options page would. */
@@ -168,26 +180,26 @@ async function patchSettings(context: BrowserContext, patch: Record<string, unkn
 
 test('turning on "suggested" in settings hides suggested units in open tabs', async ({ context, page }) => {
   await page.goto('https://www.linkedin.com/');
-  await expect(card(page, '1002')).toBeHidden();
-  await expect(card(page, '1009')).toBeVisible(); // suggested is off by default
+  await expectHidden(page, '1002');
+  await expectShown(page, '1009'); // suggested is off by default
   await patchSettings(context, { categories: { sponsored: true, suggested: true, custom: true } });
-  await expect(card(page, '1009')).toBeHidden();
+  await expectHidden(page, '1009');
   await expect(placeholderFor(page, '1009')).toContainText('Hidden suggestion');
-  await expect(card(page, '1010')).toBeVisible(); // "suggested" in the body is not a label
+  await expectShown(page, '1010'); // "suggested" in the body is not a label
 });
 
 test('muted words and element rules hide as "custom"', async ({ context, page }) => {
   await page.goto('https://www.linkedin.com/');
-  await expect(card(page, '1002')).toBeHidden();
+  await expectHidden(page, '1002');
   await patchSettings(context, { mutedWords: ['sourdough', 'interviews'], rulesText: 'linkedin.com##[componentkey^="update-card-focus1005"]' });
-  await expect(card(page, '1009')).toBeHidden(); // "user interviews"
-  await expect(card(page, '1005')).toBeHidden(); // element rule
-  await expect(card(page, '1001')).toBeVisible();
+  await expectHidden(page, '1009'); // "user interviews"
+  await expectHidden(page, '1005'); // element rule
+  await expectShown(page, '1001');
 });
 
 test('"Hide this post" from the context menu hides the unit and remembers it', async ({ context, page }) => {
   await page.goto('https://www.linkedin.com/');
-  await expect(card(page, '1002')).toBeHidden();
+  await expectHidden(page, '1002');
   // A real right-click, not dispatchEvent: the content script now ignores an
   // untrusted contextmenu event, and dispatchEvent's is never trusted.
   await card(page, '1001').locator('span').first().click({ button: 'right' });
@@ -197,20 +209,20 @@ test('"Hide this post" from the context menu hides the unit and remembers it', a
     return chrome.tabs.sendMessage(tabs[0]!.id!, { type: 'sifter:hideTarget' });
   });
   expect(res).toEqual({ ok: true });
-  await expect(card(page, '1001')).toBeHidden();
+  await expectHidden(page, '1001');
   // A settings change re-decides every unit, the hidden ones included: the stored hide must still match.
   await patchSettings(context, { hideMode: 'collapse', mutedWords: ['zzz-unused'] });
   await page.waitForTimeout(600);
-  await expect(card(page, '1001')).toBeHidden();
+  await expectHidden(page, '1001');
   await page.reload();
-  await expect(card(page, '1002')).toBeHidden();
-  await expect(card(page, '1001')).toBeHidden();
+  await expectHidden(page, '1002');
+  await expectHidden(page, '1001');
 });
 
 test('options page: global category, per-site override and rule validation reach open tabs', async ({ context, page }) => {
   await page.goto('https://www.linkedin.com/');
-  await expect(card(page, '1002')).toBeHidden();
-  await expect(card(page, '1009')).toBeVisible();
+  await expectHidden(page, '1002');
+  await expectShown(page, '1009');
 
   const id = new URL(context.serviceWorkers()[0]!.url()).host;
   const options = await context.newPage();
@@ -218,19 +230,19 @@ test('options page: global category, per-site override and rule validation reach
   await expect(options.getByRole('row')).toHaveCount(8); // header + 7 launch sites
 
   await options.getByRole('checkbox', { name: /Suggested posts/ }).check();
-  await expect(card(page, '1009')).toBeHidden();
+  await expectHidden(page, '1009');
 
   // A site's own setting beats the global one.
   await options.getByRole('combobox', { name: 'Suggested posts on LinkedIn' }).selectOption('off');
-  await expect(card(page, '1009')).toBeVisible();
-  await expect(card(page, '1002')).toBeHidden();
+  await expectShown(page, '1009');
+  await expectHidden(page, '1002');
 
   // A bad rule is reported and skipped; the good one still applies.
   await options.getByRole('textbox', { name: /Element rules/ }).fill('linkedin.com##[componentkey^="update-card-focus1005"]\nlinkedin.com##div[[');
   await expect(options.getByText('Line 2:')).toBeVisible();
   await options.getByRole('button', { name: 'Save filters' }).click();
   await expect(options.getByRole('status')).toContainText('1 rule');
-  await expect(card(page, '1005')).toBeHidden();
+  await expectHidden(page, '1005');
 });
 
 test('sifter:setOverride rejects a malformed fingerprint or action instead of storing it', async ({ context, page }) => {

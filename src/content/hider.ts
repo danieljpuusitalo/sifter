@@ -121,6 +121,7 @@ export function usesSharedSheet(doc: Document): boolean {
 const UNIT_CSS = `
 .${HIDDEN_CLASS}.${COLLAPSE_CLASS} > :not([${PLACEHOLDER_ATTR}]) { display: none !important; }
 .${HIDDEN_CLASS}.${BLUR_CLASS} > :not([${PLACEHOLDER_ATTR}]) { filter: blur(12px) !important; pointer-events: none !important; }
+.${HIDDEN_CLASS}.${COLLAPSE_CLASS} { min-height: 0 !important; max-height: none !important; height: auto !important; }
 `;
 
 const unitSheets = new WeakMap<Document, CSSStyleSheet | null>();

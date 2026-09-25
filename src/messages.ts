@@ -80,6 +80,8 @@ export type ScanPerf = {
   unitsExamined: number;
   /** Units that went through marker detection. */
   unitsDecided: number;
+  /** Units whose marker element was already hidden by something other than Sifter (another ad blocker's cosmetic filter): skipped, never hidden, never placeheld. */
+  foreignHidden: number;
   slices: number;
   totalMs: number;
   /** Longest slice, including the collect step it started with. `resetPerfPeaks` zeroes it. */

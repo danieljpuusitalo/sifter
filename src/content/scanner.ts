@@ -71,6 +71,7 @@ const EMPTY_PERF: Omit<ScanPerf, 'pending'> = {
   fullScans: 0,
   unitsExamined: 0,
   unitsDecided: 0,
+  foreignHidden: 0,
   slices: 0,
   totalMs: 0,
   maxSliceMs: 0,
@@ -621,7 +622,20 @@ export class Scanner {
     if (maskedClasses.length) unit.classList.remove(...maskedClasses);
     const marker = detectMarker(unit, adapter, baseUrl, { suggested: categories.suggested, offRules: this.offRules });
     const text = unitText(unit, adapter);
+    // Something other than Sifter (another ad blocker's cosmetic filter, invisible
+    // to the page CSSOM) already hid the element the marker matched. Hiding it
+    // again would stack a placeholder on content the user can never get back with
+    // Show, so treat the unit as already handled: no decision, ever, from this
+    // marker. checkVisibility is a style pass, not layout (hard rule 7), and only
+    // runs when a marker was found. happy-dom may lack it; then treat as visible.
+    const foreignHidden = !!marker?.node && typeof marker.node.checkVisibility === 'function' && !marker.node.checkVisibility();
     if (maskedClasses.length) unit.classList.add(...maskedClasses);
+    if (foreignHidden) {
+      this.perf.foreignHidden++;
+      const fp = fingerprint(site, text || structuralKey(unit));
+      this.seen.set(unit, { sig, fp });
+      return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;
+    }
     // Skeleton units have no text yet; come back when they fill in, unless a
     // structural marker already settles it.
     if (!text && !marker) return null;

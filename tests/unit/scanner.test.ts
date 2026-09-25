@@ -59,6 +59,17 @@ describe('Hider', () => {
     expect(document.querySelector(`[${PLACEHOLDER_ATTR}]`)).toBeNull();
   });
 
+  it('collapse mode overrides an inline min-height on the unit itself, so no blank box remains', () => {
+    document.body.innerHTML = '<ul><li id="u" style="min-height: 160px">Stories bar</li></ul>';
+    const u = document.getElementById('u') as HTMLElement;
+    const h = new Hider(document, 'collapse', noopCb);
+    h.hide(u, 'sponsored');
+    expect(unitStylesheetText(document)).toContain(`.${HIDDEN_CLASS}.${COLLAPSE_CLASS} { min-height: 0 !important;`);
+    // happy-dom does compute inline styles against the adopted stylesheet
+    // (Chrome reports "0px"; happy-dom reports the bare "0").
+    expect(['0', '0px']).toContain(getComputedStyle(u).minHeight);
+  });
+
   it('blur mode styles children (and blurs them), not the placeholder, from the shared sheet', () => {
     const u = document.getElementById('u') as HTMLElement;
     const h = new Hider(document, 'blur', noopCb);
@@ -265,6 +276,57 @@ describe('Scanner', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('Scanner: foreign-hidden (a unit whose ad content another extension already hid)', () => {
+  // Same X-shaped markup as the live adSelector matches
+  // ([data-testid="placementTracking"] > article[data-testid="tweet"]), once plain
+  // and once with the placementTracking wrapper carrying an inline
+  // display:none — the shape another ad blocker's cosmetic filter leaves behind
+  // (a user-origin stylesheet, invisible to the page CSSOM, beats our
+  // !important, so an inline style on the fixture stands in for it here).
+  const unit = (hiddenWrapper: boolean) =>
+    `<div data-testid="cellInnerDiv"><div id="t1">` +
+    `<div data-testid="placementTracking"${hiddenWrapper ? ' style="display: none"' : ''}>` +
+    `<article data-testid="tweet"><span>Promoted tweet text</span></article>` +
+    `</div></div></div>`;
+
+  function setup(html: string) {
+    document.body.innerHTML = html;
+    const scanner = new Scanner({
+      doc: document,
+      hostname: 'x.com',
+      baseUrl: 'https://x.com/',
+      adapter: adapterFor('x.com'),
+      context: defaultContext('x.com'),
+      persistOverride: () => {},
+      schedule: (fn) => fn(),
+    });
+    scanner.scanNow();
+    return scanner;
+  }
+
+  it('positive control: the plain unit is hidden (proves the selector matches)', () => {
+    setup(unit(false));
+    expect(document.getElementById('t1')!.classList.contains(HIDDEN_CLASS)).toBe(true);
+  });
+
+  it('a unit whose ad wrapper is already display:none is left alone: no hide, no placeholder', () => {
+    const scanner = setup(unit(true));
+    const t1 = document.getElementById('t1')!;
+    expect(t1.classList.contains(HIDDEN_CLASS)).toBe(false);
+    expect(t1.querySelector(`[${PLACEHOLDER_ATTR}]`)).toBeNull();
+    expect(scanner.state().perf.foreignHidden).toBe(1);
+  });
+
+  it('a unit Sifter itself collapsed is still re-decided normally (the unmask window makes our own hide read as visible)', () => {
+    const scanner = setup(unit(false));
+    const t1 = document.getElementById('t1')!;
+    expect(t1.classList.contains(HIDDEN_CLASS)).toBe(true);
+    scanner.applyContext(defaultContext('x.com')); // triggers a full rescan
+    expect(t1.classList.contains(HIDDEN_CLASS)).toBe(true);
+    expect(scanner.state().perf.foreignHidden).toBe(0);
   });
 });
 

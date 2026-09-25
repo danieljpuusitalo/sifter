@@ -122,12 +122,13 @@ function safeQueryAll(root: Element, selector: string): Element[] {
   }
 }
 
-/** Whether the unit is, or contains, a match. Stops at the first one. */
-function safeHas(unit: Element, selector: string): boolean {
+/** Whether the unit is, or contains, a match: the element itself, or the first descendant found by `querySelector`. */
+function safeQuery(unit: Element, selector: string): Element | null {
   try {
-    return unit.matches(selector) || unit.querySelector(selector) !== null;
+    if (unit.matches(selector)) return unit;
+    return unit.querySelector(selector);
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -245,6 +246,14 @@ export type MarkerHit = {
   detail: string;
   /** The adapter's named suggested rule that matched, if any. */
   rule?: string;
+  /**
+   * The element that triggered the hit, for kinds `structural`, `ad-link` and
+   * `rel`: the element `unit.querySelector(sel)` found (or the unit itself, when
+   * the unit matched the selector directly), or the anchor. Lets the scanner check
+   * whether that element is actually rendered before deciding to hide on it (label
+   * and aria kinds already go through `renderedWithin`, so they leave this unset).
+   */
+  node?: Element;
 };
 
 export type DetectOptions = {
@@ -268,19 +277,20 @@ const AD_CLICK_HINT = /aclk|googleadservices|doubleclick/i;
  * computed style (a style pass, never layout) last.
  */
 export function detectMarker(unit: Element, adapter: Adapter | null, base: string, opts: DetectOptions = {}): MarkerHit | null {
-  const sponsored = (kind: MarkerHit['kind'], detail: string): MarkerHit => ({ kind, category: 'sponsored', detail });
+  const sponsored = (kind: MarkerHit['kind'], detail: string, node?: Element): MarkerHit => ({ kind, category: 'sponsored', detail, node });
   for (const sel of adapter?.adSelectors ?? []) {
-    if (safeHas(unit, sel)) return sponsored('structural', sel);
+    const node = safeQuery(unit, sel);
+    if (node) return sponsored('structural', sel, node);
   }
   for (const a of safeQueryAll(unit, 'a[href]')) {
     const href = a.getAttribute('href') ?? '';
-    if (AD_CLICK_HINT.test(href) && isAdClickUrl(href, base)) return sponsored('ad-link', new URL(href, base).hostname);
+    if (AD_CLICK_HINT.test(href) && isAdClickUrl(href, base)) return sponsored('ad-link', new URL(href, base).hostname, a);
     // rel=sponsored stays global (decided 2026-09-25): it is the publisher's own
     // declaration that a link is paid, none of the launch sites emit it on user
     // posts, and on an opted-in generic site a unit built around a paid link is
     // what the user asked to hide. Ad-click URLs, by contrast, are Google-only.
     const rel = a.getAttribute('rel');
-    if (rel && rel.split(/\s+/).includes('sponsored')) return sponsored('rel', 'rel=sponsored');
+    if (rel && rel.split(/\s+/).includes('sponsored')) return sponsored('rel', 'rel=sponsored', a);
   }
   for (const el of safeQueryAll(unit, '[aria-label]')) {
     const v = el.getAttribute('aria-label') ?? '';
@@ -326,7 +336,8 @@ function detectSuggested(unit: Element, adapter: Adapter, adapterLabels: string[
   for (const r of block.rules) if (!off.has(r.id)) matchers.push({ m: r, rule: r.id });
   for (const { m, rule } of matchers) {
     for (const sel of m.selectors) {
-      if (safeHas(unit, sel)) return { kind: 'structural', category: 'suggested', detail: sel, rule };
+      const node = safeQuery(unit, sel);
+      if (node) return { kind: 'structural', category: 'suggested', detail: sel, rule, node };
     }
   }
   const textual = matchers.filter(({ m }) => wordSet(m).size > 0 || endingList(m).length > 0);

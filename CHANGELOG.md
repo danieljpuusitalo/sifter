@@ -28,6 +28,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   backoff) if the service worker is asleep or mid-update, falling back to
   `defaultContext` and logging a warning instead of never starting the
   scanner.
+- Facebook's Stories bar left a 160px blank box behind: the block rule hid its
+  children, but an inline `min-height` on the unit itself kept the empty slot.
+  A collapsed unit now also drops its own min/max/height back to auto.
+- A unit already hidden by something other than Sifter (another extension's
+  cosmetic filter beating an inline `!important`, invisible to the page CSSOM)
+  no longer gets a Sifter placeholder that Show can't reveal: Sifter now skips
+  it instead of stacking a hide on top of one.
 
 ## [1.0.0] - 2026-09-24
 

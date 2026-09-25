@@ -122,12 +122,16 @@ function safeQueryAll(root: Element, selector: string): Element[] {
   }
 }
 
-/** Whether the unit is, or contains, a match. Stops at the first one. */
-function safeHas(unit: Element, selector: string): boolean {
+/**
+ * The unit itself when it matches, else the first descendant match, else null,
+ * including when the selector is invalid (hard rule 2).
+ */
+function safeQuery(unit: Element, selector: string): Element | null {
   try {
-    return unit.matches(selector) || unit.querySelector(selector) !== null;
+    if (unit.matches(selector)) return unit;
+    return unit.querySelector(selector);
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -205,7 +209,7 @@ const MAX_UNIT_TEXT = 5000;
  * the same either way, and cost no layout.
  */
 export function unitText(unit: Element, adapter: Adapter | null): string {
-  const root = adapter?.textRootSelector ? (unit.querySelector(adapter.textRootSelector) ?? unit) : unit;
+  const root = adapter?.textRootSelector ? (safeQuery(unit, adapter.textRootSelector) ?? unit) : unit;
   const doc = root.ownerDocument;
   const walker = doc.createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);
   const parts: string[] = [];
@@ -220,6 +224,29 @@ export function unitText(unit: Element, adapter: Adapter | null): string {
     len += t.length;
   }
   return normaliseText(parts.join(' ')).slice(0, MAX_UNIT_TEXT);
+}
+
+/**
+ * Whether a muted-word match found in `unitText` is actually rendered. `unitText`
+ * walks every text node (including hidden ones) because it also feeds the
+ * fingerprint, so a decoy or collapsed-tail occurrence must not change what the
+ * post fingerprints as. A custom hide is a different question: it must fire only
+ * on a word the reader can see. Walks the unit's own text nodes (a TreeWalker,
+ * never a layout) and stops at the first one the pattern matches and
+ * `renderedWithin` confirms, so this only costs style reads when a word actually
+ * matched (hard rule 7).
+ */
+export function mutedWordRendered(unit: Element, pattern: RegExp): boolean {
+  const doc = unit.ownerDocument;
+  const walker = doc.createTreeWalker(unit, 4 /* NodeFilter.SHOW_TEXT */);
+  const cache: VisibilityCache = new Map();
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const parent = n.parentElement;
+    if (!parent || SKIP_TEXT_IN.has(parent.localName.toUpperCase())) continue;
+    const t = n.nodeValue ?? '';
+    if (t && pattern.test(t) && renderedWithin(parent, unit, cache)) return true;
+  }
+  return false;
 }
 
 export function buildPayload(
@@ -245,6 +272,14 @@ export type MarkerHit = {
   detail: string;
   /** The adapter's named suggested rule that matched, if any. */
   rule?: string;
+  /**
+   * The element that triggered the hit, for kinds `structural`, `ad-link` and
+   * `rel`: the element `unit.querySelector(sel)` found (or the unit itself, when
+   * the unit matched the selector directly), or the anchor. Lets the scanner check
+   * whether that element is actually rendered before deciding to hide on it (label
+   * and aria kinds already go through `renderedWithin`, so they leave this unset).
+   */
+  node?: Element;
 };
 
 export type DetectOptions = {
@@ -268,19 +303,20 @@ const AD_CLICK_HINT = /aclk|googleadservices|doubleclick/i;
  * computed style (a style pass, never layout) last.
  */
 export function detectMarker(unit: Element, adapter: Adapter | null, base: string, opts: DetectOptions = {}): MarkerHit | null {
-  const sponsored = (kind: MarkerHit['kind'], detail: string): MarkerHit => ({ kind, category: 'sponsored', detail });
+  const sponsored = (kind: MarkerHit['kind'], detail: string, node?: Element): MarkerHit => ({ kind, category: 'sponsored', detail, node });
   for (const sel of adapter?.adSelectors ?? []) {
-    if (safeHas(unit, sel)) return sponsored('structural', sel);
+    const node = safeQuery(unit, sel);
+    if (node) return sponsored('structural', sel, node);
   }
   for (const a of safeQueryAll(unit, 'a[href]')) {
     const href = a.getAttribute('href') ?? '';
-    if (AD_CLICK_HINT.test(href) && isAdClickUrl(href, base)) return sponsored('ad-link', new URL(href, base).hostname);
+    if (AD_CLICK_HINT.test(href) && isAdClickUrl(href, base)) return sponsored('ad-link', new URL(href, base).hostname, a);
     // rel=sponsored stays global (decided 2026-09-25): it is the publisher's own
     // declaration that a link is paid, none of the launch sites emit it on user
     // posts, and on an opted-in generic site a unit built around a paid link is
     // what the user asked to hide. Ad-click URLs, by contrast, are Google-only.
     const rel = a.getAttribute('rel');
-    if (rel && rel.split(/\s+/).includes('sponsored')) return sponsored('rel', 'rel=sponsored');
+    if (rel && rel.split(/\s+/).includes('sponsored')) return sponsored('rel', 'rel=sponsored', a);
   }
   for (const el of safeQueryAll(unit, '[aria-label]')) {
     const v = el.getAttribute('aria-label') ?? '';
@@ -326,7 +362,8 @@ function detectSuggested(unit: Element, adapter: Adapter, adapterLabels: string[
   for (const r of block.rules) if (!off.has(r.id)) matchers.push({ m: r, rule: r.id });
   for (const { m, rule } of matchers) {
     for (const sel of m.selectors) {
-      if (safeHas(unit, sel)) return { kind: 'structural', category: 'suggested', detail: sel, rule };
+      const node = safeQuery(unit, sel);
+      if (node) return { kind: 'structural', category: 'suggested', detail: sel, rule, node };
     }
   }
   const textual = matchers.filter(({ m }) => wordSet(m).size > 0 || endingList(m).length > 0);

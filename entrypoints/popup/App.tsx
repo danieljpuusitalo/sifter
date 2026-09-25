@@ -142,6 +142,15 @@ function Running(props: { tab: Tab; state: PageState; settings: Settings; onChan
         </span>
       </label>
 
+      {state.enabled && state.noUnitsMatched && (
+        <p class="muted small">
+          Sifter can't find posts on this page. Its rules for this site may be out of date.{' '}
+          <a href="https://github.com/danieljpuusitalo/sifter/issues" target="_blank" rel="noreferrer">
+            Report it
+          </a>
+        </p>
+      )}
+
       {state.enabled && (
         <section class="counts" aria-live="polite">
           {state.paused ? (

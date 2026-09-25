@@ -32,7 +32,9 @@ export const SiteSettingSchema = z.object({
 
 /** Caps on what storage (or a backup file) may hold, so a hostile file can't stall every page. */
 const MAX_HOSTS = 500;
-const MAX_WORD_LEN = 100;
+/** Also enforced by the options page's `parseWords`, so an over-length word is
+ * flagged at save time instead of silently dropped here on the next load. */
+export const MAX_WORD_LEN = 100;
 const MAX_RULES_TEXT = 50_000;
 
 export const SettingsSchema = z.object({

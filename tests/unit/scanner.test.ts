@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { evalFixture, passes, PASSES } from '../../evals/fixture-eval';
 import { adapterFor } from '../../src/adapters/index';
+import * as extract from '../../src/extract';
 import {
   BLUR_CLASS,
   COLLAPSE_CLASS,
@@ -57,6 +58,17 @@ describe('Hider', () => {
     expect(u.classList.contains(HIDDEN_CLASS)).toBe(false);
     expect(u.classList.contains(COLLAPSE_CLASS)).toBe(false);
     expect(document.querySelector(`[${PLACEHOLDER_ATTR}]`)).toBeNull();
+  });
+
+  it('collapse mode overrides an inline min-height on the unit itself, so no blank box remains', () => {
+    document.body.innerHTML = '<ul><li id="u" style="min-height: 160px">Stories bar</li></ul>';
+    const u = document.getElementById('u') as HTMLElement;
+    const h = new Hider(document, 'collapse', noopCb);
+    h.hide(u, 'sponsored');
+    expect(unitStylesheetText(document)).toContain(`.${HIDDEN_CLASS}.${COLLAPSE_CLASS} { min-height: 0 !important;`);
+    // happy-dom does compute inline styles against the adopted stylesheet
+    // (Chrome reports "0px"; happy-dom reports the bare "0").
+    expect(['0', '0px']).toContain(getComputedStyle(u).minHeight);
   });
 
   it('blur mode styles children (and blurs them), not the placeholder, from the shared sheet', () => {
@@ -265,6 +277,151 @@ describe('Scanner', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('a throwing decide does not kill the scanner: other units in the feed still hide, and a later mutation still scans', async () => {
+    // Positive control: stub unitText to throw for exactly one unit (1002), the
+    // way a bad adapter selector would (BRIEF.md hard rule 2 territory).
+    const original = extract.unitText;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const unitTextSpy = vi.spyOn(extract, 'unitText').mockImplementation((unit, adapter) => {
+      if (unit.getAttribute('componentkey')?.startsWith('update-card-focus1002')) throw new Error('boom');
+      return original(unit, adapter);
+    });
+    vi.useFakeTimers();
+    try {
+      document.head.innerHTML = `<style>${style}</style>`;
+      document.body.innerHTML = body;
+      const scanner = new Scanner({
+        doc: document,
+        hostname: 'www.linkedin.com',
+        baseUrl: 'https://www.linkedin.com/',
+        adapter: adapterFor('www.linkedin.com'),
+        context: ctx(),
+        persistOverride: () => {},
+      });
+      const byKey = (k: string) => document.querySelector(`[componentkey^="update-card-focus${k}"]`) as HTMLElement;
+      scanner.start();
+      await vi.advanceTimersByTimeAsync(50);
+
+      // The throwing unit is skipped, not hidden...
+      expect(byKey('1002').classList.contains(HIDDEN_CLASS)).toBe(false);
+      // ...but the other sponsored units in the same feed still hide: the slice's
+      // normal completion path ran, it did not abort partway through.
+      expect(byKey('1004').classList.contains(HIDDEN_CLASS)).toBe(true);
+      expect(byKey('1006').classList.contains(HIDDEN_CLASS)).toBe(true);
+      expect(scanner.state().perf.decideErrors).toBeGreaterThan(0);
+      expect(warn).toHaveBeenCalledTimes(1); // at most once per page
+
+      // A later mutation must still trigger a scan: if `running` were stuck true
+      // (the bug this fixes), scanNow's guard would never schedule another slice.
+      const feed = document.querySelector('[data-testid="mainFeed"]') as HTMLElement;
+      const extraWrap = document.createElement('div');
+      extraWrap.innerHTML =
+        '<div role="listitem" componentkey="update-card-focus2002xFeedType_MAIN_FEED_RELEVANCE" id="late"><div><p componentkey="z1"><span>Late Co</span></p><p componentkey="z2"><span>Promoted</span></p></div><p componentkey="z3"><span>New ad body.</span></p></div>';
+      feed.append(extraWrap);
+      await vi.advanceTimersByTimeAsync(300);
+      expect(document.getElementById('late')?.classList.contains(HIDDEN_CLASS)).toBe(true);
+
+      scanner.stop();
+    } finally {
+      vi.useRealTimers();
+      unitTextSpy.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it('noUnitsMatched: false when units match (positive control); true when unitSelector finds none in a fat feed root', () => {
+    const { scanner } = setup();
+    expect(scanner.state().noUnitsMatched).toBe(false); // positive control: real units do match
+
+    // Break the adapter's unitSelector, the way a site redesign would, and rescan.
+    document.head.innerHTML = `<style>${style}</style>`;
+    document.body.innerHTML = body;
+    const brokenAdapter = { ...adapterFor('www.linkedin.com')!, unitSelector: '[data-sifter-no-such-thing]' };
+    const stale = new Scanner({
+      doc: document,
+      hostname: 'www.linkedin.com',
+      baseUrl: 'https://www.linkedin.com/',
+      adapter: brokenAdapter,
+      context: ctx(),
+      persistOverride: () => {},
+      schedule: (fn) => fn(),
+    });
+    stale.scanNow();
+    expect(stale.state().noUnitsMatched).toBe(true);
+  });
+});
+
+describe('Scanner: foreign-hidden (a unit whose ad content another extension already hid)', () => {
+  // Same X-shaped markup as the live adSelector matches
+  // ([data-testid="placementTracking"] > article[data-testid="tweet"]), once plain
+  // and once with the placementTracking wrapper carrying an inline
+  // display:none — the shape another ad blocker's cosmetic filter leaves behind
+  // (a user-origin stylesheet, invisible to the page CSSOM, beats our
+  // !important, so an inline style on the fixture stands in for it here).
+  const unit = (hiddenWrapper: boolean) =>
+    `<div data-testid="cellInnerDiv"><div id="t1">` +
+    `<div data-testid="placementTracking"${hiddenWrapper ? ' style="display: none"' : ''}>` +
+    `<article data-testid="tweet"><span>Promoted tweet text</span></article>` +
+    `</div></div></div>`;
+
+  function setup(html: string) {
+    document.body.innerHTML = html;
+    const scanner = new Scanner({
+      doc: document,
+      hostname: 'x.com',
+      baseUrl: 'https://x.com/',
+      adapter: adapterFor('x.com'),
+      context: defaultContext('x.com'),
+      persistOverride: () => {},
+      schedule: (fn) => fn(),
+    });
+    scanner.scanNow();
+    return scanner;
+  }
+
+  it('positive control: the plain unit is hidden (proves the selector matches)', () => {
+    setup(unit(false));
+    expect(document.getElementById('t1')!.classList.contains(HIDDEN_CLASS)).toBe(true);
+  });
+
+  it('a unit whose ad wrapper is already display:none is left alone: no hide, no placeholder', () => {
+    const scanner = setup(unit(true));
+    const t1 = document.getElementById('t1')!;
+    expect(t1.classList.contains(HIDDEN_CLASS)).toBe(false);
+    expect(t1.querySelector(`[${PLACEHOLDER_ATTR}]`)).toBeNull();
+    expect(scanner.state().perf.foreignHidden).toBe(1);
+  });
+
+  it('a unit Sifter itself collapsed is still re-decided normally (the unmask window makes our own hide read as visible)', () => {
+    const scanner = setup(unit(false));
+    const t1 = document.getElementById('t1')!;
+    expect(t1.classList.contains(HIDDEN_CLASS)).toBe(true);
+    scanner.applyContext(defaultContext('x.com')); // triggers a full rescan
+    expect(t1.classList.contains(HIDDEN_CLASS)).toBe(true);
+    expect(scanner.state().perf.foreignHidden).toBe(0);
+  });
+
+  it('a unit Sifter hid in "hide" mode (inline display:none on the unit itself) stays hidden on rescan', () => {
+    document.body.innerHTML = unit(false);
+    const ctx = { ...defaultContext('x.com'), hideMode: 'hide' as const };
+    const scanner = new Scanner({
+      doc: document,
+      hostname: 'x.com',
+      baseUrl: 'https://x.com/',
+      adapter: adapterFor('x.com'),
+      context: ctx,
+      persistOverride: () => {},
+      schedule: (fn) => fn(),
+    });
+    scanner.scanNow();
+    const t1 = document.getElementById('t1') as HTMLElement;
+    expect(t1.classList.contains(HIDDEN_CLASS)).toBe(true);
+    expect(t1.style.display).toBe('none');
+    scanner.applyContext({ ...ctx }); // full rescan while our own inline hide is in place
+    expect(t1.classList.contains(HIDDEN_CLASS)).toBe(true);
+    expect(scanner.state().perf.foreignHidden).toBe(0);
   });
 });
 

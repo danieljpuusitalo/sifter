@@ -1,6 +1,6 @@
 import { findGenericUnits, innermost } from '../adapters/generic';
 import type { Adapter } from '../adapters/schema';
-import { detectMarker, unitText } from '../extract';
+import { detectMarker, mutedWordRendered, unitText } from '../extract';
 import { changeSignature, fingerprint } from '../fingerprint';
 import type { PageState, ScanPerf, SiteContext } from '../messages';
 import { mutedWordHit, mutedWordPattern } from '../rules/filters';
@@ -66,11 +66,23 @@ function firstHint(text: string): string | undefined {
   return trimmed ? trimmed.slice(0, MAX_HINT) : undefined;
 }
 
+/** For category "custom", the placeholder says why, not the post's first line. */
+function wordHint(word: string): string {
+  return `muted word “${word}”`.slice(0, MAX_HINT);
+}
+
+/** Same, for a custom hide from an element rule (a whole matched module). */
+function ruleHint(selector: string): string {
+  return `rule ${selector}`.slice(0, MAX_HINT);
+}
+
 const EMPTY_PERF: Omit<ScanPerf, 'pending'> = {
   scans: 0,
   fullScans: 0,
   unitsExamined: 0,
   unitsDecided: 0,
+  foreignHidden: 0,
+  decideErrors: 0,
   slices: 0,
   totalMs: 0,
   maxSliceMs: 0,
@@ -118,6 +130,10 @@ export class Scanner {
   private plainSelector: string | null = null;
   private muted: RegExp | null = null;
   private offRules: ReadonlySet<string> = new Set();
+  /** One throwing unit must not spam the console: warn once per page. */
+  private decideErrorWarned = false;
+  /** A full scan found the feed root but no units in it: this site's adapter may be stale. */
+  private noUnitsMatched = false;
   private readonly now: () => number;
   private readonly schedule: (fn: () => void, ms: number) => unknown;
 
@@ -194,6 +210,7 @@ export class Scanner {
       this.hiddenFps.clear();
       this.hider.unhideAll();
       this.markFull();
+      this.noUnitsMatched = false;
       return;
     }
     // Hidden elements a full scan may no longer collect (a block whose category or
@@ -274,6 +291,7 @@ export class Scanner {
       canSuggest: !!this.deps.adapter?.suggested || !!this.deps.adapter?.blocks.some((b) => b.category === 'suggested'),
       rules: (this.deps.adapter?.suggested?.rules ?? []).map((r) => ({ id: r.id, label: r.label, on: !this.offRules.has(r.id) })),
       hiddenNow: this.hider.hiddenUnits().length,
+      noUnitsMatched: this.noUnitsMatched,
       perf: { ...this.perf, pending: this.pending.length + this.carried.length },
     };
   }
@@ -356,11 +374,35 @@ export class Scanner {
       const units = full
         ? innermost(withoutPlaceholders(root.querySelectorAll(adapter.unitSelector)))
         : dirtyUnits(adapter.unitSelector, touched, added);
+      if (full) this.updateNoUnitsMatched(root, Array.isArray(units) ? units.length : units.size);
       const out = adapter.adContainerSelector ? collapseToContainers(units, adapter.adContainerSelector) : [...units];
       return blocks.length ? [...out, ...blocks] : out;
     } catch {
       return blocks;
     }
+  }
+
+  /**
+   * A local "rules may be stale" signal (no telemetry, hard rule 1): the feed root
+   * exists and clearly holds content (more than 5 element children), but a full
+   * scan's unitSelector matched nothing in it. A quiet page (feed still loading,
+   * or genuinely empty) does not trip this; a feed root with a fat body and zero
+   * matches usually means the site's markup moved under the adapter.
+   */
+  private updateNoUnitsMatched(root: Element, matchedCount: number): void {
+    const selector = this.deps.adapter?.feedRootSelector;
+    if (!selector) {
+      this.noUnitsMatched = false;
+      return;
+    }
+    let feedRoot: Element | null;
+    try {
+      feedRoot = root.querySelector(selector);
+    } catch {
+      this.noUnitsMatched = false;
+      return;
+    }
+    this.noUnitsMatched = !!feedRoot && feedRoot.children.length > 5 && matchedCount === 0;
   }
 
   /**
@@ -490,7 +532,7 @@ export class Scanner {
     const start = this.now();
     const carried = this.carried;
     this.carried = [];
-    for (const d of carried) this.apply(d);
+    for (const d of carried) this.applySafely(d);
     const carriedMs = this.now() - start;
     let collected = false;
     let collectMs = 0;
@@ -524,7 +566,7 @@ export class Scanner {
       this.queued.delete(unit);
       const decidedBefore = this.perf.unitsDecided;
       const t0 = this.now();
-      const d = this.decide(unit);
+      const d = this.decideSafely(unit);
       if (this.perf.unitsDecided > decidedBefore) {
         const cost = this.now() - t0;
         this.perf.maxDecideMs = Math.max(this.perf.maxDecideMs, cost);
@@ -537,7 +579,7 @@ export class Scanner {
     // Writes: count against the budget too, and carry what does not fit.
     let applied = 0;
     while (applied < decisions.length) {
-      this.apply(decisions[applied++] as Decision);
+      this.applySafely(decisions[applied++] as Decision);
       if (applied < decisions.length && this.now() - start >= budget) break;
     }
     if (applied < decisions.length) this.carried = decisions.slice(applied);
@@ -567,6 +609,40 @@ export class Scanner {
       this.running = false;
       this.settle();
     }
+  }
+
+  /**
+   * A bad adapter selector, or anything else `decide` or `apply` throws, must not
+   * take the scanner down: `scanNow`'s `if (!this.running)` guard means a dead
+   * `running` flag never schedules another slice, so the whole page would stop
+   * being scanned. Record the unit as seen (its current signature) so a throwing
+   * unit is not retried every slice, count the failure, and warn at most once.
+   */
+  private decideSafely(unit: Element): Decision | null {
+    try {
+      return this.decide(unit);
+    } catch (e) {
+      this.recordDecideError(e);
+      const sig = changeSignature(unit.textContent ?? '');
+      const fp = fingerprint(this.ctx.siteKey, structuralKey(unit));
+      this.seen.set(unit, { sig, fp });
+      return null;
+    }
+  }
+
+  private applySafely(d: Decision): void {
+    try {
+      this.apply(d);
+    } catch (e) {
+      this.recordDecideError(e);
+    }
+  }
+
+  private recordDecideError(e: unknown): void {
+    this.perf.decideErrors++;
+    if (this.decideErrorWarned) return;
+    this.decideErrorWarned = true;
+    console.warn('[sifter] decide failed', e);
   }
 
   /** DOM reads only. Returns null when nothing about the unit needs to change. */
@@ -606,7 +682,10 @@ export class Scanner {
         custom: cat === 'custom' ? block.selector : null,
         categories,
       });
-      if (decision.action === 'hide') return { unit, fp, hide: decision.category, block: true };
+      if (decision.action === 'hide') {
+        const hint = cat === 'custom' ? ruleHint(block.selector) : undefined;
+        return { unit, fp, hide: decision.category, block: true, hint };
+      }
       return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;
     }
     if (this.blockHidden.has(unit) && !this.isUnit(unit)) {
@@ -621,7 +700,31 @@ export class Scanner {
     if (maskedClasses.length) unit.classList.remove(...maskedClasses);
     const marker = detectMarker(unit, adapter, baseUrl, { suggested: categories.suggested, offRules: this.offRules });
     const text = unitText(unit, adapter);
+    // Something other than Sifter (another ad blocker's cosmetic filter, invisible
+    // to the page CSSOM) already hid the element the marker matched. Hiding it
+    // again would stack a placeholder on content the user can never get back with
+    // Show, so treat the unit as already handled: no decision, ever, from this
+    // marker. checkVisibility is a style pass, not layout (hard rule 7), and only
+    // runs when a marker was found. happy-dom may lack it; then treat as visible.
+    // A unit Sifter hid itself is never foreign: "hide" mode puts an inline
+    // display:none on the unit that the unmask above does not lift.
+    const foreignHidden =
+      !this.hider.isHidden(unit) &&
+      !!marker?.node &&
+      typeof marker.node.checkVisibility === 'function' &&
+      !marker.node.checkVisibility();
+    // unitText also feeds the fingerprint, so it must read the same hidden or
+    // shown (see its own comment); a custom hide must not fire on a word that
+    // only exists in text a style hides, so confirm the hit is actually rendered.
+    const wordHit = mutedWordHit(text, this.muted);
+    const custom = wordHit && this.muted && mutedWordRendered(unit, this.muted) ? wordHit : null;
     if (maskedClasses.length) unit.classList.add(...maskedClasses);
+    if (foreignHidden) {
+      this.perf.foreignHidden++;
+      const fp = fingerprint(site, text || structuralKey(unit));
+      this.seen.set(unit, { sig, fp });
+      return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;
+    }
     // Skeleton units have no text yet; come back when they fill in, unless a
     // structural marker already settles it.
     if (!text && !marker) return null;
@@ -633,10 +736,13 @@ export class Scanner {
     const decision = decideTier0({
       override: this.ctx.overrides[fp],
       marker,
-      custom: mutedWordHit(text, this.muted),
+      custom,
       categories,
     });
-    if (decision.action === 'hide') return { unit, fp, hide: decision.category, hint: firstHint(text) };
+    if (decision.action === 'hide') {
+      const hint = decision.category === 'custom' && custom ? wordHint(custom) : firstHint(text);
+      return { unit, fp, hide: decision.category, hint };
+    }
     return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;
   }
 

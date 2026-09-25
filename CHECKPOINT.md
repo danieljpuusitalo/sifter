@@ -1,9 +1,11 @@
 # Sifter checkpoint
 
-Updated 2026-09-25, session 6: Daniel's first real use of v1.0.0 in Chrome surfaced
-five complaints; three root causes, all fixed on `fix/chrome-consistency` (PR #10;
-see "Session 6" below). **Nothing is released for them yet**: `main` carries the
-fixes, `v1.0.0` is still the only tag, the CHANGELOG has an `[Unreleased]` section.
+Updated 2026-09-25, session 7: round two of live use (Facebook Stories band, X Show
+revealing nothing, muted-words audit) plus a hardening pass, on
+`fix/round-2-consistency` (PR #11; see "Session 7" below). Session 6 fixed the
+first five complaints (PR #10). **Nothing is released for either round yet**: `main`
+carries the fixes, `v1.0.0` is still the only tag, the CHANGELOG has an
+`[Unreleased]` section.
 Session 5 landed and tagged `v1.0.0` (`050e41f`); session 4 was the agent-driven
 audit; session 3 shipped the seven adapters, popup, options and store docs.
 
@@ -29,10 +31,10 @@ Settings store only the rules switched off (`sites[key].rules`).
 | Gate | State |
 |---|---|
 | `pnpm typecheck` | passes |
-| `pnpm test` | 184/184 (session 6 added 15: inject match helpers, Facebook Stories, placeholder-in-unit show/rehide; session 5 added the shared-stylesheet test; session 4 added 15: settings caps and timestamps, `closed()` trailing backslash, adapter defaults parity, scanner change signature, trusted-click guard) |
-| `pnpm eval:mock` | 8 fixtures, tp=60 fp=0 fn=0 (suggested pass included; both Google top-carousel shapes added 2026-09-24; with the pre-fix adapter the `#atvcap` shape is fn=1 and the eval FAILs, so the case discriminates) |
-| `pnpm test:e2e` | 15 passed, 1 fixme (session 6 added the Show/Hide reversibility test, which caught the double-inject race; session 5 added the placeholder constructed-sheet test; session 4 added the `setOverride` rejection test; it must send from an extension page, a service worker cannot message itself). One earlier run failed "muted words..." while a `pnpm dev` Chromium was also running (55 s vs a normal 24 s); not reproduced since. Watch it in CI |
-| `pnpm bench:scroll` | **`--cpu 1 --strict`, 2026-09-25 session 6 at `698dac1` (placeholder inside the unit, collapse via `UNIT_CSS`)**: LinkedIn run 1 OK, Facebook run 1 OK; 2 runs per site on the placeholder branch at `630d144` also all OK. **Session 5, `--cpu 1 --strict`, 2 runs per site, after the shared placeholder sheet**: all OK. LinkedIn p50/p95/p99 off vs on 16.7/17.5/24.9 vs 16.7/17.2/18.9 and 16.7/17.2/17.5 vs 16.7/17.2/19.4; Facebook 16.7/17.5/18.3 vs 16.7/16.9/18.4 and 16.7/17.1/19.0 vs 16.7/17.1/25.3. 0 long tasks in every run, 0 slices over budget, max scroll slice 3.2–8.6 ms, worst-slice apply phase 0–1.1 ms, `initialScanMs` 53–85 (that figure is the scanner's summed load-time work across idle slices, not one task: `longTasks` is 0, so the "75–81 ms long task at load" noted on 09-24 was this counter, not a main-thread stall). **Previous, 2026-09-24 late**: all OK. Frames p50/p95/p99 off vs on: LinkedIn 16.7/17.0/18.1 vs 16.7/17.2/19.1; Facebook 16.7/17.3/19.1 vs 16.7/17.3/19.2. 0 long tasks, 0 slices over budget, max scroll slice 5.5–11.4 ms, max single decide 1.1–1.9 ms, scanner total 45–65 ms per 15 s scroll. The 4x-throttle run is the frame A/B only: on this laptop's emulated x64 Chromium it shows random 10–17 ms spikes with the extension off too, so its slice counters are noise (verdict now scales with `--cpu`) |
+| `pnpm test` | 203/203 (session 7 added 19: collapse min-height, foreign-hidden with positive control and hide-mode guard, `mutedWordRendered`, custom hints, `parseWords` errors, throwing-decide resilience, `noUnitsMatched`, adapter minimum-signal; session 6 added 15: inject match helpers, Facebook Stories, placeholder-in-unit show/rehide; session 5 added the shared-stylesheet test; session 4 added 15: settings caps and timestamps, `closed()` trailing backslash, adapter defaults parity, scanner change signature, trusted-click guard) |
+| `pnpm eval:mock` | 8 fixtures, tp=61 fp=0 fn=0 (suggested pass included; both Google top-carousel shapes added 2026-09-24; with the pre-fix adapter the `#atvcap` shape is fn=1 and the eval FAILs, so the case discriminates) |
+| `pnpm test:e2e` | 16 passed, 1 fixme (session 7 added the real-Chromium selector canary; session 6 added the Show/Hide reversibility test, which caught the double-inject race; session 5 added the placeholder constructed-sheet test; session 4 added the `setOverride` rejection test; it must send from an extension page, a service worker cannot message itself). One earlier run failed "muted words..." while a `pnpm dev` Chromium was also running (55 s vs a normal 24 s); not reproduced since. Watch it in CI |
+| `pnpm bench:scroll` | **`--cpu 1 --strict`, 2026-09-25 session 7 at `8d57571` (foreign-hidden check, rendered muted-word confirmation, try/catch per unit)**: LinkedIn run 1 OK, Facebook run 1 OK. **Session 6 at `698dac1` (placeholder inside the unit, collapse via `UNIT_CSS`)**: LinkedIn run 1 OK, Facebook run 1 OK; 2 runs per site on the placeholder branch at `630d144` also all OK. **Session 5, `--cpu 1 --strict`, 2 runs per site, after the shared placeholder sheet**: all OK. LinkedIn p50/p95/p99 off vs on 16.7/17.5/24.9 vs 16.7/17.2/18.9 and 16.7/17.2/17.5 vs 16.7/17.2/19.4; Facebook 16.7/17.5/18.3 vs 16.7/16.9/18.4 and 16.7/17.1/19.0 vs 16.7/17.1/25.3. 0 long tasks in every run, 0 slices over budget, max scroll slice 3.2–8.6 ms, worst-slice apply phase 0–1.1 ms, `initialScanMs` 53–85 (that figure is the scanner's summed load-time work across idle slices, not one task: `longTasks` is 0, so the "75–81 ms long task at load" noted on 09-24 was this counter, not a main-thread stall). **Previous, 2026-09-24 late**: all OK. Frames p50/p95/p99 off vs on: LinkedIn 16.7/17.0/18.1 vs 16.7/17.2/19.1; Facebook 16.7/17.3/19.1 vs 16.7/17.3/19.2. 0 long tasks, 0 slices over budget, max scroll slice 5.5–11.4 ms, max single decide 1.1–1.9 ms, scanner total 45–65 ms per 15 s scroll. The 4x-throttle run is the frame A/B only: on this laptop's emulated x64 Chromium it shows random 10–17 ms spikes with the extension off too, so its slice counters are noise (verdict now scales with `--cpu`) |
 | `pnpm build` | `.output/sifter-1.0.0-chrome.zip`, 92 kB (was 110 kB; content.js 40 kB, was 122 kB, after zod left the content script) |
 
 ## Live verification (from each adapter's `verified` field)
@@ -167,6 +169,45 @@ Still Daniel's, unchanged: the Web Store developer account and the submission it
 (ROADMAP Phase 4), a first run of the release zip in regular Chrome with a normal
 profile, and the live recall checks (Threads ad, X suggested, NL/DE/FR words).
 
+## Session 7 (2026-09-25): round two in Chrome, muted-words audit, hardening
+
+Daniel confirmed Show/Hide and LinkedIn after PR #10, then reported: Facebook still
+shows some "Suggested for you" posts (Follow posts are hidden), the Stories bar is
+still visible, and X hides something that Show does not bring back. He also asked
+for an audit of the muted-words feature and a hardening pass. Three implementer
+agents on Sonnet did the changes in worktrees; merged on `fix/round-2-consistency`,
+PR #11.
+
+Root causes, verified live over CDP in his logged-in Chrome:
+
+- **Facebook Stories**: the block rule matched and collapsed the region (classes and
+  placeholder present), but the region has inline `min-height:160px`, so a 176 px
+  empty band stayed. `UNIT_CSS` now zeroes min-height and resets height on a
+  collapsed unit. Whether he saw cards or only the band was not confirmed.
+- **X Show**: after a trusted Show click the unit is unhidden, but the
+  `[data-testid="placementTracking"]` wrapper computes `display:none` from a rule in
+  no CSSOM sheet that beats inline `!important`, and removing `data-testid` makes it
+  render. That is another extension's cosmetic filter (an ad blocker) on his Chrome.
+  Sifter now skips a unit whose marker element is unrendered by something else
+  (`perf.foreignHidden`), guarded by `hider.isHidden` so hide mode's own inline
+  `display:none` is never misread (that regression was caught by the test).
+- **Facebook "Suggested for you" feed posts**: NOT fixed. The MCP tab is a background
+  tab and Facebook does not paginate there (1 unit after trusted scrolls), so the
+  post markup could not be captured. Hypothesis: a "Suggested for you" header span
+  with no Follow/Join button, which no rule covers. Needs a foreground look.
+- **Muted words audit**: hits matched hidden text (`unitText` walks every text
+  node); the placeholder showed the post's first line instead of the reason;
+  over-100-char words were saved then silently dropped by the schema; sub-2-char
+  words were inert. All four fixed; `unitText` output unchanged (fingerprints).
+- **Hardening**: try/catch per unit in `runSlice` (a throw used to leave `running`
+  true and stop every future scan), guarded `textRootSelector`, adapter
+  minimum-signal test with an allowlist (linkedin, reddit, google, x, instagram
+  are single-signal), real-Chromium selector canary e2e, local `noUnitsMatched`
+  popup line, CLAUDE.md convention on blocks vs suggested rules.
+
+Not done: Facebook "Suggested for you" posts (needs markup), a release tag (Daniel
+decides), the Facebook feed-ad path is still unverified live.
+
 ## Session 6 (2026-09-25): first real use in Chrome, audit and fixes
 
 Daniel loaded `v1.0.0` unpacked into his own Chrome (`~/sifter-v1.0.0`, do not move
@@ -288,4 +329,6 @@ path is still unverified live (no sponsored feed post appeared this session eith
 - **`rel=sponsored` is global, `/aclk` is Google-only.** Decided 2026-09-25; the reasoning sits above the check in `src/extract.ts`.
 - **The placeholder is the unit's first child, not a sibling** (session 6): LinkedIn's virtualised feed parks a 0-height slot off-screen with its siblings. Collapse and blur go through `UNIT_CSS` on the unit's children; only `hide` mode writes inline style to the unit.
 - **`content.ts` registers the probe listener before its first `await`:** install-time `executeScript` and `content_scripts` can start in the same tick, and a late listener lets both instances run.
+- **Foreign-hidden check is gated on `hider.isHidden(unit)` first** (session 7): the unmask window lifts classes only; hide mode's inline `display:none` stays, and without the gate a rescan unhides Sifter's own hides.
+- **`decide()` and `apply()` run through `decideSafely`/`applySafely`**: a throw inside one unit must not leave `running` true with no scan scheduled.
 - **`release.yml` matches the CHANGELOG heading with `index()`, not a regex.** `## [x.y.z]` as an awk regex is a character class and never matches; this failed the first `v1.0.0` run after every test had passed.

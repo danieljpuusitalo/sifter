@@ -3,7 +3,7 @@ import { adapterFor } from '../../src/adapters/index';
 import { AdapterSchema, type Adapter } from '../../src/adapters/schema';
 import { HIDDEN_CLASS } from '../../src/content/hider';
 import { Scanner } from '../../src/content/scanner';
-import { detectMarker, unitText } from '../../src/extract';
+import { detectMarker, mutedWordRendered, unitText } from '../../src/extract';
 import { fingerprint, stableText } from '../../src/fingerprint';
 import { defaultContext, type SiteContext } from '../../src/messages';
 import { MAX_RULES, mutedWordHit, mutedWordPattern, parseRules, selectorsFor } from '../../src/rules/filters';
@@ -37,6 +37,22 @@ describe('muted words', () => {
   it('drops blank and one-letter words; empty list means no pattern', () => {
     expect(mutedWordHit('a b c', p)).toBeNull();
     expect(mutedWordPattern([' ', 'x'])).toBeNull();
+  });
+});
+
+describe('mutedWordRendered', () => {
+  const p = mutedWordPattern(['layoffs']);
+  it('positive control: a word in visible text is rendered', () => {
+    document.body.innerHTML = '<div id="u"><span>News about layoffs today</span></div>';
+    expect(mutedWordRendered(document.getElementById('u')!, p!)).toBe(true);
+  });
+  it('a word that only exists under display:none is not rendered', () => {
+    document.body.innerHTML = '<div id="u"><span>Nothing to see</span><span style="display:none">layoffs</span></div>';
+    expect(mutedWordRendered(document.getElementById('u')!, p!)).toBe(false);
+  });
+  it('a word under visibility:hidden is not rendered either', () => {
+    document.body.innerHTML = '<div id="u"><span>Nothing to see</span><span style="visibility:hidden">layoffs</span></div>';
+    expect(mutedWordRendered(document.getElementById('u')!, p!)).toBe(false);
   });
 });
 
@@ -197,9 +213,26 @@ describe('scanner: blocks, custom rules, context menu', () => {
     setup('x.com', xPage, { customSelectors: ['#promo-box'], categories: { sponsored: true, suggested: false, custom: false } });
     expect(hidden('#promo-box')).toBe(false);
   });
-  it('muted words hide the post as custom', () => {
+  it('muted words hide the post as custom, and the placeholder says which word', () => {
     setup('x.com', xPage, { mutedWords: ['plain'] });
     expect(hidden('#t1')).toBe(true);
+    const label = document.querySelector('#t1')!.firstElementChild!.shadowRoot!.querySelector('.label');
+    expect(label?.textContent).toBe('Hidden by your filter · muted word “Plain”');
+  });
+  it('an element rule hides as custom, and the placeholder says which rule', () => {
+    setup('x.com', xPage, { customSelectors: ['#promo-box'] });
+    expect(hidden('#promo-box')).toBe(true);
+    const label = document.querySelector('#promo-box')!.firstElementChild!.shadowRoot!.querySelector('.label');
+    expect(label?.textContent).toBe('Hidden by your filter · rule #promo-box');
+  });
+  it('a muted word only inside hidden text does not hide the post (positive control: visible does)', () => {
+    setup('x.com', xPage, { mutedWords: ['plain'] });
+    expect(hidden('#t1')).toBe(true); // positive control: "Plain tweet text" is visible
+    const decoyPage =
+      '<div data-testid="cellInnerDiv"><div id="t2"><article data-testid="tweet"><span>Nothing to see here</span>' +
+      '<span style="display:none">plain</span></article></div></div>';
+    setup('x.com', decoyPage, { mutedWords: ['plain'] });
+    expect(hidden('#t2')).toBe(false);
   });
   it('hideContaining hides the enclosing unit, persists it, and survives a re-decide', () => {
     const { scanner, persisted } = setup('x.com', xPage);

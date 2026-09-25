@@ -15,6 +15,13 @@ function button(unit: Element, act: string): HTMLElement {
   return host?.shadowRoot?.querySelector(`[data-act="${act}"]`) as HTMLElement;
 }
 
+/** The placeholder ignores synthetic clicks (isTrusted=false), so stand in for a real one. */
+function userClick(el: HTMLElement): void {
+  const e = new MouseEvent('click', { bubbles: true, cancelable: true });
+  Object.defineProperty(e, 'isTrusted', { value: true });
+  el.dispatchEvent(e);
+}
+
 describe('Hider', () => {
   beforeEach(() => {
     document.body.innerHTML = '<ul><li id="u" style="color: red">An ad</li></ul>';
@@ -78,7 +85,7 @@ describe('Scanner', () => {
 
   it('Show reveals for this page only; nothing is persisted', () => {
     const { scanner, persisted, byKey } = setup();
-    button(byKey('1002'), 'show').click();
+    userClick(button(byKey('1002'), 'show'));
     expect(byKey('1002').classList.contains(HIDDEN_CLASS)).toBe(false);
     scanner.applyContext(ctx()); // a full rescan must not re-hide it
     expect(byKey('1002').classList.contains(HIDDEN_CLASS)).toBe(false);
@@ -87,7 +94,7 @@ describe('Scanner', () => {
 
   it('Not an ad persists an override that survives a reload', () => {
     const first = setup();
-    button(first.byKey('1002'), 'not-ad').click();
+    userClick(button(first.byKey('1002'), 'not-ad'));
     expect(first.persisted).toHaveLength(1);
     const [fp, action] = first.persisted[0]!;
     expect(action).toBe('not-ad');
@@ -120,6 +127,10 @@ describe('Scanner', () => {
         persistOverride: () => {},
       });
       scanner.start();
+      // The first pass runs in an idle slice, not in start() itself: let it finish
+      // before appending, so what follows is the incremental path.
+      await vi.advanceTimersByTimeAsync(50);
+      expect(scanner.state().hiddenNow).toBe(3); // positive control: the first pass ran
       const feed = document.querySelector('[data-testid="mainFeed"]') as HTMLElement;
       const extra = document.createElement('div');
       extra.innerHTML =

@@ -35,7 +35,8 @@ export default defineContentScript({
       baseUrl: location.href,
       adapter: adapterFor(hostname),
       context,
-      persistOverride: (fp, action) => void send({ type: 'sifter:setOverride', hostname, fp, action }),
+      persistOverride: (fp, action) =>
+        void send({ type: 'sifter:setOverride', hostname, fp, action }).catch(() => undefined),
       dev: import.meta.env.DEV,
     });
     scanner.start();
@@ -60,27 +61,45 @@ export default defineContentScript({
       await Promise.race([scanner.settled(), new Promise((r) => setTimeout(r, SETTLE_CAP_MS))]);
       clearTimeout(resumeTimer);
       if (ctx.pausedUntil !== null && ctx.pausedUntil > Date.now()) {
-        resumeTimer = setTimeout(() => void refresh(), ctx.pausedUntil - Date.now() + 50);
+        resumeTimer = setTimeout(() => void refresh().catch(() => undefined), ctx.pausedUntil - Date.now() + 50);
       }
     };
-    if (context.pausedUntil !== null && context.pausedUntil > Date.now()) void refresh();
+    if (context.pausedUntil !== null && context.pausedUntil > Date.now()) void refresh().catch(() => undefined);
+
+    // bfcache restores the page (and this script) without a fresh document_idle
+    // run, so settings could have drifted while it was frozen. Re-sync on the way
+    // back in.
+    window.addEventListener('pageshow', (e) => {
+      if (e.persisted) void refresh().catch(() => undefined);
+    });
 
     // The context menu's click reaches the service worker, not the page, so remember
-    // what was right-clicked. Passive and capture-phase: it never touches the event.
+    // what was right-clicked. Captured on window, not document, and ignores anything
+    // the page itself dispatched. The record expires quickly: a real right-click and
+    // the menu item click that follows it are milliseconds apart, not minutes.
+    const RIGHT_CLICK_TTL_MS = 1500;
     let lastRightClicked: Element | null = null;
-    document.addEventListener(
+    let lastRightClickedAt = 0;
+    window.addEventListener(
       'contextmenu',
       (e) => {
+        if (!e.isTrusted) return;
         lastRightClicked = e.target instanceof Element ? e.target : null;
+        lastRightClickedAt = Date.now();
       },
       { capture: true, passive: true },
     );
+    const rightClicked = (): Element | null =>
+      Date.now() - lastRightClickedAt <= RIGHT_CLICK_TTL_MS ? lastRightClicked : null;
 
     browser.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
       const m = msg as TabRequest;
       if (m?.type === 'sifter:hideTarget') {
-        sendResponse({ ok: scanner.hideContaining(lastRightClicked) });
+        sendResponse({ ok: scanner.hideContaining(rightClicked()) });
       } else if (m?.type === 'sifter:getPageState') {
+        sendResponse(scanner.state());
+      } else if (m?.type === 'sifter:resetPerfPeaks') {
+        scanner.resetPerfPeaks();
         sendResponse(scanner.state());
       } else if (m?.type === 'sifter:showAll') {
         scanner.showAll();

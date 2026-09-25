@@ -65,11 +65,73 @@ export const SettingsSchema = z.object({
 
 export type Settings = z.infer<typeof SettingsSchema>;
 
-export const OverridesSchema = z.record(
-  z.string(), // site key
-  z.record(z.string(), z.enum(['not-ad', 'hide'])), // fingerprint -> action
-);
-export type Overrides = z.infer<typeof OverridesSchema>;
+/** Caps on stored overrides, so a hostile backup or a runaway page can't bloat storage forever. */
+const MAX_OVERRIDES_PER_SITE = 2000;
+const MAX_OVERRIDES_TOTAL = 10_000;
+
+type RawEntry = { action: 'not-ad' | 'hide'; t: number };
+type RawOverrides = Record<string, Record<string, RawEntry>>;
+
+/** Accepts the old plain-string shape (no timestamp) and the new `{ action, t }` one. */
+const RawEntrySchema = z.union([
+  z.enum(['not-ad', 'hide']).transform((action): RawEntry => ({ action, t: 0 })),
+  z.object({ action: z.enum(['not-ad', 'hide']), t: z.number().catch(0) }),
+]);
+
+/** Drop entries the schema couldn't make sense of, then apply the per-site and total caps, oldest first. */
+function capOverrides(raw: Record<string, Record<string, RawEntry | undefined> | undefined>): RawOverrides {
+  const bySite: RawOverrides = {};
+  for (const [site, entries] of Object.entries(raw)) {
+    if (!entries) continue;
+    const valid = Object.entries(entries).filter((e): e is [string, RawEntry] => e[1] !== undefined);
+    valid.sort((a, b) => b[1].t - a[1].t);
+    if (valid.length > 0) bySite[site] = Object.fromEntries(valid.slice(0, MAX_OVERRIDES_PER_SITE));
+  }
+  const flat = Object.entries(bySite).flatMap(([site, entries]) => Object.entries(entries).map(([fp, v]) => ({ site, fp, ...v })));
+  if (flat.length <= MAX_OVERRIDES_TOTAL) return bySite;
+  flat.sort((a, b) => b.t - a.t);
+  const keep = new Set(flat.slice(0, MAX_OVERRIDES_TOTAL).map((e) => `${e.site}\u0000${e.fp}`));
+  const result: RawOverrides = {};
+  for (const [site, entries] of Object.entries(bySite)) {
+    const kept = Object.fromEntries(Object.entries(entries).filter(([fp]) => keep.has(`${site}\u0000${fp}`)));
+    if (Object.keys(kept).length > 0) result[site] = kept;
+  }
+  return result;
+}
+
+function flattenOverrides(raw: RawOverrides): Overrides {
+  const out: Overrides = {};
+  for (const [site, entries] of Object.entries(raw)) {
+    out[site] = Object.fromEntries(Object.entries(entries).map(([fp, e]) => [fp, e.action]));
+  }
+  return out;
+}
+
+/**
+ * Parse the raw, timestamped shape as stored. Each entry is checked on its own,
+ * so one bad fingerprint or action costs only itself, never its site or the
+ * whole record (zod's per-key `.catch` can't express "drop this key" without
+ * widening the record's value type, so this walks the object by hand instead).
+ */
+function parseRawOverrides(raw: unknown): RawOverrides {
+  const bySite: Record<string, Record<string, RawEntry | undefined> | undefined> = {};
+  if (raw && typeof raw === 'object') {
+    for (const [site, entries] of Object.entries(raw as Record<string, unknown>)) {
+      if (!entries || typeof entries !== 'object') continue;
+      const cleaned: Record<string, RawEntry | undefined> = {};
+      for (const [fp, v] of Object.entries(entries as Record<string, unknown>)) {
+        const r = RawEntrySchema.safeParse(v);
+        if (r.success) cleaned[fp] = r.data;
+      }
+      bySite[site] = cleaned;
+    }
+  }
+  return capOverrides(bySite);
+}
+
+/** Zod wrapper so this can sit inside `BackupSchema`; parsing never fails, only drops bad entries. */
+export const OverridesSchema = z.unknown().transform((raw) => flattenOverrides(parseRawOverrides(raw)));
+export type Overrides = Record<string, Record<string, 'not-ad' | 'hide'>>;
 
 export { siteKey };
 
@@ -141,20 +203,25 @@ export function updateSettings(fn: (s: Settings) => Settings): Promise<Settings>
   });
 }
 
-export async function loadOverrides(): Promise<Overrides> {
+async function loadRawOverrides(): Promise<RawOverrides> {
   const got = await browser.storage.local.get(KEYS.overrides);
-  return parseOverrides(got[KEYS.overrides]);
+  return parseRawOverrides(got[KEYS.overrides] ?? {});
+}
+
+export async function loadOverrides(): Promise<Overrides> {
+  return flattenOverrides(await loadRawOverrides());
 }
 
 /** Forget "Not an ad" / "Hide this" choices for one site, or for every site when key is null. */
 export function clearOverrides(key: string | null): Promise<void> {
   return serial(async () => {
-    const all = await loadOverrides();
-    if (key === null) await browser.storage.local.set({ [KEYS.overrides]: {} });
-    else {
-      delete all[key];
-      await browser.storage.local.set({ [KEYS.overrides]: all });
+    if (key === null) {
+      await browser.storage.local.set({ [KEYS.overrides]: {} });
+      return;
     }
+    const all = await loadRawOverrides();
+    delete all[key];
+    await browser.storage.local.set({ [KEYS.overrides]: all });
   });
 }
 
@@ -180,11 +247,11 @@ export function importBackup(raw: unknown): Promise<void> {
 
 export function setOverride(key: string, fp: string, action: 'not-ad' | 'hide' | null): Promise<void> {
   return serial(async () => {
-    const all = await loadOverrides();
+    const all = await loadRawOverrides();
     const site = { ...(all[key] ?? {}) };
     if (action === null) delete site[fp];
-    else site[fp] = action;
-    all[key] = site;
-    await browser.storage.local.set({ [KEYS.overrides]: all });
+    else site[fp] = { action, t: Date.now() };
+    const next = capOverrides({ ...all, [key]: site });
+    await browser.storage.local.set({ [KEYS.overrides]: next });
   });
 }

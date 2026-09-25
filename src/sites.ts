@@ -60,7 +60,7 @@ const SITE_ALIASES: Record<string, string> = {
 /** The key settings are stored under: hostname without "www.", with aliases folded. */
 export function siteKey(hostname: string): string {
   const key = hostname.toLowerCase().replace(/^www\./, '');
-  return SITE_ALIASES[key] ?? key;
+  return Object.hasOwn(SITE_ALIASES, key) ? SITE_ALIASES[key]! : key;
 }
 
 /** A plain hostname: what may go into a match pattern. Rejects wildcards, ports, paths. */

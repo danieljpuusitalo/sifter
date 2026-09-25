@@ -255,11 +255,15 @@ describe('scanner: audit regressions', () => {
   it('switching the site off while slices are queued hides nothing', () => {
     const q: Array<() => void> = [];
     const { scanner, context } = setup('www.linkedin.com', card('c0', 'a') + card('c1', 'b'), {}, (fn) => q.push(fn));
-    // Positive control: the cards really are queued to be hidden.
-    expect(scanner.state().perf.pending).toBe(2);
+    // A slice is queued (collection now happens inside it, so nothing is pending yet).
+    expect(q.length).toBeGreaterThan(0);
     scanner.applyContext({ ...context, enabled: false });
     while (q.length) q.shift()!();
     expect(['c0', 'c1'].filter(hidden)).toEqual([]);
+    // Positive control: the same queued slices hide both cards once the site is on again.
+    scanner.applyContext(context);
+    while (q.length) q.shift()!();
+    expect(['c0', 'c1'].filter(hidden)).toEqual(['c0', 'c1']);
   });
 
   it('settled() resolves once queued slices are done', async () => {
@@ -275,12 +279,30 @@ describe('scanner: audit regressions', () => {
     expect(hidden('c0')).toBe(true);
   });
 
-  it('"Not an ad" on one copy of a post shows its duplicates too', () => {
+  // A real click, faked for happy-dom by forcing isTrusted on the dispatched event,
+  // as distinct from `.click()`/plain `dispatchEvent`, which are never trusted.
+  const trustedClick = (el: HTMLElement) => {
+    const e = new MouseEvent('click', { bubbles: true, cancelable: true });
+    Object.defineProperty(e, 'isTrusted', { value: true });
+    el.dispatchEvent(e);
+  };
+
+  it('a synthetic click on "Not an ad" is ignored: only a real, trusted click may reveal a post', () => {
+    // happy-dom's `.click()`, like a page script's `dispatchEvent`, produces an
+    // untrusted event.
     setup('www.linkedin.com', card('d1', 'same body') + card('d2', 'same body'));
     const host = document.getElementById('d1')!.previousElementSibling!;
     (host.shadowRoot!.querySelector('[data-act="not-ad"]') as HTMLElement).click();
-    expect(hidden('d1')).toBe(false);
-    expect(hidden('d2')).toBe(false);
+    expect(hidden('d1')).toBe(true);
+    expect(hidden('d2')).toBe(true);
+  });
+
+  it('positive control: a trusted click on "Not an ad" does reveal the post and its duplicates', () => {
+    setup('www.linkedin.com', card('d3', 'same body 2') + card('d4', 'same body 2'));
+    const host = document.getElementById('d3')!.previousElementSibling!;
+    trustedClick(host.shadowRoot!.querySelector('[data-act="not-ad"]') as HTMLElement);
+    expect(hidden('d3')).toBe(false);
+    expect(hidden('d4')).toBe(false);
   });
 
   it('"Show" takes the post out of the counts', () => {
@@ -318,5 +340,10 @@ describe('element rules: aliases and unclosed selectors', () => {
     const { rules, errors } = parseRules('##div:has(.x\n##[a="b\n##.ok /* c\n##a[href="(x"]\n##.fine', () => true);
     expect(errors.map((e) => e.line)).toEqual([1, 2, 3]);
     expect(rules.map((r) => r.selector)).toEqual(['a[href="(x"]', '.fine']);
+  });
+  it('rejects a selector ending in a trailing backslash instead of swallowing the next rule', () => {
+    const { rules, errors } = parseRules('##.a\\\n##.fine', () => true);
+    expect(errors.map((e) => e.line)).toEqual([1]);
+    expect(rules.map((r) => r.selector)).toEqual(['.fine']);
   });
 });

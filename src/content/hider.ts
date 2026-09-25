@@ -35,6 +35,19 @@ export type HiderCallbacks = {
   onNotAd: (unit: Element) => void;
 };
 
+/**
+ * Placeholder shadow roots, keyed by host element. Kept `mode: 'open'` (see the
+ * comment on `makePlaceholder`) but the button handlers below are what actually
+ * matters: they refuse anything the page itself dispatched. This map is a
+ * dev/test seam only, not a security boundary.
+ */
+const shadowRoots = new WeakMap<Element, ShadowRoot>();
+
+/** Test-only accessor: the placeholder's shadow root for a given host element. */
+export function placeholderRoot(host: Element): ShadowRoot | undefined {
+  return shadowRoots.get(host);
+}
+
 const PLACEHOLDER_CSS = `
 :host { display: block; }
 .row {
@@ -171,8 +184,13 @@ export class Hider {
   private makePlaceholder(unit: Element, category: HideCategory): HTMLElement {
     const host = this.doc.createElement('div');
     host.setAttribute(PLACEHOLDER_ATTR, category);
-    // Open so e2e tests can reach the buttons; nothing in it is secret.
+    // Open so e2e tests can reach the buttons; nothing in it is secret. The real
+    // guard against page script driving these buttons is the isTrusted check
+    // below, not shadow mode: a closed root only hides the DOM from casual
+    // access, and page script can already see and click host/button elements
+    // it can locate by attribute regardless of shadow mode.
     const root = host.attachShadow({ mode: 'open' });
+    shadowRoots.set(host, root);
     const style = this.doc.createElement('style');
     style.textContent = PLACEHOLDER_CSS;
     const row = this.doc.createElement('div');
@@ -194,6 +212,10 @@ export class Hider {
     b.textContent = text;
     b.dataset.act = act;
     b.addEventListener('click', (e) => {
+      // Page script can dispatch a synthetic click on any element it can find,
+      // shadow DOM or not. Only a real click may reveal a post or persist an
+      // override.
+      if (!e.isTrusted) return;
       e.preventDefault();
       e.stopPropagation();
       onClick();

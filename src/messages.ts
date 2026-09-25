@@ -25,11 +25,17 @@ export type BgRequest =
   | { type: 'sifter:setSiteEnabled'; hostname: string; enabled: boolean }
   | { type: 'sifter:setSiteCategory'; hostname: string; category: BlockCategory; value: boolean | null }
   | { type: 'sifter:setSiteRule'; hostname: string; rule: string; value: boolean }
-  | { type: 'sifter:pause'; minutes: number | null };
+  | { type: 'sifter:pause'; minutes: number | null }
+  /** Options page: the global category toggles, the hide-mode radio, and the filters form. */
+  | { type: 'sifter:setCategory'; category: BlockCategory; value: boolean }
+  | { type: 'sifter:setHideMode'; mode: HideMode }
+  | { type: 'sifter:setFilters'; mutedWords: string[]; rulesText: string };
 
 /** Popup -> content script in the active tab. */
 export type TabRequest =
   | { type: 'sifter:getPageState' }
+  /** Bench only: zero the peak counters so the next getPageState reports one window. */
+  | { type: 'sifter:resetPerfPeaks' }
   | { type: 'sifter:refresh' }
   | { type: 'sifter:showAll' }
   /** From the context menu: hide the post that was right-clicked, and remember it. */
@@ -53,6 +59,19 @@ export type PageState = {
   perf: ScanPerf;
 };
 
+export type SliceProfile = {
+  /** Carried writes from the previous slice, then prune and collect (0 when no collect ran). */
+  carriedMs: number;
+  collectMs: number;
+  decideMs: number;
+  applyMs: number;
+  /** Units examined, units fully decided, hides/unhides written, and the slice's budget. */
+  units: number;
+  decided: number;
+  applied: number;
+  budget: number;
+};
+
 export type ScanPerf = {
   scans: number;
   /** Scans that re-collected the whole page (start, settings change, or a flood of mutations). */
@@ -63,7 +82,15 @@ export type ScanPerf = {
   unitsDecided: number;
   slices: number;
   totalMs: number;
+  /** Longest slice, including the collect step it started with. `resetPerfPeaks` zeroes it. */
   maxSliceMs: number;
+  /** Time spent mapping mutations to units and modules (the "collect" step inside a slice). */
+  collectMs: number;
+  maxCollectMs: number;
+  /** The single most expensive decision (one unit's reads). `resetPerfPeaks` zeroes it. */
+  maxDecideMs: number;
+  /** Where the longest slice's time went, so an overrun names its phase. */
+  worstSlice: SliceProfile | null;
   /** Slices that ran past 1.5x the 8 ms budget: each one is a frame at risk. */
   slicesOverBudget: number;
   /** Units still queued for a decision right now. */

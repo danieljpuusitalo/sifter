@@ -42,6 +42,8 @@ function closed(selector: string): boolean {
   for (let i = 0; i < selector.length; i++) {
     const ch = selector[i] as string;
     if (ch === '\\') {
+      // A trailing backslash has nothing to escape: unclosed, not an escape.
+      if (i === selector.length - 1) return false;
       i++;
       continue;
     }

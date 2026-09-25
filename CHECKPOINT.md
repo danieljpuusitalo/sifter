@@ -1,7 +1,8 @@
 # Sifter checkpoint
 
-Updated 2026-09-24, session 3: seven site adapters, ad-blocker-style popup and
-options page, icons, store docs, then a full audit and its fixes.
+Updated 2026-09-24, session 4: a second, agent-driven audit of the whole repo
+(security, scanner cost, settings, CI) on branch `audit/v1-hardening`. Session 3
+shipped the seven adapters, popup and options page, icons and store docs.
 
 ## Where it stands
 
@@ -25,11 +26,11 @@ Settings store only the rules switched off (`sites[key].rules`).
 | Gate | State |
 |---|---|
 | `pnpm typecheck` | passes |
-| `pnpm test` | 153/153, including the audit regressions (below) |
+| `pnpm test` | 168/168 (session 4 added 15: settings caps and timestamps, `closed()` trailing backslash, adapter defaults parity, scanner change signature, trusted-click guard) |
 | `pnpm eval:mock` | 8 fixtures, tp=60 fp=0 fn=0 (suggested pass included; both Google top-carousel shapes added 2026-09-24; with the pre-fix adapter the `#atvcap` shape is fn=1 and the eval FAILs, so the case discriminates) |
-| `pnpm test:e2e` | 13 passed, 1 fixme (Google late-injection spec added 2026-09-24, `#atvcap` case added the same night); earlier 10/10, 30/30 with `--repeat-each=3`. One earlier run failed "muted words..." while a `pnpm dev` Chromium was also running (55 s vs a normal 24 s); not reproduced since. Watch it in CI |
-| `pnpm bench:scroll` | scrolling p50 and p95 are the same with the extension off and on (16.7 / 16.9 ms), 0 slices over budget while scrolling. One long task at load (75–81 ms, initial scan about 340 ms of idle-sliced work); max slice at load 27–33 ms. That load slice is the only thing over budget |
-| `pnpm build` | `.output/sifter-1.0.0-chrome.zip`, 110 kB |
+| `pnpm test:e2e` | 14 passed, 1 fixme (session 4 added the `setOverride` rejection test; it must send from an extension page, a service worker cannot message itself). One earlier run failed "muted words..." while a `pnpm dev` Chromium was also running (55 s vs a normal 24 s); not reproduced since. Watch it in CI |
+| `pnpm bench:scroll` | **`--cpu 1 --strict`, 2 runs per site, 2026-09-24 late**: all OK. Frames p50/p95/p99 off vs on: LinkedIn 16.7/17.0/18.1 vs 16.7/17.2/19.1; Facebook 16.7/17.3/19.1 vs 16.7/17.3/19.2. 0 long tasks, 0 slices over budget, max scroll slice 5.5–11.4 ms, max single decide 1.1–1.9 ms, scanner total 45–65 ms per 15 s scroll. The 4x-throttle run is the frame A/B only: on this laptop's emulated x64 Chromium it shows random 10–17 ms spikes with the extension off too, so its slice counters are noise (verdict now scales with `--cpu`) |
+| `pnpm build` | `.output/sifter-1.0.0-chrome.zip`, 92 kB (was 110 kB; content.js 40 kB, was 122 kB, after zod left the content script) |
 
 ## Live verification (from each adapter's `verified` field)
 
@@ -92,6 +93,28 @@ Not fixed, noted:
 - The observer keeps running on a site that is switched off. It's cheap, because `scanNow` returns early.
 - The popup e2e only renders the "unsupported" view. The running view's counts are covered through `getPageState`.
 
+## v1 hardening audit (session 4, branch `audit/v1-hardening`)
+
+Opus reviewed, Sonnet implemented the decided fixes, every receipt above was re-run
+on the branch. What changed:
+
+- **Scanner cost (hard rule 7).** Two real causes of slices over budget, both fixed:
+  - the slice loop budgeted the next decide from the in-slice average, which underestimates a first full decide; it now carries an EMA of a fully decided unit's cost across slices (`decideCostMs`) and stops before a decide that would not fit.
+  - Facebook's like/comment counters changed text on every unit every second, so every unit was re-decided (490/490 per scroll). The change signature (`changeSignature` in `src/fingerprint.ts`) now collapses digit runs; 30/490 re-decided since.
+  - `renderedWithin` memoises ancestor visibility per decision (`VisibilityCache`), so a unit's label nodes pay for their shared ancestors once.
+  - Zod left the content script: adapters are validated in the unit tests (`withDefaults` parity test) instead of parsed at every page load.
+  - The bench records `maxDecideScroll` and `worstSlice` (phase breakdown of the longest slice), and fixed `maxSliceAtLoad`, which was read after the reset and always 0.
+  - Tried and reverted: rAF-gating idle callbacks after writes. No effect on the spikes.
+- **Background.** `sifter:setOverride` validates the fingerprint (`/^[0-9a-z]{1,16}$/`) and the action, and answers `{error:'invalid override'}`; the options page's global toggles, hide mode and filters now go through the background (`setCategory`, `setHideMode`, `setFilters`) instead of writing storage directly.
+- **Settings.** Overrides are stored with a timestamp and capped (2000 per site, 10 000 total, oldest evicted); the old plain-string shape still parses. Each override entry is validated on its own, so one bad entry drops itself, not the site. The adapter schema is `.strict()`.
+- **Content script.** "Show" / "Not an ad" buttons and the context-menu target require a trusted event (`isTrusted`), so page script cannot click them; the context-menu target expires after 1.5 s; `pageshow` from bfcache refreshes. Placeholders live in an open shadow root.
+- **Rules.** `closed()` rejects a trailing backslash, which otherwise escapes the joining comma.
+- **CI.** `ci.yml` has `permissions: contents: read`; `release.yml` checks out with `persist-credentials: false`; Playwright retries twice on CI.
+
+Disclosures from the implementer run: it ran `taskkill` on stray `node.exe` processes once to unstick a hung Vitest (contention with a parallel run), and its new e2e test had not been executed when handed over; it failed on the first run (service worker messaging itself) and was rewritten to send from the popup page.
+
+Not done, a possible follow-up with no receipt yet: a shared constructed `CSSStyleSheet` (`adoptedStyleSheets`) for the placeholders. One LinkedIn apply phase measured 7.9 ms at real speed; a shared sheet would avoid a style element per placeholder.
+
 ## Next
 
 0. **Production-readiness verdict (2026-09-24, end of session): ready for an UNLISTED v1.0.0 submission, not yet for a promoted Public listing.** Phase 3 is done (release.yml on `v*` tags, CHANGELOG, privacy page live on Pages and linked from `docs/STORE_LISTING.md`, `homepage_url` + `minimum_chrome_version` in the manifest, repo public, main `aaccdde` green incl. build + e2e). Precision evidence is strong (fp=0 on every fixture; X tally 8/8). Unproven, all recall-side: Threads ad path (no ad has appeared yet), X suggested units, NL/DE/FR marker words (baseline guesses), Google carousel shapes rotate by A/B (a third shape = patch tag), the release build has never run in regular Chrome with a normal profile, and one 75–81 ms long task at load. **No git tag exists yet.** Next action is ROADMAP Phase 4 step 2: tag `v1.0.0`, take the zip from the GitHub Release, submit Unlisted, install it into regular Chrome and use it for a few days, flip to Public once Threads shows an ad hidden.
@@ -121,6 +144,7 @@ Not fixed, noted:
      - NL/DE/FR strings are baseline guesses; Daniel's UI is English, so only English is checked.
    - **Per-rule switches** (commit 46434ef): live-checked only for Facebook "Groups you're not in". Still to click live: the Reels switch (no Reels unit appeared that session), and the Instagram and LinkedIn switches. `scratchpad`-style CDP check: open popup.html in its own window with `chrome.tabs.query` patched to return the site tab, click `label.sub`, count units by header button.
    - **Store screenshots predate the per-rule switches and the live count.** Re-run `pnpm store:assets` before submitting if the popup shot should show them.
+   - **Daniel's calls after the session-4 audit** (none block the Unlisted submission): merge `audit/v1-hardening` once CI is green; enable branch protection on `main` (require CI, no force-push); decide whether the content script should inject its hide CSS at `document_start` (removes a flash before the first idle slice, costs an early script); decide whether `rel=sponsored` / ad-click URL matching should stay scoped to Google only; a README GIF; then tag `v1.0.0`.
 2. **Licence:** MIT (`LICENSE`), done.
 3. **Privacy policy URL** is live: `https://danieljpuusitalo.github.io/sifter/privacy/` (repo made public 2026-09-24, Pages deploys from `pages.yml`). Submission steps are in `docs/ROADMAP.md` Phase 4; they are Daniel's.
 4. M2 (tier-1 model classification, BRIEF.md §9) has not started. `http://localhost/*` was removed from `optional_host_permissions` on 2026-09-24 (an unused permission is a review question); M2 re-adds it for its local providers.

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { findGenericUnits, innermost } from '../../src/adapters/generic';
-import { ADAPTERS, adapterFor } from '../../src/adapters/index';
+import { ADAPTERS, RAW_ADAPTERS, adapterFor, withDefaults } from '../../src/adapters/index';
+import { AdapterSchema } from '../../src/adapters/schema';
 import { GOOGLE_DOMAINS, LAUNCH_MATCHES } from '../../src/sites';
 
 function html(markup: string): HTMLElement {
@@ -11,8 +12,30 @@ function html(markup: string): HTMLElement {
 describe('adapters', () => {
   it('all parse and have valid selectors', () => {
     for (const a of ADAPTERS) {
-      for (const sel of [a.unitSelector, ...a.labelSelectors, ...a.adSelectors]) {
+      for (const sel of [a.unitSelector, ...a.labelSelectors, ...a.adSelectors, ...a.blocks.flatMap((b) => [b.selector, ...(b.anchor ? [b.anchor] : [])])]) {
         expect(() => document.querySelectorAll(sel), `${a.id}: ${sel}`).not.toThrow();
+      }
+    }
+  });
+
+  it('every shipped adapter passes the schema, and withDefaults matches what the schema would produce', () => {
+    // The content script skips zod (bundle size, parse at load), so the hand-written
+    // defaults must never drift from schema.ts.
+    for (const raw of RAW_ADAPTERS) {
+      const parsed = AdapterSchema.parse(raw);
+      expect(withDefaults(raw), parsed.id).toEqual(parsed);
+    }
+  });
+
+  it('a block anchor is one cheap compound selector', () => {
+    // The anchor is what the scanner looks for in a dirty subtree; the scope and
+    // the `:has()` live in the selector it then climbs to. An ancestor part in the
+    // anchor would be invisible to a query scoped to an added subtree in happy-dom.
+    for (const a of ADAPTERS) {
+      for (const b of a.blocks) {
+        if (!b.anchor) continue;
+        expect(b.anchor, `${a.id}: anchor must not use :has()`).not.toContain(':has(');
+        expect(b.anchor, `${a.id}: anchor must be a single compound selector`).not.toMatch(/[\s>+~,]/);
       }
     }
   });

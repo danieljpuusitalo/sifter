@@ -58,6 +58,7 @@
   "blocks": [
     {
       "selector": "[role=\"complementary\"] div:has(h3):has(a[aria-label=\"Advertiser\"])",
+      "anchor": "a[aria-label=\"Advertiser\"]",
       "category": "sponsored",
       "innermost": true
     }

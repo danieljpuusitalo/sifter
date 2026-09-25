@@ -17,6 +17,9 @@ import {
 const OPT_IN_SCRIPT_ID = 'sifter-opt-in';
 const MENU_ID = 'sifter-hide-this';
 
+/** Fingerprints are cyrb53(...).toString(36): base-36, at most 11 digits in practice. */
+const FINGERPRINT_RE = /^[0-9a-z]{1,16}$/;
+
 /** Content scripts may only read their own site's context and record overrides for it. */
 const CONTENT_SCRIPT_REQUESTS = new Set<BgRequest['type']>(['sifter:getContext', 'sifter:setOverride']);
 
@@ -117,6 +120,9 @@ async function handle(msg: BgRequest): Promise<unknown> {
     case 'sifter:getContext':
       return getContext(msg.hostname);
     case 'sifter:setOverride':
+      if (!FINGERPRINT_RE.test(msg.fp) || (msg.action !== null && msg.action !== 'not-ad' && msg.action !== 'hide')) {
+        return { error: 'invalid override' };
+      }
       await setOverride(siteKey(msg.hostname), msg.fp, msg.action);
       return { ok: true };
     case 'sifter:setSiteEnabled': {
@@ -160,6 +166,12 @@ async function handle(msg: BgRequest): Promise<unknown> {
         pausedUntil: msg.minutes === null ? null : Date.now() + msg.minutes * 60_000,
       }));
       return { ok: true };
+    case 'sifter:setCategory':
+      return updateSettings((s) => ({ ...s, categories: { ...s.categories, [msg.category]: msg.value } }));
+    case 'sifter:setHideMode':
+      return updateSettings((s) => ({ ...s, hideMode: msg.mode }));
+    case 'sifter:setFilters':
+      return updateSettings((s) => ({ ...s, mutedWords: msg.mutedWords, rulesText: msg.rulesText }));
   }
 }
 

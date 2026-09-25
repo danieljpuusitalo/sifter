@@ -11,7 +11,6 @@ import {
   loadOverrides,
   loadSettings,
   siteCategories,
-  updateSettings,
   type Overrides,
   type Settings,
 } from '../../src/storage/settings';
@@ -86,8 +85,6 @@ export function App() {
   }, []);
   if (!settings) return <main class="options" />;
 
-  const save = async (fn: (s: Settings) => Settings) => setSettings(await updateSettings(fn));
-
   return (
     <main class="options">
       <header>
@@ -109,7 +106,7 @@ export function App() {
                   checked={settings.categories[c.cat]}
                   onChange={(e) => {
                     const on = (e.currentTarget as HTMLInputElement).checked;
-                    void save((s) => ({ ...s, categories: { ...s.categories, [c.cat]: on } }));
+                    void bg<Settings>({ type: 'sifter:setCategory', category: c.cat, value: on }).then(setSettings);
                   }}
                 />
                 <span>
@@ -124,7 +121,7 @@ export function App() {
 
       <Sites settings={settings} onChange={reload} />
 
-      <Filters settings={settings} save={save} />
+      <Filters settings={settings} onSaved={setSettings} />
 
       <section>
         <h2>How hidden posts look</h2>
@@ -136,7 +133,7 @@ export function App() {
                 type="radio"
                 name="hideMode"
                 checked={settings.hideMode === m.value}
-                onChange={() => void save((s) => ({ ...s, hideMode: m.value }))}
+                onChange={() => void bg<Settings>({ type: 'sifter:setHideMode', mode: m.value }).then(setSettings)}
               />
               <span>
                 <strong>{m.label}</strong>
@@ -239,7 +236,7 @@ function Sites(props: { settings: Settings; onChange: () => void }) {
   );
 }
 
-function Filters(props: { settings: Settings; save: (fn: (s: Settings) => Settings) => Promise<void> }) {
+function Filters(props: { settings: Settings; onSaved: (s: Settings) => void }) {
   const [words, setWords] = useState(props.settings.mutedWords.join('\n'));
   const [rules, setRules] = useState(props.settings.rulesText);
   const [status, setStatus] = useState<string | null>(null);
@@ -263,7 +260,8 @@ function Filters(props: { settings: Settings; save: (fn: (s: Settings) => Settin
 
   const submit = async (e: Event) => {
     e.preventDefault();
-    await props.save((s) => ({ ...s, mutedWords: wordList, rulesText: rules }));
+    const next = await bg<Settings>({ type: 'sifter:setFilters', mutedWords: wordList, rulesText: rules });
+    props.onSaved(next);
     setWords(wordList.join('\n'));
     setStatus(`Saved. ${wordList.length} muted word${wordList.length === 1 ? '' : 's'}, ${parsed.rules.length} rule${parsed.rules.length === 1 ? '' : 's'}.`);
   };

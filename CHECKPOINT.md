@@ -2,8 +2,9 @@
 
 Updated 2026-09-25, session 5: release landing. The session-4 audit branch is
 merged (PR #8, `c87e1e1`), `main` is protected, the two open decisions are made,
-the placeholder stylesheet follow-up is done, the README has its GIF, and the
-`v1.0.0` tag is the next step (see "Session 5" below for receipts). Session 4 was
+the placeholder stylesheet follow-up is done, the README has its GIF, and **`v1.0.0`
+is tagged and released** (tag at `050e41f`, zip on the GitHub Release; see "Session 5"
+below for receipts). What remains is Daniel's: the Web Store submission. Session 4 was
 the second, agent-driven audit (security, scanner cost, settings, CI). Session 3
 shipped the seven adapters, popup and options page, icons and store docs.
 
@@ -150,6 +151,18 @@ Daniel: "proceed, let's get this truly production ready." Done, with receipts:
   PNGs, so the 09-24 note that they predate the per-rule switches was wrong or moot.
 - README coverage table and CHANGELOG no longer describe the Google carousel as
   "under re-check"; it was resolved on 09-24 (`#atvcap` shape).
+- **Session-5 branch merged** via PR #9 (merge commit `0de0c5b`), CI `verify` green
+  on both branch commits (`469580b`, `4713194`).
+- **`v1.0.0` tagged and released.** The first tag push (at `0de0c5b`) ran verify,
+  build and e2e green on the tag, then failed in "Extract changelog section": the
+  awk pattern `"^## [1.0.0]"` treated the brackets as a character class, so the
+  literal heading could never match. Fixed in `release.yml` (`index($0, ver) == 1`),
+  committed to `main` as `050e41f`, tested locally (32 lines for 1.0.0, 0 lines for a
+  version with no section), tag moved to `050e41f` (no Release had been created, so
+  nothing was replaced). Run 36107246645 green; GitHub Release `v1.0.0` exists with
+  `sifter-1.0.0-chrome.zip` (92,090 bytes), not draft, not pre-release:
+  `https://github.com/danieljpuusitalo/sifter/releases/tag/v1.0.0`. CI on `main` at
+  `050e41f` green.
 
 Still Daniel's, unchanged: the Web Store developer account and the submission itself
 (ROADMAP Phase 4), a first run of the release zip in regular Chrome with a normal
@@ -157,8 +170,8 @@ profile, and the live recall checks (Threads ad, X suggested, NL/DE/FR words).
 
 ## Next
 
-0. **Production-readiness verdict (2026-09-24, end of session): ready for an UNLISTED v1.0.0 submission, not yet for a promoted Public listing.** Phase 3 is done (release.yml on `v*` tags, CHANGELOG, privacy page live on Pages and linked from `docs/STORE_LISTING.md`, `homepage_url` + `minimum_chrome_version` in the manifest, repo public, main `aaccdde` green incl. build + e2e). Precision evidence is strong (fp=0 on every fixture; X tally 8/8). Unproven, all recall-side: Threads ad path (no ad has appeared yet), X suggested units, NL/DE/FR marker words (baseline guesses), Google carousel shapes rotate by A/B (a third shape = patch tag), the release build has never run in regular Chrome with a normal profile, and one 75–81 ms long task at load. **No git tag exists yet.** Next action is ROADMAP Phase 4 step 2: tag `v1.0.0`, take the zip from the GitHub Release, submit Unlisted, install it into regular Chrome and use it for a few days, flip to Public once Threads shows an ad hidden.
-1. **Daniel:** live results are in the table above (2026-09-24). The Google carousel miss is fixed (`#atvcap` shape). Still open: the suggested words on each site; a sponsored local result or Maps pin when one appears. Then tag v1.0.0 and submit (ROADMAP Phase 4).
+0. **Production-readiness verdict (2026-09-24, end of session): ready for an UNLISTED v1.0.0 submission, not yet for a promoted Public listing.** Phase 3 is done (release.yml on `v*` tags, CHANGELOG, privacy page live on Pages and linked from `docs/STORE_LISTING.md`, `homepage_url` + `minimum_chrome_version` in the manifest, repo public, main `aaccdde` green incl. build + e2e). Precision evidence is strong (fp=0 on every fixture; X tally 8/8). Unproven, all recall-side: Threads ad path (no ad has appeared yet), X suggested units, NL/DE/FR marker words (baseline guesses), Google carousel shapes rotate by A/B (a third shape = patch tag), the release build has never run in regular Chrome with a normal profile, and one 75–81 ms long task at load (2026-09-25: that figure was the summed `initialScanMs` counter, not a long task; `longTasks=0`). **Tagged and released 2026-09-25** (`v1.0.0` at `050e41f`). Next action is ROADMAP Phase 4, all Daniel's: download `sifter-1.0.0-chrome.zip` from the GitHub Release, submit Unlisted, install it into regular Chrome and use it for a few days, flip to Public once Threads shows an ad hidden.
+1. **Daniel:** live results are in the table above (2026-09-24). The Google carousel miss is fixed (`#atvcap` shape). Still open: the suggested words on each site; a sponsored local result or Maps pin when one appears. `v1.0.0` is tagged; the submission is ROADMAP Phase 4.
    - Scroll smoothness, 2026-09-24:
      - Most of the lag was the dev browser: x64 Chromium emulated on ARM64.
      - Sifter's only measured cost was a 12–13 ms forced layout from `innerText`, now removed.
@@ -183,8 +196,8 @@ profile, and the live recall checks (Threads ad, X suggested, NL/DE/FR words).
      - Suggested labels over 300 chars are treated as post body and skipped.
      - NL/DE/FR strings are baseline guesses; Daniel's UI is English, so only English is checked.
    - **Per-rule switches** (commit 46434ef): live-checked only for Facebook "Groups you're not in". Still to click live: the Reels switch (no Reels unit appeared that session), and the Instagram and LinkedIn switches. `scratchpad`-style CDP check: open popup.html in its own window with `chrome.tabs.query` patched to return the site tab, click `label.sub`, count units by header button.
-   - **Store screenshots predate the per-rule switches and the live count.** Re-run `pnpm store:assets` before submitting if the popup shot should show them.
-   - **Daniel's calls after the session-4 audit**: all closed in session 5 (merge, branch protection, `document_start` = no for v1, `rel=sponsored` = global, README GIF). Tag `v1.0.0` follows once the session-5 PR is merged.
+   - **Store screenshots are current**: `pnpm store:assets` on 2026-09-25 rendered byte-identical PNGs to the committed ones.
+   - **Daniel's calls after the session-4 audit**: all closed in session 5 (merge, branch protection, `document_start` = no for v1, `rel=sponsored` = global, README GIF, tag `v1.0.0`).
 2. **Licence:** MIT (`LICENSE`), done.
 3. **Privacy policy URL** is live: `https://danieljpuusitalo.github.io/sifter/privacy/` (repo made public 2026-09-24, Pages deploys from `pages.yml`). Submission steps are in `docs/ROADMAP.md` Phase 4; they are Daniel's.
 4. M2 (tier-1 model classification, BRIEF.md §9) has not started. `http://localhost/*` was removed from `optional_host_permissions` on 2026-09-24 (an unused permission is a review question); M2 re-adds it for its local providers.
@@ -214,3 +227,4 @@ profile, and the live recall checks (Threads ad, X suggested, NL/DE/FR words).
 - **Background `authorize()`:** a content script's hostname comes from `sender.url`, never from the message.
 - **Placeholder CSS through one adopted sheet** (`placeholderSheet` in `src/content/hider.ts`): a `<style>` per placeholder re-parses the same CSS on every hide. Keep the `<style>` fallback for realms without constructable sheets.
 - **`rel=sponsored` is global, `/aclk` is Google-only.** Decided 2026-09-25; the reasoning sits above the check in `src/extract.ts`.
+- **`release.yml` matches the CHANGELOG heading with `index()`, not a regex.** `## [x.y.z]` as an awk regex is a character class and never matches; this failed the first `v1.0.0` run after every test had passed.

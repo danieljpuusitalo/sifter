@@ -42,6 +42,39 @@ Daniel's. Incident: the ops maintenance runner's disposable worktree (`sifter-pr
 ran `pnpm install` and relinked this repo's `node_modules` to its own store, which then
 vanished; `pnpm install --frozen-lockfile` repaired it. Under one busy-loop process the
 e2e suite still passed 24/24.
+Session 11 (2026-09-27, `perf/scroll-cost`) was a scroll-cost pass against Daniel's
+bar of "a couple of ms". The new harness, `bench/live.ts` (`pnpm bench:live`), traces
+Sifter on the real logged-in feed in native Edge. It attributes Sifter's time through
+the trace's `chrome-extension://` FunctionCall events, because LoAF and the CDP
+Profiler cannot see the isolated world. `--profile` reads the trace's
+`v8.cpu_profiler` samples for per-function self time. Raw traces go to TEMP only:
+they hold private page content.
+
+LinkedIn, 20 s of wheel scroll, before → after:
+
+| | Before | After |
+|---|---|---|
+| Sifter cost | 6.1 ms/s | 4.5 ms/s |
+| Worst task | 11.2 ms | 4.5 ms |
+| Tasks over 4 ms | 11 | 3 |
+| Forced style/layout inside Sifter | 61 ms | 0 |
+
+Fixes:
+
+- The decide-time unmask is gone. It forced a style and layout pass twice per rescan.
+- `checkVisibility` fast path in `renderedWithin`.
+- One-pass `changeSignature`.
+- Bounded aria-labelledby reads.
+- Memoised `isMarkerText`.
+- 4 ms slices.
+- A 1 ms decide-cost prior.
+
+`bench:scroll --cpu 1 --strict` passes 2/2. The worst slice during scroll is
+3.2–4.8 ms. The worst slice at load is 7–8.7 ms, down from 11.6–15.9. Load is what
+remains over the bar, with 150 cards collected in one slice. Facebook has not been
+re-traced live yet. `SIFTER_NOMINIFY=1 pnpm build` gives readable names in a
+profile; never ship that build.
+
 Session 5 landed and tagged `v1.0.0` (`050e41f`); session 4 was the agent-driven
 audit; session 3 shipped the seven adapters, popup, options and store docs.
 
@@ -369,6 +402,10 @@ path is still unverified live (no sponsored feed post appeared this session eith
 - **`doSync` updates the opt-in registration in place** (`updateContentScripts`), and unregisters only when the match list is empty. Unregister-then-register left every opt-in site dark when the register step was refused.
 - **The placeholder is the unit's first child, not a sibling** (session 6): LinkedIn's virtualised feed parks a 0-height slot off-screen with its siblings. Collapse and blur go through `UNIT_CSS` on the unit's children; only `hide` mode writes inline style to the unit.
 - **`content.ts` registers the probe listener before its first `await`:** install-time `executeScript` and `content_scripts` can start in the same tick, and a late listener lets both instances run.
-- **Foreign-hidden check is gated on `hider.isHidden(unit)` first** (session 7): the unmask window lifts classes only; hide mode's inline `display:none` stays, and without the gate a rescan unhides Sifter's own hides.
+- **Foreign-hidden check is gated on `hider.isHidden(unit)` first** (session 7): a rescan reads a hidden unit with Sifter's own hiding in place, and without the gate it would call its own hide foreign and release it.
+- **No unmask in `decide()`** (session 11): a rescan of a collapsed unit reads it with the classes on, and `collapsedByUs` discounts exactly the collapse's `display:none` on the unit's direct children. Lifting the classes cost a style recalc plus a forced layout of the post, twice, 9-10 ms per rescan on live LinkedIn. The placeholder is detached for the reads only when `positionalSelectors(adapter)` (Threads today). `tests/unit/rescan-no-unmask.test.ts`.
+- **`renderedWithin`'s `checkVisibility` fast path trusts only a yes, and only when the unit carries no Sifter class** (session 11). It looks past the unit, so a no falls through to the exact walk. Pass both option spellings: Chrome 116-120 know only `checkOpacity`/`checkVisibilityCSS`.
+- **`changeSignature` must equal hashing `stableText`** (session 11): it is a one-pass rewrite, pinned by `tests/unit/change-signature.test.ts` (5000 seeded random strings plus hand cases).
+- **Slice budget is 4 ms, not 8** (session 11): `HARD_RULE_MS` stays 8 for the over-budget counter. `DECIDE_COST_PRIOR_MS` (1) keeps the first slice after load from running cold code to an overrun.
 - **`decide()` and `apply()` run through `decideSafely`/`applySafely`**: a throw inside one unit must not leave `running` true with no scan scheduled.
 - **`release.yml` matches the CHANGELOG heading with `index()`, not a regex.** `## [x.y.z]` as an awk regex is a character class and never matches; this failed the first `v1.0.0` run after every test had passed.

@@ -1,4 +1,4 @@
-import { PLACEHOLDER_ATTR } from './content/hider';
+import { COLLAPSE_CLASS, HIDDEN_CLASS, PLACEHOLDER_ATTR } from './content/hider';
 import { normaliseText } from './fingerprint';
 import { hasLineEnding, hasMarkerLine, hasWordLine, isAdClickUrl, isMarkerText } from './rules/markers';
 import type { Adapter } from './adapters/schema';
@@ -29,12 +29,13 @@ const shows = (visibility: string, parent: boolean): boolean => (visibility ? vi
  * lines at block boxes and <br> the way innerText does. Split words
  * ("Pro<span>moted</span>") still join, because inline boxes add no break.
  */
-export function renderedText(node: Element): string {
+export function renderedText(node: Element, collapsedUnit?: Element): string {
   const view = node.ownerDocument.defaultView;
   if (!view) return node.textContent ?? '';
   const parts: string[] = [];
   let len = 0;
   const walk = (el: Element, visible: boolean): void => {
+    const ours = el === collapsedUnit;
     for (let n = el.firstChild; n && len < MAX_RENDERED; n = n.nextSibling) {
       if (n.nodeType === 3) {
         const t = n.nodeValue ?? '';
@@ -53,9 +54,11 @@ export function renderedText(node: Element): string {
         continue;
       }
       const cs = view.getComputedStyle(child);
-      if (cs.display === 'none' || cs.opacity === '0') continue;
+      // Our own collapse hides the unit's children; read them as the block boxes they were.
+      const ownHide = ours && cs.display === 'none';
+      if ((!ownHide && cs.display === 'none') || cs.opacity === '0') continue;
       // visibility inherits, and a visible child of a hidden parent does show.
-      const block = BLOCK_DISPLAY.test(cs.display);
+      const block = ownHide || BLOCK_DISPLAY.test(cs.display);
       if (block) parts.push('\n');
       walk(child, shows(cs.visibility, visible));
       if (block) parts.push('\n');
@@ -74,6 +77,13 @@ export function renderedText(node: Element): string {
 export function renderedWithin(node: Element, unit: Element, cache?: VisibilityCache): boolean {
   const view = node.ownerDocument.defaultView;
   if (!view) return true;
+  // Fast path: one native call walks every ancestor in C++, where the loop below
+  // pays a getComputedStyle and four property reads per ancestor (the largest
+  // self-time in a LinkedIn decision). It looks past the unit, so only a yes is
+  // conclusive, and only while none of our own hiding sits on the unit; a no
+  // (rare: a hidden label, or our collapse) falls through to the exact walk.
+  if (!unit.classList.contains(HIDDEN_CLASS) && typeof node.checkVisibility === 'function' && node.checkVisibility(VISIBLE_OPTS)) return true;
+  const collapsed = collapsedByUs(unit);
   // Label nodes of one unit share most ancestors: remember each ancestor's answer
   // for the duration of one decision, so the header pays for its style reads once.
   const path: Element[] = [];
@@ -86,7 +96,8 @@ export function renderedWithin(node: Element, unit: Element, cache?: VisibilityC
     }
     path.push(el);
     const cs = view.getComputedStyle(el);
-    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse' || cs.opacity === '0') {
+    const ownHide = collapsed && el.parentElement === unit;
+    if ((cs.display === 'none' && !ownHide) || cs.visibility === 'hidden' || cs.visibility === 'collapse' || cs.opacity === '0') {
       shown = false;
       break;
     }
@@ -95,8 +106,29 @@ export function renderedWithin(node: Element, unit: Element, cache?: VisibilityC
   return shown;
 }
 
+/**
+ * Chrome 121 renamed the options; 105-120 (the floor is 116) know only the old
+ * names and would ignore the new ones, reading an opacity:0 decoy as visible.
+ */
+const VISIBLE_OPTS = { opacityProperty: true, visibilityProperty: true, checkOpacity: true, checkVisibilityCSS: true } as CheckVisibilityOptions;
+
 /** Per-decision memo of renderedWithin answers, keyed by element. */
 export type VisibilityCache = Map<Element, boolean>;
+
+/**
+ * Whether Sifter's own collapse is what hides this unit's content. UNIT_CSS puts
+ * display:none on every direct child but the placeholder, and nothing else, so a
+ * rescan discounts exactly that and reads the unit as the site built it. The
+ * alternative, lifting the classes for the read, un-hid the whole post for one
+ * getComputedStyle: a full style recalc plus a forced layout of the post, then
+ * again for the page when the classes went back (9-10 ms per rescan on LinkedIn,
+ * measured by bench/live.ts). The trade: a site's own display:none on a direct
+ * child of an already-hidden unit reads as shown. The first decision, made before
+ * Sifter touched the unit, still sees it; blur changes nothing read here.
+ */
+export function collapsedByUs(unit: Element): boolean {
+  return unit.classList.contains(HIDDEN_CLASS) && unit.classList.contains(COLLAPSE_CLASS);
+}
 
 /**
  * Visible text of a node inside a unit; '' when the node is not rendered. Most
@@ -105,7 +137,7 @@ export type VisibilityCache = Map<Element, boolean>;
  */
 function labelText(node: Element, unit: Element, cache?: VisibilityCache): string {
   if (!renderedWithin(node, unit, cache)) return '';
-  return node.firstElementChild ? renderedText(node) : (node.textContent ?? '');
+  return node.firstElementChild ? renderedText(node, collapsedByUs(unit) ? unit : undefined) : (node.textContent ?? '');
 }
 
 /**
@@ -401,12 +433,48 @@ function detectSuggested(unit: Element, adapter: Adapter, adapterLabels: string[
 function labelledByMarker(unit: Element): string | null {
   const doc = unit.ownerDocument;
   const els = safeQueryAll(unit, '[aria-labelledby]');
+  // Form controls label every option with the same few ids (a LinkedIn poll's 62
+  // <option>s share their label ids), so each distinct reference list is read once.
+  const checked = new Set<string>();
   for (let i = 0; i < els.length && i < MAX_LABELLEDBY; i++) {
-    const ids = (els[i]!.getAttribute('aria-labelledby') ?? '').split(/\s+/).filter(Boolean);
-    const name = ids.map((id) => doc.getElementById(id)?.textContent ?? '').join(' ');
-    if (name && name.length <= 40 && isMarkerText(name)) return normaliseText(name);
+    const ref = els[i]!.getAttribute('aria-labelledby') ?? '';
+    if (checked.has(ref)) continue;
+    checked.add(ref);
+    const ids = ref.split(/\s+/).filter(Boolean);
+    // A name longer than the cap can't be a marker, so stop reading once past it:
+    // sites point aria-labelledby at whole headers and post bodies, and a full
+    // textContent of those was the second-largest cost of a decision on LinkedIn.
+    let name = '';
+    for (const id of ids) {
+      const part = boundedText(doc.getElementById(id), MAX_LABELLEDBY_NAME - name.length);
+      if (part === null) {
+        name = '';
+        break;
+      }
+      name = name ? `${name} ${part}` : part;
+      if (name.length > MAX_LABELLEDBY_NAME) break;
+    }
+    if (name && name.length <= MAX_LABELLEDBY_NAME && isMarkerText(name)) return normaliseText(name);
   }
   return null;
+}
+
+const MAX_LABELLEDBY_NAME = 40;
+
+/** An element's textContent, or null once it runs past `max` characters. */
+function boundedText(el: Element | null, max: number): string | null {
+  if (!el) return '';
+  if (!el.firstElementChild) {
+    const t = el.textContent ?? '';
+    return t.length > max ? null : t;
+  }
+  const walker = el.ownerDocument.createTreeWalker(el, 4 /* NodeFilter.SHOW_TEXT */);
+  let out = '';
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    out += n.nodeValue ?? '';
+    if (out.length > max) return null;
+  }
+  return out;
 }
 /**
  * Sites without an adapter have no label selectors. Look for a short element

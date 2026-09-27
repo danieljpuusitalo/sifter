@@ -4,6 +4,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-27
+
 ### Added
 
 - Facebook: a "Stories bar at the top" suggested rule, hiding the Stories

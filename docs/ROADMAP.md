@@ -83,7 +83,8 @@ any scanner file was touched (none should be).
 
 1. Chrome Web Store developer account: sign in, pay the $5 one-off fee, enable
    2-Step Verification on the Google account.
-2. Tag `v1.0.0`, take the zip from the GitHub Release (Phase 3.3).
+2. Take the zip from the **latest** GitHub Release (Phase 3.3); `v1.1.0` as of
+   2026-09-27. Submit the newest tag, not `v1.0.0`, which lacks every fix since.
 3. Developer Dashboard: **Add new item**, upload the zip.
 4. **Store listing tab:** paste title, summary and description from
    `docs/STORE_LISTING.md`; category Productivity; upload the three screenshots

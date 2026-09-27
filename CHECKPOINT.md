@@ -1,6 +1,6 @@
 # Sifter checkpoint
 
-Updated 2026-09-25, session 7: round two of live use (Facebook Stories band, X Show
+Updated 2026-09-27, session 11 (PR #16 open, see "Session 11"). Earlier, 2026-09-25, session 7: round two of live use (Facebook Stories band, X Show
 revealing nothing, muted-words audit) plus a hardening pass, on
 `fix/round-2-consistency` (PR #11; see "Session 7" below). Session 6 fixed the
 first five complaints (PR #10). **Nothing is released for either round yet**: `main`
@@ -42,6 +42,62 @@ Daniel's. Incident: the ops maintenance runner's disposable worktree (`sifter-pr
 ran `pnpm install` and relinked this repo's `node_modules` to its own store, which then
 vanished; `pnpm install --frozen-lockfile` repaired it. Under one busy-loop process the
 e2e suite still passed 24/24.
+Session 11 (2026-09-27, `perf/scroll-cost`) was a scroll-cost pass against Daniel's
+bar of "a couple of ms". The new harness, `bench/live.ts` (`pnpm bench:live`), traces
+Sifter on the real logged-in feed in native Edge. It attributes Sifter's time through
+the trace's `chrome-extension://` FunctionCall events, because LoAF and the CDP
+Profiler cannot see the isolated world. `--profile` reads the trace's
+`v8.cpu_profiler` samples for per-function self time. Raw traces go to TEMP only:
+they hold private page content.
+
+LinkedIn, 20 s of wheel scroll, before → after:
+
+| | Before | After |
+|---|---|---|
+| Sifter cost | 6.1 ms/s | 4.5 ms/s |
+| Worst task | 11.2 ms | 4.5 ms |
+| Tasks over 4 ms | 11 | 3 |
+| Forced style/layout inside Sifter | 61 ms | 0 |
+
+Fixes:
+
+- The decide-time unmask is gone. It forced a style and layout pass twice per rescan.
+- `checkVisibility` fast path in `renderedWithin`.
+- One-pass `changeSignature`.
+- Bounded aria-labelledby reads.
+- Memoised `isMarkerText`.
+- 4 ms slices.
+- A 1 ms decide-cost prior.
+
+`bench:scroll --cpu 1 --strict` passes 2/2. The worst slice during scroll is
+3.2–4.8 ms. The worst slice at load is 7–8.7 ms, down from 11.6–15.9. Load is what
+remains over the bar, with 150 cards collected in one slice. `SIFTER_NOMINIFY=1
+pnpm build` gives readable names in a profile; never ship that build.
+
+Later in session 11 (same branch, `1bc94c1`):
+
+- **Facebook re-traced live** (2 runs): Sifter costs 1.2 ms/s, with a 2.2 ms worst
+  task, 0 tasks over 4 ms, and no forced style or layout. Facebook's own main thread
+  is busy about 524 ms/s. Daniel calls Facebook "a bit laggy but ok"; the lag is the
+  site's own.
+- **Google "Hidden" rows over nothing** (live report). Google serves `#tads`,
+  `#atvcap` and `#bottomads` empty on most results pages. Each shell is itself a
+  marker, so each got a placeholder that Show revealed nothing under.
+  - Probed read-only in Daniel's Chrome on 4 queries. Every dud row had 0 DOM text,
+    no media and no links. Every genuine row rendered real ads, for example 30 images,
+    or 1.2k characters of visible text. No "present but not rendered" dud was seen.
+  - Fix: the `hasContent` guard in `decide()`, listed under "Do not undo".
+- **Daniel's Chrome now runs this PR's build.** `.output/chrome-mv3` was copied into
+  `~/sifter-v1.0.0`, same folder and same extension ID, and diffs identical.
+  - The 25 Sept build is kept at `~/sifter-v1.0.0.bak-2026-09-25`.
+  - If PR #16 is abandoned, copy the backup back or rebuild from `main`.
+  - Daniel still has to press reload on `chrome://extensions`. Confirming zero dud
+    rows after that reload is open.
+- **Next:**
+  - Merge PR #16 (CI verify, incl. e2e, green on `1bc94c1`).
+  - Load is still the one place over the bar: 7–8.7 ms for the first slice.
+  - X shows few promoted posts; nothing to act on.
+
 Session 5 landed and tagged `v1.0.0` (`050e41f`); session 4 was the agent-driven
 audit; session 3 shipped the seven adapters, popup, options and store docs.
 
@@ -354,6 +410,7 @@ path is still unverified live (no sponsored feed post appeared this session eith
 
 - **`renderedWithin` in `src/extract.ts`:** innerText returns the full text of an element that is itself `display:none`.
 - **`renderedText`, not innerText, for labels:** innerText forces whole-page layout mid-scroll.
+- **`hasContent` guard at the top of `decide()`:** a unit with no text, media or link is never hidden, whatever marks it, and is released if it empties after a hide. Google serves `#tads`/`#atvcap`/`#bottomads` empty on no-ads pages; without the guard each one got a "Hidden" row over nothing (live report, 2026-09-27). It keeps no `seen` record, so an image-only fill is still decided. `tests/unit/empty-shell.test.ts` + the e2e case in `google-late.spec.ts`.
 - **`isAdClickUrl`:** matches `/aclk` only as a whole path segment on google.* hosts.
 - **The Google `unitSelector`:** avoids complex `:not()`, which happy-dom ignores.
 - **Scanner slicing:**
@@ -369,6 +426,10 @@ path is still unverified live (no sponsored feed post appeared this session eith
 - **`doSync` updates the opt-in registration in place** (`updateContentScripts`), and unregisters only when the match list is empty. Unregister-then-register left every opt-in site dark when the register step was refused.
 - **The placeholder is the unit's first child, not a sibling** (session 6): LinkedIn's virtualised feed parks a 0-height slot off-screen with its siblings. Collapse and blur go through `UNIT_CSS` on the unit's children; only `hide` mode writes inline style to the unit.
 - **`content.ts` registers the probe listener before its first `await`:** install-time `executeScript` and `content_scripts` can start in the same tick, and a late listener lets both instances run.
-- **Foreign-hidden check is gated on `hider.isHidden(unit)` first** (session 7): the unmask window lifts classes only; hide mode's inline `display:none` stays, and without the gate a rescan unhides Sifter's own hides.
+- **Foreign-hidden check is gated on `hider.isHidden(unit)` first** (session 7): a rescan reads a hidden unit with Sifter's own hiding in place, and without the gate it would call its own hide foreign and release it.
+- **No unmask in `decide()`** (session 11): a rescan of a collapsed unit reads it with the classes on, and `collapsedByUs` discounts exactly the collapse's `display:none` on the unit's direct children. Lifting the classes cost a style recalc plus a forced layout of the post, twice, 9-10 ms per rescan on live LinkedIn. The placeholder is detached for the reads only when `positionalSelectors(adapter)` (Threads today). `tests/unit/rescan-no-unmask.test.ts`.
+- **`renderedWithin`'s `checkVisibility` fast path trusts only a yes, and only when the unit carries no Sifter class** (session 11). It looks past the unit, so a no falls through to the exact walk. Pass both option spellings: Chrome 116-120 know only `checkOpacity`/`checkVisibilityCSS`.
+- **`changeSignature` must equal hashing `stableText`** (session 11): it is a one-pass rewrite, pinned by `tests/unit/change-signature.test.ts` (5000 seeded random strings plus hand cases).
+- **Slice budget is 4 ms, not 8** (session 11): `HARD_RULE_MS` stays 8 for the over-budget counter. `DECIDE_COST_PRIOR_MS` (1) keeps the first slice after load from running cold code to an overrun.
 - **`decide()` and `apply()` run through `decideSafely`/`applySafely`**: a throw inside one unit must not leave `running` true with no scan scheduled.
 - **`release.yml` matches the CHANGELOG heading with `index()`, not a regex.** `## [x.y.z]` as an awk regex is a character class and never matches; this failed the first `v1.0.0` run after every test had passed.

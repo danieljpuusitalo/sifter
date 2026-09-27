@@ -17,6 +17,7 @@
     "verify": "pnpm typecheck && pnpm test && pnpm eval:mock",
     "postinstall": "wxt prepare",
     "bench:scroll": "wxt build && tsx bench/scroll.ts",
+    "bench:live": "tsx bench/live.ts",
     "icons": "node scripts/render-icons.mjs",
     "store:assets": "wxt build && node scripts/store-assets.mjs",
     "pages": "node scripts/build-pages.mjs",

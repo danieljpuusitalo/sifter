@@ -1,12 +1,12 @@
 import { findGenericUnits, innermost } from '../adapters/generic';
 import type { Adapter } from '../adapters/schema';
-import { detectMarker, mutedWordRendered, unitText } from '../extract';
+import { detectMarker, hasContent, mutedWordRendered, unitText } from '../extract';
 import { changeSignature, fingerprint } from '../fingerprint';
 import type { PageState, ScanPerf, SiteContext } from '../messages';
 import { mutedWordHit, mutedWordPattern, tooBroad } from '../rules/filters';
 import { decideTier0 } from '../rules/tier0';
 import type { BlockCategory, HideCategory, OverrideAction } from '../types';
-import { BLUR_CLASS, COLLAPSE_CLASS, Hider, HIDDEN_CLASS, PLACEHOLDER_ATTR } from './hider';
+import { Hider, PLACEHOLDER_ATTR } from './hider';
 
 // Content-script pipeline: extract -> fingerprint -> tier 0 -> apply
 // (BRIEF.md §5). Tier 1 (model) plugs in at the "unknown" branch in M2.
@@ -15,7 +15,7 @@ import { BLUR_CLASS, COLLAPSE_CLASS, Hider, HIDDEN_CLASS, PLACEHOLDER_ATTR } fro
 //  - looks only at units a mutation touched, never re-walks the whole feed
 //    (the old full rescan grew with the page: 600 cards meant 600 checks per scan);
 //  - does all of its DOM work, the collect step included, in idle callbacks after
-//    a frame is painted, in slices of at most 8 ms, and stops a slice before the
+//    a frame is painted, in slices of about 4 ms (half of rule 7's 8), and stops a slice before the
 //    unit that would overrun it rather than after;
 //  - decides a slice with DOM reads only, then applies its hides in one write pass,
 //    so a hide never forces the next unit's read to lay the page out again;
@@ -26,10 +26,25 @@ import { BLUR_CLASS, COLLAPSE_CLASS, Hider, HIDDEN_CLASS, PLACEHOLDER_ATTR } fro
 const DEBOUNCE_MS = 250; // hard rule 7
 /** The generic extractor re-derives units from the whole page, so it runs less often. */
 const GENERIC_DEBOUNCE_MS = 1000;
-const SLICE_BUDGET_MS = 8; // hard rule 7: main-thread work per batch
+/** Hard rule 7's ceiling on main-thread work per batch; `slicesOverBudget` counts against it. */
+const HARD_RULE_MS = 8;
+/**
+ * What a slice actually aims for: half the ceiling. An idle slice that fits its
+ * idle period costs a frame nothing, but the page's own work can take that period
+ * back mid-slice, and then whatever is left of the slice lands on a frame. Shorter
+ * slices make that overlap small. Measured on live LinkedIn (bench/live.ts), an
+ * 8 ms cap let the worst slice run to 6-7 ms mid-scroll.
+ */
+const SLICE_BUDGET_MS = 4;
 /** An idle callback that fired on its timeout got no idle time: take a small bite. */
-const STARVED_BUDGET_MS = 3;
+const STARVED_BUDGET_MS = 2;
 const IDLE_TIMEOUT_MS = 200;
+/**
+ * The decide-cost estimate before any unit has been measured. Starting at zero let
+ * the first slice after page load (cold code, a page whose styles are all dirty)
+ * decide until it had already overrun; a warm decision costs well under this.
+ */
+const DECIDE_COST_PRIOR_MS = 1;
 /** Past this many dirty nodes, one full collection is cheaper than mapping each. */
 const MAX_DIRTY = 1500;
 /** Distinct units counted for the popup; past this the count stops growing (memory). */
@@ -94,6 +109,7 @@ const EMPTY_PERF: Omit<ScanPerf, 'pending'> = {
   unitsExamined: 0,
   unitsDecided: 0,
   foreignHidden: 0,
+  emptySkipped: 0,
   decideErrors: 0,
   slices: 0,
   totalMs: 0,
@@ -121,7 +137,7 @@ export class Scanner {
   /** Hides a slice decided but ran out of budget to write; applied first thing next slice. */
   private carried: Decision[] = [];
   /** Running cost of one fully decided unit (a moving average), the slice's stopping estimate. */
-  private decideCostMs = 0;
+  private decideCostMs = DECIDE_COST_PRIOR_MS;
   private settleWaiters: (() => void)[] = [];
   /** Elements hidden because a block rule matched them, which may not be feed units at all. */
   private blockHidden = new WeakMap<Element, string>();
@@ -148,9 +164,12 @@ export class Scanner {
   private noUnitsMatched = false;
   private readonly now: () => number;
   private readonly schedule: (fn: () => void, ms: number) => unknown;
+  /** A selector decide() reads inside a unit counts siblings, so the placeholder must be out of the way (see decide). */
+  private readonly positional: boolean;
 
   constructor(private deps: ScannerDeps) {
     this.ctx = deps.context;
+    this.positional = positionalSelectors(deps.adapter);
     this.now = deps.now ?? (() => performance.now());
     this.schedule = deps.schedule ?? ((fn, ms) => setTimeout(fn, ms));
     this.hider = new Hider(deps.doc, deps.context.hideMode, {
@@ -348,7 +367,7 @@ export class Scanner {
   /**
    * Ask for a scan: the next idle slice collects units (the whole page when
    * `full`: start, settings change; otherwise only what mutations touched), then
-   * the slices work through them, each within ~8 ms. Nothing touches the DOM here,
+   * the slices work through them, each within ~4 ms. Nothing touches the DOM here,
    * so the debounce timer task stays empty.
    */
   scanNow(full = true): void {
@@ -584,7 +603,7 @@ export class Scanner {
       if (this.perf.unitsDecided > decidedBefore) {
         const cost = this.now() - t0;
         this.perf.maxDecideMs = Math.max(this.perf.maxDecideMs, cost);
-        this.decideCostMs = this.decideCostMs === 0 ? cost : this.decideCostMs * 0.7 + cost * 0.3;
+        this.decideCostMs = this.decideCostMs * 0.7 + cost * 0.3;
       }
       if (d) decisions.push(d);
     }
@@ -613,8 +632,8 @@ export class Scanner {
       };
     }
     this.perf.maxSliceMs = Math.max(this.perf.maxSliceMs, took);
-    if (took > SLICE_BUDGET_MS * 1.5) this.perf.slicesOverBudget++;
-    if (this.deps.dev && took > SLICE_BUDGET_MS * 1.5) {
+    if (took > HARD_RULE_MS * 1.5) this.perf.slicesOverBudget++;
+    if (this.deps.dev && took > HARD_RULE_MS * 1.5) {
       console.warn(`[sifter] slice took ${took.toFixed(1)} ms for ${i} units${collected ? ' (with collect)' : ''}`);
     }
     if (this.pending.length > 0 || this.carried.length > 0 || this.needCollect) {
@@ -673,6 +692,18 @@ export class Scanner {
     // "Show" sticks to the element for the page session even if its text changes
     // (like counts tick). A recycled node may then miss an ad: rule 6's trade.
 
+    // An empty shell hides nothing, whatever marks it: Google serves #tads and
+    // friends empty on every page without ads, and a "Hidden" row over nothing is
+    // a lie the user can see. No seen record, so the unit is decided afresh when it
+    // fills in, even if its fill is image-only and leaves the text signature alone.
+    if (!hasContent(unit)) {
+      this.seen.delete(unit);
+      this.perf.emptySkipped++;
+      // It emptied after a hide (or a Show): release it, placeholder and all.
+      if (!this.hider.isHidden(unit) && !this.userShown.has(unit)) return null;
+      return { unit, fp: prev?.fp ?? fingerprint(site, structuralKey(unit)), hide: null };
+    }
+
     this.perf.unitsDecided++;
     const { categories } = this.ctx;
     // A module keeps the rule it was collected for; a post never gets matched
@@ -706,18 +737,19 @@ export class Scanner {
       // Its rule or category was switched off, and it isn't a post in its own right.
       return { unit, fp: this.blockHidden.get(unit) as string, hide: null };
     }
-    // Collapse/blur hide children via a shared stylesheet rule, which a rescan of an
-    // already-hidden unit would otherwise see through getComputedStyle: the post's own
-    // marker/text would read as unrendered. Unmask for this read only; nothing paints
-    // in between, so this never flashes the content back.
-    const maskedClasses = [HIDDEN_CLASS, COLLAPSE_CLASS, BLUR_CLASS].filter((c) => unit.classList.contains(c));
-    if (maskedClasses.length) unit.classList.remove(...maskedClasses);
+    // A rescan of a unit Sifter already collapsed reads it with the classes in
+    // place: the style reads discount our own collapse (extract's collapsedByUs)
+    // rather than un-hiding the post for the read, which cost a style recalc and a
+    // forced layout of the whole post, twice.
+    //
     // The placeholder is the unit's first child, so a selector that counts children
     // ("> div:first-child span") would miss the real header on a rescan and release
-    // the unit, only to hide it again on the next pass. Read the unit as the site
-    // built it: lift the placeholder out for the reads and put it straight back.
-    // Both moves are placeholder-only childList records, which onMutations ignores.
-    const placeholder = this.hider.placeholderOf(unit);
+    // the unit, only to hide it again on the next pass. For adapters with such a
+    // selector, read the unit as the site built it: lift the placeholder out for the
+    // reads and put it straight back. Both moves are placeholder-only childList
+    // records, which onMutations ignores. Other adapters skip the move, and the
+    // style invalidation it costs.
+    const placeholder = this.positional ? this.hider.placeholderOf(unit) : null;
     if (placeholder) placeholder.remove();
     let marker: ReturnType<typeof detectMarker>;
     let text: string;
@@ -733,7 +765,7 @@ export class Scanner {
       // marker. checkVisibility is a style pass, not layout (hard rule 7), and only
       // runs when a marker was found. happy-dom may lack it; then treat as visible.
       // A unit Sifter hid itself is never foreign: "hide" mode puts an inline
-      // display:none on the unit that the unmask above does not lift.
+      // display:none on the unit itself, which checkVisibility would call foreign.
       foreignHidden =
         !this.hider.isHidden(unit) &&
         !!marker?.node &&
@@ -745,10 +777,9 @@ export class Scanner {
       const wordHit = mutedWordHit(text, this.muted);
       custom = wordHit && this.muted && mutedWordRendered(unit, this.muted) ? wordHit : null;
     } finally {
-      // A throwing read (decideSafely catches it) must not leave a hidden post
-      // unmasked and its placeholder detached: restore before the error propagates.
+      // A throwing read (decideSafely catches it) must not leave a hidden post's
+      // placeholder detached: restore it before the error propagates.
       if (placeholder) unit.prepend(placeholder);
-      if (maskedClasses.length) unit.classList.add(...maskedClasses);
     }
     if (foreignHidden) {
       this.perf.foreignHidden++;
@@ -850,6 +881,18 @@ function safeMatches(el: Element, selector: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether any selector decide() runs inside a unit depends on sibling position,
+ * which the placeholder (the unit's first child) shifts. Errs towards true: a
+ * `~=` attribute match or a `+` in a word only costs the placeholder move.
+ */
+const POSITIONAL = /:(first|last|only|nth)-|:nth-|[+~]/;
+export function positionalSelectors(adapter: Adapter | null): boolean {
+  if (!adapter) return false;
+  const { adSelectors, labelSelectors, labelIgnoreSelector, textRootSelector, suggested } = adapter;
+  return POSITIONAL.test(JSON.stringify([adSelectors, labelSelectors, labelIgnoreSelector, textRootSelector, suggested]));
 }
 
 /** Mutations that only add or remove our own placeholders must not trigger a rescan. */

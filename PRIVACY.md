@@ -1,6 +1,6 @@
 # Sifter privacy policy
 
-Last updated: 2026-09-24
+Last updated: 2026-09-27
 
 Published at https://danieljpuusitalo.github.io/sifter/privacy/
 
@@ -31,7 +31,7 @@ Uninstalling Sifter deletes it.
 
 | Permission | Why |
 |---|---|
-| Access to linkedin.com, reddit.com, x.com, twitter.com, instagram.com, facebook.com, threads.com, threads.net, and Google Search on google.com plus 18 country domains (google.nl, google.de, google.co.uk, …; the full list is `GOOGLE_DOMAINS` in `src/sites.ts`) | to find and hide sponsored posts on those sites |
+| Access to linkedin.com, reddit.com, x.com, twitter.com, instagram.com, facebook.com, threads.com, threads.net, google.com and 18 Google country domains (google.nl, google.de, google.co.uk, …; the full list is `GOOGLE_DOMAINS` in `src/sites.ts`). Chrome grants this per domain, so it covers every page on them; on Google, Sifter's rules are written for the search results page | to find and hide sponsored posts on those sites |
 | Other sites (optional, only when you ask) | when you choose "Hide ads on this site" in the popup, Chrome asks you to grant that one site |
 | `storage` | to keep your settings on your device |
 | `scripting` | to start Sifter on a site you've just turned on, without a reload |

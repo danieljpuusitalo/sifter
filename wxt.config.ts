@@ -8,6 +8,8 @@ export default defineConfig({
   imports: false,
   vite: () => ({
     plugins: [preact()],
+    // Readable function names in a live trace (bench/live.ts); never for a release.
+    ...(process.env.SIFTER_NOMINIFY ? { build: { minify: false } } : {}),
   }),
   manifest: {
     name: 'Sifter',

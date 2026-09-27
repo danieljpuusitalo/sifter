@@ -86,6 +86,8 @@ export type ScanPerf = {
   unitsDecided: number;
   /** Units whose marker element was already hidden by something other than Sifter (another ad blocker's cosmetic filter): skipped, never hidden, never placeheld. */
   foreignHidden: number;
+  /** Units skipped because they held no text, media or link (an empty ad shell): never hidden, released if they empty after a hide. */
+  emptySkipped: number;
   /** Times `decide` or `apply` threw for a unit: caught, skipped, counted, warned once. */
   decideErrors: number;
   slices: number;

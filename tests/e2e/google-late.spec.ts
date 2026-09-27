@@ -86,6 +86,25 @@ test('carousel filled into an existing empty wrapper is hidden', async ({ page }
   await expect(late(page)).toHaveClass(/sifter-hidden/);
 });
 
+// Google serves #atvcap/#tads/#bottomads empty on pages without ads (seen live
+// 2026-09-27: three "Hidden" rows on a no-ads query, Show revealed nothing).
+test('an empty ad shell gets no placeholder, and is hidden once it fills', async ({ page }) => {
+  await page.evaluate(() => {
+    const wrap = document.createElement('div');
+    wrap.className = 'SLPe5b';
+    wrap.innerHTML = '<div id="atvcap" data-st-cnt="atvcap" data-late="1"><div class="GUyUUb" data-hb="tcu"></div></div>';
+    document.getElementById('cnt')!.prepend(wrap);
+  });
+  await page.waitForTimeout(1200);
+  await expect(late(page)).not.toHaveClass(/sifter-hidden/);
+  await expect(late(page).locator('[data-sifter-placeholder]')).toHaveCount(0);
+  await page.evaluate(() => {
+    document.querySelector('[data-late="1"] .GUyUUb')!.innerHTML =
+      '<div data-pla="1"><a id="plap_e" href="https://www.google.com/aclk?sa=l&amp;ai=e">Filled Boot</a></div>';
+  });
+  await expect(late(page)).toHaveClass(/sifter-hidden/);
+});
+
 // Known gap: the observer watches child lists and text, not attributes, so a
 // marker attribute set on a node that was already in the page is never seen.
 // Not observed live on Google (the carousel arrives whole, attribute included);

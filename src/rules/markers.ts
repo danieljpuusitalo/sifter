@@ -34,8 +34,24 @@ export function labelKey(raw: string): string {
   return raw.replace(/\s+/g, ' ').replace(EDGE_JUNK, '').toLowerCase();
 }
 
+/**
+ * A feed repeats the same short strings on every post ("Like", "Comment", "3rd+"),
+ * and each unit's aria-labels and label lines come through here, so short answers
+ * are remembered. Capped by clearing: a miss only costs the two regexes again.
+ */
+const markerMemo = new Map<string, boolean>();
+const MEMO_MAX_KEY = 64;
+const MEMO_MAX_SIZE = 2048;
+
 export function isMarkerText(raw: string): boolean {
-  return MARKER_SET.has(labelKey(raw));
+  if (raw.length > MEMO_MAX_KEY) return MARKER_SET.has(labelKey(raw));
+  let hit = markerMemo.get(raw);
+  if (hit === undefined) {
+    hit = MARKER_SET.has(labelKey(raw));
+    if (markerMemo.size >= MEMO_MAX_SIZE) markerMemo.clear();
+    markerMemo.set(raw, hit);
+  }
+  return hit;
 }
 
 /** Whether any line of a label is exactly one of `words` (already lower case). */

@@ -34,7 +34,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   11.2 ms to 4.5 ms, and it no longer forces the page to recompute style or
   layout. Scanner slices are 4 ms.
 - README and store listing say which parts of each site are covered: Google
-  Search results, not Google Hotels, Flights or Maps.
+  Search results, not Google Hotels, Flights or Maps. The privacy policy says
+  the Google host permission covers every page on those domains, as Chrome
+  grants it, not only Search.
 - The placeholder for a suggested post now names the switch that hid it
   ("Hidden suggestion · People and pages you don't follow") instead of the
   post's first line. A post can match two rules at once (a connection liked it

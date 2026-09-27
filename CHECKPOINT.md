@@ -1,6 +1,6 @@
 # Sifter checkpoint
 
-Updated 2026-09-25, session 7: round two of live use (Facebook Stories band, X Show
+Updated 2026-09-27, session 11 (PR #16 open, see "Session 11"). Earlier, 2026-09-25, session 7: round two of live use (Facebook Stories band, X Show
 revealing nothing, muted-words audit) plus a hardening pass, on
 `fix/round-2-consistency` (PR #11; see "Session 7" below). Session 6 fixed the
 first five complaints (PR #10). **Nothing is released for either round yet**: `main`
@@ -71,9 +71,32 @@ Fixes:
 
 `bench:scroll --cpu 1 --strict` passes 2/2. The worst slice during scroll is
 3.2–4.8 ms. The worst slice at load is 7–8.7 ms, down from 11.6–15.9. Load is what
-remains over the bar, with 150 cards collected in one slice. Facebook has not been
-re-traced live yet. `SIFTER_NOMINIFY=1 pnpm build` gives readable names in a
-profile; never ship that build.
+remains over the bar, with 150 cards collected in one slice. `SIFTER_NOMINIFY=1
+pnpm build` gives readable names in a profile; never ship that build.
+
+Later in session 11 (same branch, `1bc94c1`):
+
+- **Facebook re-traced live** (2 runs): Sifter costs 1.2 ms/s, with a 2.2 ms worst
+  task, 0 tasks over 4 ms, and no forced style or layout. Facebook's own main thread
+  is busy about 524 ms/s. Daniel calls Facebook "a bit laggy but ok"; the lag is the
+  site's own.
+- **Google "Hidden" rows over nothing** (live report). Google serves `#tads`,
+  `#atvcap` and `#bottomads` empty on most results pages. Each shell is itself a
+  marker, so each got a placeholder that Show revealed nothing under.
+  - Probed read-only in Daniel's Chrome on 4 queries. Every dud row had 0 DOM text,
+    no media and no links. Every genuine row rendered real ads, for example 30 images,
+    or 1.2k characters of visible text. No "present but not rendered" dud was seen.
+  - Fix: the `hasContent` guard in `decide()`, listed under "Do not undo".
+- **Daniel's Chrome now runs this PR's build.** `.output/chrome-mv3` was copied into
+  `~/sifter-v1.0.0`, same folder and same extension ID, and diffs identical.
+  - The 25 Sept build is kept at `~/sifter-v1.0.0.bak-2026-09-25`.
+  - If PR #16 is abandoned, copy the backup back or rebuild from `main`.
+  - Daniel still has to press reload on `chrome://extensions`. Confirming zero dud
+    rows after that reload is open.
+- **Next:**
+  - Merge PR #16 (CI verify, incl. e2e, green on `1bc94c1`).
+  - Load is still the one place over the bar: 7–8.7 ms for the first slice.
+  - X shows few promoted posts; nothing to act on.
 
 Session 5 landed and tagged `v1.0.0` (`050e41f`); session 4 was the agent-driven
 audit; session 3 shipped the seven adapters, popup, options and store docs.

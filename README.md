@@ -31,8 +31,9 @@ Google results, are served by the site itself, in the same response as everythin
 else. There is nothing to block. So they get through.
 
 Sifter works on the page instead. Every one of those units carries a label the site
-has to show ("Sponsored", "Promoted", "Ad"). Sifter finds the label and hides the
-post it belongs to.
+has to show ("Sponsored", "Promoted", "Ad"), or sits in a container the site keeps
+for ads only (Google's "Sponsored results" blocks). Sifter finds the label or the
+container and hides the post it belongs to.
 
 ## How it works
 
@@ -67,11 +68,15 @@ Works in Chrome 116 or newer and in other Chromium browsers such as Edge and Bra
 |---|---|---|---|
 | LinkedIn | yes | yes | sponsored: yes · suggested: yes (English; NL/DE/FR unchecked) |
 | Reddit | yes | – | works in use; markup not inspected against the adapter |
-| Google Search | yes (text ads, shopping units) | – | yes (EN and NL), both shapes of the top "Sponsored products" carousel. Google rotates its markup by experiment, so a new shape is a one-line adapter fix. Maps and promoted places in the local pack: not covered |
+| Google Search | yes, on the results page and the Shopping tab: the "Sponsored results" blocks at the top and bottom, and both shapes of the "Sponsored products" carousel | – | yes (EN and NL). Google rotates its markup by experiment, so a new shape is a one-line adapter fix. **Not covered:** Google Hotels, Flights and Maps (separate apps with their own layout), and promoted places in the local pack |
 | X | yes | "Who to follow" | yes |
 | Instagram | yes | yes | sponsored: yes · suggested: yes (English; NL/DE/FR unchecked) |
 | Facebook **(experimental)** | partial | partial | right-rail ads and the Stories bar: yes · "Follow" suggestions: yes · some "Suggested for you" posts and feed ads still get through (English only) |
 | Threads | yes | – | runs without hiding organic posts; no ad has shown up yet to confirm the ad path |
+
+Each site's rules are written and checked for its main feed, and for Google's
+results page. Other parts of the same site are not checked and may not be covered:
+Google Hotels, for one, has sponsored listings that Sifter does not hide.
 
 "Not yet" means the rules come from known markup and pass the synthetic fixtures,
 but nobody has watched them work on a logged-in feed. Each adapter's `verified`

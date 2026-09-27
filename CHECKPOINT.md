@@ -104,6 +104,11 @@ Later in session 11 (same branch, `1bc94c1`):
     "Sponsored results" hidden, no empty rows.
 - **Next:**
   - Submit `v1.1.0` (not `v1.0.0`) Unlisted: ROADMAP Phase 4, Daniel's.
+  - **Check it on a Mac (Chrome, macOS), Daniel's.** Never run on macOS: CI is
+    Linux, live use is this Windows laptop. Nothing in `src/` is OS-specific, so
+    it should work. Load the release zip unpacked, then check a LinkedIn feed and a
+    Google search: ads hidden, no organic post hidden, scroll smooth. On a pass,
+    add macOS to the README install note.
   - Load is still the one place over the bar: 7–8.7 ms for the first slice.
   - X shows few promoted posts; nothing to act on.
 

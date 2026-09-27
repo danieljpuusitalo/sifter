@@ -1,11 +1,17 @@
 # Sifter checkpoint
 
-Updated 2026-09-27, session 11 (PR #16 open, see "Session 11"). Earlier, 2026-09-25, session 7: round two of live use (Facebook Stories band, X Show
-revealing nothing, muted-words audit) plus a hardening pass, on
-`fix/round-2-consistency` (PR #11; see "Session 7" below). Session 6 fixed the
-first five complaints (PR #10). **Nothing is released for either round yet**: `main`
-carries the fixes, `v1.0.0` is still the only tag, the CHANGELOG has an
-`[Unreleased]` section.
+Updated 2026-09-27, end of session 11: **`v1.1.0` is released** (tag on `3e3ef34`,
+GitHub Release with `sifter-1.1.0-chrome.zip`, 96,318 bytes, release run green).
+It carries every fix from sessions 6 to 11 (PRs #10 to #16). PR #16 merged as
+`8e21cb4`, the release bump as PR #17. `~/sifter-v1.0.0` (Daniel's unpacked Chrome
+copy) holds the 1.1.0 build; he reloaded it and confirmed Google results look right.
+Scope wording, same day: README, store listing and the privacy policy (live on Pages)
+now say Google coverage is the results page and Shopping tab, **not Google Hotels,
+Flights or Maps**. Hotels shows sponsored listings Sifter does not hide; Daniel chose
+to leave Hotels out of scope for now. Earlier, 2026-09-25, session 7: round two of
+live use (Facebook Stories band, X Show revealing nothing, muted-words audit) plus a
+hardening pass (PR #11; see "Session 7" below). Session 6 fixed the first five
+complaints (PR #10).
 Session 8 (same day, PR #12, on main as 31fd4e6) tagged Facebook **Experimental** in the
 popup, the options page, README, CHANGELOG and store listing, after Daniel reported it
 still leaky; one note in LAUNCH_SITES drives every surface, and a test pins the README row.
@@ -91,10 +97,13 @@ Later in session 11 (same branch, `1bc94c1`):
   `~/sifter-v1.0.0`, same folder and same extension ID, and diffs identical.
   - The 25 Sept build is kept at `~/sifter-v1.0.0.bak-2026-09-25`.
   - If PR #16 is abandoned, copy the backup back or rebuild from `main`.
-  - Daniel still has to press reload on `chrome://extensions`. Confirming zero dud
-    rows after that reload is open.
+  - A dud row seen on "hotels amsterdam" before the reload was the OLD build still
+    in memory: an injected empty `#tadsb` got hidden, which the new build cannot do.
+    Copying files into the folder changes nothing until reload is pressed. After
+    the reload Daniel confirmed the results page is right: top and bottom
+    "Sponsored results" hidden, no empty rows.
 - **Next:**
-  - Merge PR #16 (CI verify, incl. e2e, green on `1bc94c1`).
+  - Submit `v1.1.0` (not `v1.0.0`) Unlisted: ROADMAP Phase 4, Daniel's.
   - Load is still the one place over the bar: 7–8.7 ms for the first slice.
   - X shows few promoted posts; nothing to act on.
 

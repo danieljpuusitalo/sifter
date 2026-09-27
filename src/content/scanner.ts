@@ -1,6 +1,6 @@
 import { findGenericUnits, innermost } from '../adapters/generic';
 import type { Adapter } from '../adapters/schema';
-import { detectMarker, mutedWordRendered, unitText } from '../extract';
+import { detectMarker, hasContent, mutedWordRendered, unitText } from '../extract';
 import { changeSignature, fingerprint } from '../fingerprint';
 import type { PageState, ScanPerf, SiteContext } from '../messages';
 import { mutedWordHit, mutedWordPattern, tooBroad } from '../rules/filters';
@@ -109,6 +109,7 @@ const EMPTY_PERF: Omit<ScanPerf, 'pending'> = {
   unitsExamined: 0,
   unitsDecided: 0,
   foreignHidden: 0,
+  emptySkipped: 0,
   decideErrors: 0,
   slices: 0,
   totalMs: 0,
@@ -690,6 +691,18 @@ export class Scanner {
     if (prev && prev.sig === sig) return null;
     // "Show" sticks to the element for the page session even if its text changes
     // (like counts tick). A recycled node may then miss an ad: rule 6's trade.
+
+    // An empty shell hides nothing, whatever marks it: Google serves #tads and
+    // friends empty on every page without ads, and a "Hidden" row over nothing is
+    // a lie the user can see. No seen record, so the unit is decided afresh when it
+    // fills in, even if its fill is image-only and leaves the text signature alone.
+    if (!hasContent(unit)) {
+      this.seen.delete(unit);
+      this.perf.emptySkipped++;
+      // It emptied after a hide (or a Show): release it, placeholder and all.
+      if (!this.hider.isHidden(unit) && !this.userShown.has(unit)) return null;
+      return { unit, fp: prev?.fp ?? fingerprint(site, structuralKey(unit)), hide: null };
+    }
 
     this.perf.unitsDecided++;
     const { categories } = this.ctx;

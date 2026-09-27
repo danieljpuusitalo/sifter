@@ -258,6 +258,27 @@ export function unitText(unit: Element, adapter: Adapter | null): string {
   return normaliseText(parts.join(' ')).slice(0, MAX_UNIT_TEXT);
 }
 
+/** Anything a reader could see or click without text: an ad image or an iframe creative. */
+const CONTENT_ELEMENTS = 'img, picture, video, iframe, canvas, embed, object, a[href]';
+
+/**
+ * Whether the unit holds anything at all. Google ships its ad shells (#tads,
+ * #atvcap, #bottomads) on every results page and fills them only when it serves
+ * ads, and the shell itself is the structural marker, so an empty one would get a
+ * "Hidden" row that "Show" reveals nothing under. DOM reads only: stops at the
+ * first non-blank text node, else one querySelector. Our placeholder keeps its
+ * text in a shadow root and has no light children, so it never counts.
+ */
+export function hasContent(unit: Element): boolean {
+  const walker = unit.ownerDocument.createTreeWalker(unit, 4 /* NodeFilter.SHOW_TEXT */);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const parent = n.parentElement;
+    if (parent && SKIP_TEXT_IN.has(parent.localName.toUpperCase())) continue;
+    if ((n.nodeValue ?? '').trim()) return true;
+  }
+  return unit.querySelector(CONTENT_ELEMENTS) !== null;
+}
+
 /**
  * Whether a muted-word match found in `unitText` is actually rendered. `unitText`
  * walks every text node (including hidden ones) because it also feeds the

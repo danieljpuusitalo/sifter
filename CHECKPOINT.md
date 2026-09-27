@@ -387,6 +387,7 @@ path is still unverified live (no sponsored feed post appeared this session eith
 
 - **`renderedWithin` in `src/extract.ts`:** innerText returns the full text of an element that is itself `display:none`.
 - **`renderedText`, not innerText, for labels:** innerText forces whole-page layout mid-scroll.
+- **`hasContent` guard at the top of `decide()`:** a unit with no text, media or link is never hidden, whatever marks it, and is released if it empties after a hide. Google serves `#tads`/`#atvcap`/`#bottomads` empty on no-ads pages; without the guard each one got a "Hidden" row over nothing (live report, 2026-09-27). It keeps no `seen` record, so an image-only fill is still decided. `tests/unit/empty-shell.test.ts` + the e2e case in `google-late.spec.ts`.
 - **`isAdClickUrl`:** matches `/aclk` only as a whole path segment on google.* hosts.
 - **The Google `unitSelector`:** avoids complex `:not()`, which happy-dom ignores.
 - **Scanner slicing:**

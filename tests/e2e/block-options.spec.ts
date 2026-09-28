@@ -76,6 +76,9 @@ const FIXTURES: Record<string, string> = {
 const fixturePath = (file: string) =>
   /<meta\s+name="sifter-path"\s+content="([^"]+)"/.exec(readFileSync(join('fixtures', 'public', file), 'utf8'))?.[1] ?? '/';
 
+/** Fixtures that carry `data-gold="suggested"` units; the others prove only the sponsored path. */
+const SITES_WITH_SUGGESTED = new Set(['www.linkedin.com', 'www.facebook.com', 'www.instagram.com', 'x.com']);
+
 /** The adapter's own named suggested rules, per site (empty where the adapter has none). */
 const RULE_IDS: Record<string, string[]> = {
   'www.linkedin.com': ['activity', 'follow', 'suggested'],
@@ -165,6 +168,13 @@ test.describe('Block on this site: every switch, every site', () => {
       const baselineHiddenNow = state.hiddenNow;
       const baselineSnapshot = await snapshot(page);
       expect(baselineSnapshot.some((u) => u.gold === 'sponsored' && u.hidden), 'a sponsored unit is hidden at baseline').toBe(true);
+      // The suggested half below only says something where the fixture's suggested
+      // gold is actually hidden first. Without this, X loaded at the wrong path hid
+      // nothing suggested and every suggested assertion still passed (session 12).
+      const suggestedGold = baselineSnapshot.filter((u) => u.gold === 'suggested');
+      expect(suggestedGold.length > 0, 'fixture carries suggested gold').toBe(SITES_WITH_SUGGESTED.has(host));
+      expect(suggestedGold.filter((u) => !u.hidden), 'every suggested unit is hidden at baseline').toEqual([]);
+      expect(baselineSnapshot.filter((u) => u.gold === 'none' && u.hidden), 'no organic unit is hidden at baseline').toEqual([]);
 
       // 2. Sponsored off, then on.
       await bg({ type: 'sifter:setSiteCategory', hostname: host, category: 'sponsored', value: false });

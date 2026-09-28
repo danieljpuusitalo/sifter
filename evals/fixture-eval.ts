@@ -37,11 +37,20 @@ export type FixtureResult = {
   unlabelledHidden: string[];
 };
 
+/**
+ * The URL path the fixture was captured at, from `<meta name="sifter-path">`; `/` when
+ * absent. Suggested hiding is scoped by path (`suggestedPaths`), so a fixture of X's
+ * home timeline has to be judged at `/home`, not `/`.
+ */
+export function fixturePath(html: string): string {
+  return /<meta\s+name="sifter-path"\s+content="([^"]+)"/.exec(html)?.[1] ?? '/';
+}
+
 export function evalFixture(file: string, html: string, categories: CategoryToggles = DEFAULT_CATEGORIES): FixtureResult {
   const hostMatch = /<meta\s+name="sifter-host"\s+content="([^"]+)"/.exec(html);
   if (!hostMatch?.[1]) throw new Error(`${file}: missing <meta name="sifter-host">`);
   const host = hostMatch[1];
-  const url = `https://${host}/`;
+  const url = `https://${host}${fixturePath(html)}`;
 
   const window = new Window({
     url,

@@ -165,7 +165,7 @@ export class Scanner {
   private offRules: ReadonlySet<string> = new Set();
   /** The context's categories, with "suggested" off on pages outside the adapter's feed paths. */
   private categories: SiteContext['categories'];
-  /** Compiled `suggested.paths`; null means suggested applies on every page. */
+  /** Compiled `suggestedPaths`; null means suggested applies on every page. */
   private readonly feedPaths: RegExp[] | null;
   private readonly path: () => string;
   /** The path the categories were compiled for: a change is an in-app navigation. */
@@ -182,7 +182,7 @@ export class Scanner {
   constructor(private deps: ScannerDeps) {
     this.ctx = deps.context;
     this.categories = deps.context.categories;
-    this.feedPaths = compilePaths(deps.adapter?.suggested?.paths);
+    this.feedPaths = compilePaths(deps.adapter?.suggestedPaths);
     this.path = deps.path ?? (() => pathOf(deps.baseUrl));
     this.positional = positionalSelectors(deps.adapter);
     this.now = deps.now ?? (() => performance.now());
@@ -917,13 +917,11 @@ function safeMatches(el: Element, selector: string): boolean {
 const POSITIONAL = /:(first|last|only|nth)-|:nth-|[+~]/;
 export function positionalSelectors(adapter: Adapter | null): boolean {
   if (!adapter) return false;
-  const { adSelectors, labelSelectors, labelIgnoreSelector, textRootSelector } = adapter;
-  // `paths` are URL regexes, not selectors: a `+` in one says nothing about the DOM.
-  const { paths: _paths, ...suggested } = adapter.suggested ?? {};
+  const { adSelectors, labelSelectors, labelIgnoreSelector, textRootSelector, suggested } = adapter;
   return POSITIONAL.test(JSON.stringify([adSelectors, labelSelectors, labelIgnoreSelector, textRootSelector, suggested]));
 }
 
-/** An adapter's `suggested.paths`, compiled; an invalid pattern is dropped (the adapters test rejects it). */
+/** An adapter's `suggestedPaths`, compiled; an invalid pattern is dropped (the adapters test rejects it). */
 function compilePaths(paths: string[] | undefined): RegExp[] | null {
   if (!paths) return null;
   const out: RegExp[] = [];

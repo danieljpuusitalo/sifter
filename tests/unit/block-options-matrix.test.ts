@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { fixturePath } from '../../evals/fixture-eval';
 import type { Adapter } from '../../src/adapters/schema';
 import { adapterFor } from '../../src/adapters/index';
 import { HIDDEN_CLASS, PLACEHOLDER_ATTR } from '../../src/content/hider';
@@ -57,7 +58,7 @@ function scan(fixture: string, host: string, over: Partial<SiteContext> = {}): S
   const s = new Scanner({
     doc: document,
     hostname: host,
-    baseUrl: `https://${host}/`,
+    baseUrl: `https://${host}${fixturePath(readFileSync(`fixtures/public/${fixture}`, 'utf8'))}`,
     adapter: adapterFor(host),
     context: mkContext(host, over),
     persistOverride: () => undefined,

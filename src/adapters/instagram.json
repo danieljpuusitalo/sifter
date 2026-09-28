@@ -5,6 +5,9 @@
   ],
   "feedRootSelector": "main",
   "unitSelector": "article",
+  "suggestedPaths": [
+    "^/$"
+  ],
   "labelSelectors": [],
   "labelIgnoreSelector": "a",
   "adSelectors": [
@@ -47,5 +50,5 @@
       "rule": "people"
     }
   ],
-  "verified": "2026-09-24 live DOM, home feed: every sponsored article (6/6) carried a link to facebook.com/ads/ig_redirect; no organic article did. The 'Sponsored' label is not a stable element, and usernames are links, so author links are ignored as labels. Suggested (live, English UI): articles no longer have a <header>; a post or reel from an account you don't follow shows 'Suggested for you' as a span and a div[role=button] reading exactly 'Follow' near the top. The people carousel ('Suggested for you', See all -> /explore/people/, Follow buttons) sits outside any article; the smallest div holding that link and a button is the module. Dutch, German and French strings are baseline guesses, UNVERIFIED live."
+  "verified": "2026-09-24 live DOM, home feed: every sponsored article (6/6) carried a link to facebook.com/ads/ig_redirect; no organic article did. The 'Sponsored' label is not a stable element, and usernames are links, so author links are ignored as labels. Suggested (live, English UI): articles no longer have a <header>; a post or reel from an account you don't follow shows 'Suggested for you' as a span and a div[role=button] reading exactly 'Follow' near the top. The people carousel ('Suggested for you', See all -> /explore/people/, Follow buttons) sits outside any article; the smallest div holding that link and a button is the module. Dutch, German and French strings are baseline guesses, UNVERIFIED live. 2026-09-28: suggested applies on the home feed (/) only (suggestedPaths); profiles, /p/ posts, Explore and Reels are left alone. Sponsored detection still runs everywhere. Paths UNVERIFIED live."
 }

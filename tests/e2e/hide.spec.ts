@@ -29,6 +29,10 @@ const FIXTURES: Record<string, string> = {
   'www.threads.com': 'threads-feed.html',
 };
 
+/** The path the fixture was captured at (`<meta name="sifter-path">`, default `/`): suggested hiding is scoped by path. */
+const fixturePath = (file: string) =>
+  /<meta\s+name="sifter-path"\s+content="([^"]+)"/.exec(readFileSync(join('fixtures', 'public', file), 'utf8'))?.[1] ?? '/';
+
 const test = base.extend<{ context: BrowserContext; page: Page }>({
   // eslint-disable-next-line no-empty-pattern
   context: async ({}, use) => {
@@ -69,7 +73,7 @@ const expectShown = (page: Page, key: string) => expect(card(page, key)).not.toH
 
 test('hides sponsored units and leaves organic ones on every launch site', async ({ page }) => {
   for (const [host, file] of Object.entries(FIXTURES)) {
-    await page.goto(`https://${host}/`);
+    await page.goto(`https://${host}${fixturePath(file)}`);
     await expect(page.locator('.sifter-hidden').first(), file).toBeAttached();
     // Decisions land in idle slices, so the page converges rather than flipping at once.
     const wrong = () =>

@@ -1,6 +1,14 @@
 # Sifter checkpoint
 
-**Session 12 (2026-09-28, `fix/linkedin-suggested-feed-only`):** Daniel reported that
+**Next (paused 2026-09-28, pick up here):** (1) check the feed-only scope live: build,
+copy into `~/sifter-v1.0.0`, Daniel reloads, then open a LinkedIn company page and a
+single post, a Facebook page and an Instagram profile with suggested on; nothing
+suggested should hide there, and the feeds should still hide. (2) Close the e2e gap:
+`block-options.spec.ts` should assert suggested gold is hidden at baseline on the
+sites that carry it, as the unit matrix does. (3) Release as 1.1.1 once (1) holds;
+`[Unreleased]` in CHANGELOG has the entry.
+
+**Session 12 (2026-09-28, PR #18, merged as `57223cc`):** Daniel reported that
 suggested rules hid posts outside the feed: a single post by a page he opened, and he
 wants company pages he doesn't follow left alone, then asked for the same on every
 site. Cause: no page scope at all; the Follow/Connect rule fired on any path. Fix: new

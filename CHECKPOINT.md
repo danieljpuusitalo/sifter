@@ -1,5 +1,20 @@
 # Sifter checkpoint
 
+**Session 12 (2026-09-28, `fix/linkedin-suggested-feed-only`):** Daniel reported that
+suggested rules hid posts outside the feed: a single post by a page he opened, and he
+wants company pages he doesn't follow left alone. Cause: no page scope at all; the
+Follow/Connect rule fired on any LinkedIn path. Fix: new adapter field
+`suggested.paths` (regexes over `location.pathname`, absent = every page); LinkedIn
+sets `^/$` and `^/feed/?$`, so `/feed/update/...` (a single post), `/company/...`,
+`/in/...` and search are out. Suggested blocks are gated too; sponsored is not. The
+scanner re-checks the path on each mutation batch (a string compare) and re-decides
+the page on change, since LinkedIn navigates without reloading. Receipts: `pnpm
+verify` 273 passed / 5 skipped, eval tp=61 fp=0 fn=0 PASS; `pnpm test:e2e` 25 passed,
+1 skipped; `bench:scroll --site linkedin --cpu 1 --strict` OK. New
+`tests/unit/suggested-paths.test.ts` (10), negative-controlled: without `paths` in the
+adapter, 7 of them fail. **Not checked live on a real company page.** Facebook and
+Instagram have the same exposure (no `paths`); left unscoped pending Daniel's call.
+
 Updated 2026-09-27, end of session 11: **`v1.1.0` is released** (tag on `3e3ef34`,
 GitHub Release with `sifter-1.1.0-chrome.zip`, 96,318 bytes, release run green).
 It carries every fix from sessions 6 to 11 (PRs #10 to #16). PR #16 merged as

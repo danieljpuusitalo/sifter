@@ -4,6 +4,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- LinkedIn: "suggested" rules (people and pages you don't follow, posts your
+  network liked, posts marked Suggested) now apply on the home feed only. A
+  company page you don't follow, a single post you opened, a profile's activity
+  and search results are left alone. Sponsored posts are still hidden on every
+  page. In-app navigation re-decides the page, so going from the feed to a
+  company page brings its posts back without a reload. Adapters declare this
+  with `suggested.paths`.
+
 ## [1.1.0] - 2026-09-27
 
 ### Added

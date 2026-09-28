@@ -59,6 +59,11 @@ export type ScannerDeps = {
   adapter: Adapter | null;
   context: SiteContext;
   persistOverride: (fp: string, action: OverrideAction | null) => void;
+  /**
+   * The page's current URL path. Single-page sites navigate without reloading, so
+   * the content script passes a live reader; the default is `baseUrl`'s path.
+   */
+  path?: () => string;
   now?: () => number;
   /** Dev builds log batches that exceed the time budget. */
   dev?: boolean;
@@ -158,6 +163,13 @@ export class Scanner {
   private plainSelector: string | null = null;
   private muted: RegExp | null = null;
   private offRules: ReadonlySet<string> = new Set();
+  /** The context's categories, with "suggested" off on pages outside the adapter's feed paths. */
+  private categories: SiteContext['categories'];
+  /** Compiled `suggested.paths`; null means suggested applies on every page. */
+  private readonly feedPaths: RegExp[] | null;
+  private readonly path: () => string;
+  /** The path the categories were compiled for: a change is an in-app navigation. */
+  private lastPath = '';
   /** One throwing unit must not spam the console: warn once per page. */
   private decideErrorWarned = false;
   /** A full scan found the feed root but no units in it: this site's adapter may be stale. */
@@ -169,6 +181,9 @@ export class Scanner {
 
   constructor(private deps: ScannerDeps) {
     this.ctx = deps.context;
+    this.categories = deps.context.categories;
+    this.feedPaths = compilePaths(deps.adapter?.suggested?.paths);
+    this.path = deps.path ?? (() => pathOf(deps.baseUrl));
     this.positional = positionalSelectors(deps.adapter);
     this.now = deps.now ?? (() => performance.now());
     this.schedule = deps.schedule ?? ((fn, ms) => setTimeout(fn, ms));
@@ -182,7 +197,11 @@ export class Scanner {
 
   /** Derive what the context implies once, not per unit. */
   private compileContext(): void {
-    const { categories, customSelectors, mutedWords } = this.ctx;
+    const { customSelectors, mutedWords } = this.ctx;
+    this.lastPath = this.path();
+    const onFeed = !this.feedPaths || this.feedPaths.some((re) => re.test(this.lastPath));
+    const categories = { ...this.ctx.categories, suggested: this.ctx.categories.suggested && onFeed };
+    this.categories = categories;
     // Older service workers answer without offRules while the extension updates.
     this.offRules = new Set(this.ctx.offRules ?? []);
     const blocks: Block[] = [];
@@ -331,6 +350,13 @@ export class Scanner {
 
   /** Runs on every mutation batch, often mid-scroll: bookkeeping only, no DOM reads. */
   private onMutations(records: MutationRecord[]): void {
+    // An in-app navigation (LinkedIn feed -> company page) swaps the page without a
+    // reload, and always mutates the DOM: re-decide everything under the new path.
+    // Reading the location is a string, not a DOM read, so this costs nothing per batch.
+    if (this.feedPaths && this.path() !== this.lastPath) {
+      this.applyContext(this.ctx);
+      return;
+    }
     let relevant = false;
     for (const r of records) {
       if (isOwnMutation(r)) continue;
@@ -705,7 +731,7 @@ export class Scanner {
     }
 
     this.perf.unitsDecided++;
-    const { categories } = this.ctx;
+    const { categories } = this;
     // A module keeps the rule it was collected for; a post never gets matched
     // against block rules. Only an element hidden as a module earlier, and not
     // collected as one now, pays for the full check (its rule may have gone off).
@@ -891,8 +917,32 @@ function safeMatches(el: Element, selector: string): boolean {
 const POSITIONAL = /:(first|last|only|nth)-|:nth-|[+~]/;
 export function positionalSelectors(adapter: Adapter | null): boolean {
   if (!adapter) return false;
-  const { adSelectors, labelSelectors, labelIgnoreSelector, textRootSelector, suggested } = adapter;
+  const { adSelectors, labelSelectors, labelIgnoreSelector, textRootSelector } = adapter;
+  // `paths` are URL regexes, not selectors: a `+` in one says nothing about the DOM.
+  const { paths: _paths, ...suggested } = adapter.suggested ?? {};
   return POSITIONAL.test(JSON.stringify([adSelectors, labelSelectors, labelIgnoreSelector, textRootSelector, suggested]));
+}
+
+/** An adapter's `suggested.paths`, compiled; an invalid pattern is dropped (the adapters test rejects it). */
+function compilePaths(paths: string[] | undefined): RegExp[] | null {
+  if (!paths) return null;
+  const out: RegExp[] = [];
+  for (const p of paths) {
+    try {
+      out.push(new RegExp(p));
+    } catch {
+      /* invalid pattern: skip it */
+    }
+  }
+  return out;
+}
+
+function pathOf(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return '/';
+  }
 }
 
 /** Mutations that only add or remove our own placeholders must not trigger a rescan. */

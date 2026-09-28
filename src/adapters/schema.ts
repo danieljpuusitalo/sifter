@@ -67,6 +67,14 @@ export const AdapterSchema = z.object({
        * the same label nodes. The fields above stay on whenever "suggested" is.
        */
       rules: z.array(SuggestRuleSchema).default([]),
+      /**
+       * Pages where "suggested" applies, as regular expressions over the URL path.
+       * Absent means every page. A Follow button is a recommendation signal only in
+       * the feed the site assembles; on a company page or a single post the user
+       * opened on purpose, it just means they don't follow the author. Covers the
+       * suggested blocks too.
+       */
+      paths: z.array(z.string().min(1)).optional(),
     })
     .strict()
     .optional(),

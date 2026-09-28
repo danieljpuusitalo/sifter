@@ -23,7 +23,15 @@ after the change is inconclusive on ms/s**: forced style recalcs inside Sifter f
 low memory), so ms/s read 6.4 (off) and 11.5 (on, 99 decisions) with one 27.6 ms decide
 that had no forced style or layout attributed. Facebook flat: 2.8 ms/s, max 3.7. The
 per-function profile A/B (`SIFTER_NOMINIFY=1` build, `--profile`, old vs new, back to
-back) is the measurement that would settle it and did not run. Receipts: `pnpm verify`
+back, two runs each, suggested on) settles what the change does and does not do: the
+label reads (`labelText` inclusive) fell from 59-94 ms per 20 s run to 38-45 ms, and
+`checkVisibility` self time (the forced-recalc site) from 13-43 ms to 6-16 ms; the new
+prefilter (`piecesMayHit` + `spansPieces`) costs 15-19 ms of that back. Sifter's total
+sampled CPU per run is within noise of before (185-226 ms new vs 194-196 old; `--profile`
+runs do not record the scanner counters, so this is not normalised per decision). Net:
+fewer forced style recalcs, roughly the same CPU. A cheaper prefilter (walk `childNodes`
+instead of a `TreeWalker` per label node) would recover most of the 15-19 ms if it
+matters. Receipts: `pnpm verify`
 309 passed / 5 skipped, eval tp=61 fp=0 fn=0; `pnpm test:e2e` 25 passed / 1 skipped;
 `bench:scroll --cpu 1 --strict` OK on facebook and on linkedin (one run had a 17.3 ms
 slice, 16 units in one slice, not repeated: 4.6 / 4.3 ms next run, in line with

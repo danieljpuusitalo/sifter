@@ -1,12 +1,18 @@
 # Sifter checkpoint
 
-**Next (paused 2026-09-28, pick up here):** (1) check the feed-only scope live: build,
-copy into `~/sifter-v1.0.0`, Daniel reloads, then open a LinkedIn company page and a
-single post, a Facebook page and an Instagram profile with suggested on; nothing
-suggested should hide there, and the feeds should still hide. (2) Close the e2e gap:
-`block-options.spec.ts` should assert suggested gold is hidden at baseline on the
-sites that carry it, as the unit matrix does. (3) Release as 1.1.1 once (1) holds;
-`[Unreleased]` in CHANGELOG has the entry.
+**Session 13 (2026-09-28): `v1.1.1` released** (feed-only suggested, PR #18). Live
+check in native Edge (`.dev-profile-edge`, fresh build, suggested on, counts by
+placeholder category): feeds hid suggested + sponsored (LinkedIn 1+1, Facebook 8+1,
+Instagram 2+2, X 1+2); LinkedIn company and profile-activity pages, a Facebook page,
+an Instagram profile and Explore, and an X profile all hid 0. In-app LinkedIn
+navigation feed -> company page: the feed stays mounted but unrendered, so its hides
+stay on invisible nodes (`checkVisibility()` 0 of 3) and nothing on the company page is
+hidden; back to the feed, the same hides show. Single-post URLs were not visited live.
+The e2e gap is closed (PR #19): the options matrix requires suggested gold hidden at
+baseline, negative-controlled. `~/sifter-v1.0.0` holds the new build (backup of the
+1.1.0 copy in `%TEMP%/sifter-v1.1.0-backup`); Daniel has to press reload on
+chrome://extensions for it to take effect. Next: nothing queued; the Chrome Web Store
+submission (ROADMAP Phase 3.3) is still Daniel's.
 
 **Session 12 (2026-09-28, PR #18, merged as `57223cc`):** Daniel reported that
 suggested rules hid posts outside the feed: a single post by a page he opened, and he

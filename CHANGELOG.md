@@ -4,6 +4,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-09-28
+
 ### Fixed
 
 - "Suggested" hiding is now feed-only on every site that has it. Pages you

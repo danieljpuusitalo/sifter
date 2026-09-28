@@ -4,6 +4,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Fewer style reads mid-scroll. Sifter now checks a label node's raw text before
+  reading its computed style, and reads style only for a node whose text could
+  carry a marker or a suggested-post phrase at all (a leaf is checked exactly;
+  a node with children is checked piecewise across its text nodes, so a decoy
+  spliced inside "Promoted" still gets the full read). On a live LinkedIn feed
+  most label nodes are names, timestamps and empty buttons, and their style
+  reads were the largest share of a decision; the first such read after the
+  page mutates also forced a style recalc of everything the page had dirtied.
+  Precision and recall are unchanged: the fixture eval and the decoy tests
+  still pass.
+- README and store listing now say where suggested hiding applies: the home feed
+  only, while sponsored hiding runs on every page of a covered site.
+
+### Fixed
+
+- `pnpm bench:live --suggested` was sticky: it turned the suggested category on
+  in the dev profile's storage and never turned it back off, so a later run
+  without the flag still hid suggested posts and measured the wrong thing. The
+  bench now sets the category explicitly on every on-run. It also reports the
+  scanner's own counters (units decided, slices, worst slice) next to the
+  trace numbers.
+
 ## [1.1.1] - 2026-09-28
 
 ### Fixed

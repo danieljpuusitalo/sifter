@@ -1,6 +1,6 @@
 import { COLLAPSE_CLASS, HIDDEN_CLASS, PLACEHOLDER_ATTR } from './content/hider';
 import { normaliseText } from './fingerprint';
-import { hasLineEnding, hasMarkerLine, hasWordLine, isAdClickUrl, isMarkerText } from './rules/markers';
+import { MARKER_WORDS, hasLineEnding, hasMarkerLine, hasWordLine, isAdClickUrl, isMarkerText } from './rules/markers';
 import type { Adapter } from './adapters/schema';
 import type { UnitPayload } from './types';
 
@@ -138,6 +138,113 @@ export function collapsedByUs(unit: Element): boolean {
 function labelText(node: Element, unit: Element, cache?: VisibilityCache): string {
   if (!renderedWithin(node, unit, cache)) return '';
   return node.firstElementChild ? renderedText(node, collapsedByUs(unit) ? unit : undefined) : (node.textContent ?? '');
+}
+
+/**
+ * What a label read is looking for, so a node that cannot carry it skips the
+ * style reads. `plain` is every wanted word lower-cased with its whitespace
+ * removed, for the piecewise check on nodes with children.
+ */
+type Wanted = { markers: boolean; words: readonly ReadonlySet<string>[]; endings: readonly (readonly string[])[]; plain: readonly string[] };
+
+function wanted(markers: boolean, words: readonly ReadonlySet<string>[], endings: readonly (readonly string[])[]): Wanted {
+  const plain: string[] = [];
+  if (markers) for (const m of MARKER_WORDS) plain.push(m);
+  for (const s of words) for (const word of s) plain.push(word);
+  for (const e of endings) for (const x of e) plain.push(x);
+  return { markers, words, endings, plain: plain.map((p) => p.replace(/\s+/g, '')) };
+}
+
+/**
+ * A label node's text and whether a style read confirmed it is shown. Most label
+ * nodes on a feed are names, timestamps and empty buttons: on a live LinkedIn feed
+ * their computed-style reads were the largest share of a decision, and the first
+ * such read after the page mutates forces a style recalc of everything the page
+ * has dirtied (8-12 ms mid-scroll, bench/live.ts). So the raw text is checked
+ * first, and the style reads run only for a node that could actually hit:
+ *
+ * - A leaf renders exactly its text or nothing, so the hit checks themselves run
+ *   on the raw text. When they miss, visibility cannot change the answer.
+ * - A node with children renders some of its text nodes, whole, in order (hidden
+ *   descendants drop theirs), with line breaks at block boxes. So a rendered
+ *   marker word can be read across the node's text pieces, skipping whole pieces:
+ *   `spansPieces` checks exactly that, whitespace aside, and nothing rendered can
+ *   match a word it rejects. A decoy spliced inside the word ("Pro<hidden>x</hidden>moted")
+ *   still reads as a candidate and pays the full read, as before.
+ *
+ * An unconfirmed label keeps its raw text, which by construction hits nothing.
+ * Only `firstShown` needs to know whether it is actually shown, and resolves it then.
+ */
+type Label = { text: string; node: Element; confirmed: boolean };
+
+function readLabel(node: Element, unit: Element, cache: VisibilityCache, w: Wanted): Label {
+  const raw = node.textContent ?? '';
+  const candidate = node.firstElementChild ? piecesMayHit(node, w) : leafMayHit(raw, w);
+  if (!candidate) return { text: raw, node, confirmed: false };
+  return { text: labelText(node, unit, cache), node, confirmed: true };
+}
+
+function leafMayHit(raw: string, w: Wanted): boolean {
+  if (w.markers && hasMarkerLine(raw)) return true;
+  if (raw.length > MAX_SUGGESTED_LABEL) return false;
+  return w.words.some((s) => hasWordLine(raw, s)) || w.endings.some((e) => hasLineEnding(raw, e));
+}
+
+/** Past this many text nodes the node is post text; read it fully rather than reason about it. */
+const MAX_PIECES = 64;
+
+function piecesMayHit(node: Element, w: Wanted): boolean {
+  const walker = node.ownerDocument.createTreeWalker(node, 4 /* NodeFilter.SHOW_TEXT */);
+  const pieces: string[] = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const t = (n.nodeValue ?? '').replace(/\s+/g, '').toLowerCase();
+    if (!t) continue;
+    if (pieces.length >= MAX_PIECES) return true;
+    pieces.push(t);
+  }
+  return w.plain.some((word) => spansPieces(word, pieces));
+}
+
+/**
+ * Whether `word` can be read across `pieces` in order, using each piece whole
+ * except the first (from its end) and the last (from its start), with any pieces
+ * skipped. That is every string that hiding whole text nodes and joining the rest
+ * can produce, so it is a superset of any rendered match. Both sides are lower
+ * case with whitespace removed.
+ */
+function spansPieces(word: string, pieces: string[]): boolean {
+  // Matched prefix lengths reachable so far; skipping a piece keeps each of them.
+  let states = new Set<number>();
+  for (const p of pieces) {
+    if (p.includes(word)) return true;
+    const next = new Set<number>(states);
+    for (let k = Math.min(p.length, word.length - 1); k >= 1; k--) {
+      if (p.endsWith(word.slice(0, k))) next.add(k);
+    }
+    for (const j of states) {
+      const rest = word.slice(j);
+      if (p.startsWith(rest)) return true;
+      if (rest.startsWith(p)) next.add(j + p.length);
+    }
+    states = next;
+  }
+  return false;
+}
+
+/**
+ * The first label that is actually shown and not blank, read exactly (unconfirmed
+ * labels pay their style reads here, in order, until one is shown). Only needed
+ * once a later label carries a "<Name> likes this" line, so most units never pay.
+ */
+function firstShown(labels: Label[], unit: Element, cache: VisibilityCache): string | undefined {
+  for (const l of labels) {
+    if (!l.confirmed) {
+      l.text = labelText(l.node, unit, cache);
+      l.confirmed = true;
+    }
+    if (l.text.trim()) return l.text;
+  }
+  return undefined;
 }
 
 /**
@@ -383,11 +490,15 @@ export function detectMarker(unit: Element, adapter: Adapter | null, base: strin
   const labelledBy = labelledByMarker(unit);
   if (labelledBy) return sponsored('aria', labelledBy);
   const cache: VisibilityCache = new Map();
-  let labels: string[] | null = null;
+  let labels: Label[] | null = null;
   if (adapter) {
-    labels = labelNodes(unit, adapter).map((node) => labelText(node, unit, cache));
-    for (const t of labels) {
-      if (hasMarkerLine(t)) return sponsored('label', normaliseText(t).slice(0, MAX_LABEL_LEN));
+    // These labels double as the suggested labels when the adapter's suggested block
+    // has no selectors of its own, so the read looks for those words too.
+    const reuse = opts.suggested && adapter.suggested && !adapter.suggested.labelSelectors ? textualMatchers(adapter.suggested, opts.offRules ?? NO_RULES) : [];
+    const w = wanted(true, reuse.map(({ m }) => wordSet(m)), reuse.map(({ m }) => endingList(m)));
+    labels = labelNodes(unit, adapter).map((node) => readLabel(node, unit, cache, w));
+    for (const { text } of labels) {
+      if (hasMarkerLine(text)) return sponsored('label', normaliseText(text).slice(0, MAX_LABEL_LEN));
     }
   } else {
     const hit = genericLabelHit(unit, cache);
@@ -413,11 +524,22 @@ function endingList(block: { lineEndings?: string[] }): readonly string[] {
 
 type Matcher = { selectors: string[]; words: string[]; lineEndings?: string[] };
 
-function detectSuggested(unit: Element, adapter: Adapter, adapterLabels: string[], off: ReadonlySet<string>, cache?: VisibilityCache): MarkerHit | null {
-  const block = adapter.suggested!;
-  // The base fields, then each named rule the user hasn't switched off here.
+type SuggestedBlock = NonNullable<Adapter['suggested']>;
+
+/** The base fields, then each named rule the user hasn't switched off here. */
+function suggestedMatchers(block: SuggestedBlock, off: ReadonlySet<string>): { m: Matcher; rule?: string }[] {
   const matchers: { m: Matcher; rule?: string }[] = [{ m: block }];
   for (const r of block.rules) if (!off.has(r.id)) matchers.push({ m: r, rule: r.id });
+  return matchers;
+}
+
+function textualMatchers(block: SuggestedBlock, off: ReadonlySet<string>): { m: Matcher; rule?: string }[] {
+  return suggestedMatchers(block, off).filter(({ m }) => wordSet(m).size > 0 || endingList(m).length > 0);
+}
+
+function detectSuggested(unit: Element, adapter: Adapter, adapterLabels: Label[], off: ReadonlySet<string>, cache: VisibilityCache): MarkerHit | null {
+  const block = adapter.suggested!;
+  const matchers = suggestedMatchers(block, off);
   for (const { m, rule } of matchers) {
     for (const sel of m.selectors) {
       const node = safeQuery(unit, sel);
@@ -426,20 +548,29 @@ function detectSuggested(unit: Element, adapter: Adapter, adapterLabels: string[
   }
   const textual = matchers.filter(({ m }) => wordSet(m).size > 0 || endingList(m).length > 0);
   if (textual.length === 0) return null;
-  const texts = block.labelSelectors
-    ? labelNodes(unit, adapter, block.labelSelectors, block.labelNodeLimit).map((n) => labelText(n, unit, cache))
+  const w = wanted(false, textual.map(({ m }) => wordSet(m)), textual.map(({ m }) => endingList(m)));
+  const labels = block.labelSelectors
+    ? labelNodes(unit, adapter, block.labelSelectors, block.labelNodeLimit).map((n) => readLabel(n, unit, cache, w))
     : adapterLabels;
   // A social line ("<Name> likes this") heads the card, so only the first label
   // counts for endings: a post body that says "everyone likes this" must not hide.
-  const first = texts.find((t) => t.trim());
-  for (const t of texts) {
+  // Resolved on demand: it costs style reads, and only a unit with such a line needs it.
+  let first: string | undefined;
+  let firstResolved = false;
+  for (const { text: t } of labels) {
     // A label node this long is post text that a broad selector reached, not a
     // header: a line reading "Follow" inside it is the author's, not the site's.
     if (t.length > MAX_SUGGESTED_LABEL) continue;
     for (const { m, rule } of textual) {
-      if (hasWordLine(t, wordSet(m)) || (t === first && hasLineEnding(t, endingList(m)))) {
-        return { kind: 'label', category: 'suggested', detail: normaliseText(t).slice(0, MAX_LABEL_LEN), rule };
+      let hit = hasWordLine(t, wordSet(m));
+      if (!hit && hasLineEnding(t, endingList(m))) {
+        if (!firstResolved) {
+          first = firstShown(labels, unit, cache);
+          firstResolved = true;
+        }
+        hit = t === first;
       }
+      if (hit) return { kind: 'label', category: 'suggested', detail: normaliseText(t).slice(0, MAX_LABEL_LEN), rule };
     }
   }
   return null;

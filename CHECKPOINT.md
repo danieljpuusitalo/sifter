@@ -1,5 +1,38 @@
 # Sifter checkpoint
 
+**Session 14 (2026-09-28): scroll cost on the live feed, lazy label reads.** Asked
+for "no lag, fully smooth" plus correct docs. Measured first with `pnpm bench:live`
+on logged-in LinkedIn and Facebook (native Edge, 20 s wheel scroll), and found a bench
+bug on the way: `--suggested` wrote the category into the dev profile's storage and
+never cleared it, so a "baseline" run had been hiding 44 suggested posts. Fixed
+(`setSuggested` on every on-run) and the bench now reports the scanner's own counters.
+What the feed costs, per the traces (old code): suggested off 4.1-5.6 ms/s, worst task
+4-12 ms; suggested on 9-10 ms/s, worst 9-11 ms, on a main thread the page itself keeps
+370-480 ms/s busy. Suggested on does not raise the per-decision cost (~2 ms); it decides
+2.3x more units because hiding 58 posts makes the feed render more. The worst tasks in
+both modes were the first computed-style read after the page dirtied its DOM: a forced
+style recalc of everything the page had touched, charged to Sifter. Change:
+`readLabel`/`leafMayHit`/`piecesMayHit`/`spansPieces` in `src/extract.ts` check a label
+node's raw text before any style read (a leaf exactly; a node with children piecewise
+across its text nodes, so the fixture's "Promoted" split around a hidden decoy still
+gets the full read, the first version of this missed it and 17 tests said so).
+Precision and recall are unchanged by construction and by the eval. **Live evidence
+after the change is inconclusive on ms/s**: forced style recalcs inside Sifter fell
+(3-5 per run to 0-1) but the page was 25-35% busier in the new runs (498-609 ms/s vs
+366-453) and the machine was under memory pressure (the harness killed one bench for
+low memory), so ms/s read 6.4 (off) and 11.5 (on, 99 decisions) with one 27.6 ms decide
+that had no forced style or layout attributed. Facebook flat: 2.8 ms/s, max 3.7. The
+per-function profile A/B (`SIFTER_NOMINIFY=1` build, `--profile`, old vs new, back to
+back) is the measurement that would settle it and did not run. Receipts: `pnpm verify`
+309 passed / 5 skipped, eval tp=61 fp=0 fn=0; `pnpm test:e2e` 25 passed / 1 skipped;
+`bench:scroll --cpu 1 --strict` OK on facebook and on linkedin (one run had a 17.3 ms
+slice, 16 units in one slice, not repeated: 4.6 / 4.3 ms next run, in line with
+history). New tests: `describe('lazy label reads')` in `tests/unit/extract.test.ts`
+(8 cases, spies on `checkVisibility` because happy-dom's fast path bypasses a spied
+`getComputedStyle`). Docs: README and store listing say suggested is feed-only;
+CHANGELOG [Unreleased] carries all of it. Next: run the profile A/B when memory allows;
+otherwise nothing queued, the store submission is still Daniel's.
+
 **Session 13 (2026-09-28): `v1.1.1` released** (feed-only suggested, PR #18). Live
 check in native Edge (`.dev-profile-edge`, fresh build, suggested on, counts by
 placeholder category): feeds hid suggested + sponsored (LinkedIn 1+1, Facebook 8+1,

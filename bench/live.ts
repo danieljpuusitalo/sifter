@@ -23,6 +23,14 @@ import { chromium, type BrowserContext, type CDPSession, type Page } from '@play
 // window on it first. Writes a summary with counts and timings only, never page
 // content, to bench/results/ (gitignored). The raw trace goes to the OS temp dir.
 
+/** Only inside `sw.evaluate`, where the service worker's real `chrome` is in scope. */
+declare const chrome: {
+  tabs: {
+    query(q: { url: string }): Promise<Array<{ id?: number }>>;
+    sendMessage(tabId: number, message: unknown): Promise<unknown>;
+  };
+};
+
 const arg = (name: string, dflt: string) => {
   const i = process.argv.indexOf(`--${name}`);
   return i > 0 ? String(process.argv[i + 1]) : dflt;
@@ -88,15 +96,21 @@ async function launch(withExt: boolean): Promise<BrowserContext> {
   });
 }
 
-async function enableSuggested(context: BrowserContext): Promise<void> {
+/**
+ * Sets the suggested category to the flag's value on every on-run. The dev profile
+ * keeps extension storage between runs, so a `--suggested` run used to leave the
+ * category on for every later run without the flag: a "baseline" measured with 44
+ * hidden posts instead of 9 (2026-09-28).
+ */
+async function setSuggested(context: BrowserContext, value: boolean): Promise<void> {
   if (context.serviceWorkers().length === 0) await context.waitForEvent('serviceworker', { timeout: 10000 });
   const id = new URL(context.serviceWorkers()[0]!.url()).host;
   const opt = await context.newPage();
   await opt.goto(`chrome-extension://${id}/options.html`);
-  await opt.evaluate(async () => {
+  await opt.evaluate(async (v) => {
     const rt = (globalThis as unknown as { chrome: { runtime: { sendMessage(m: unknown): Promise<unknown> } } }).chrome.runtime;
-    await rt.sendMessage({ type: 'sifter:setCategory', category: 'suggested', value: true });
-  });
+    await rt.sendMessage({ type: 'sifter:setCategory', category: 'suggested', value: v });
+  }, value);
   await opt.close();
 }
 
@@ -325,10 +339,29 @@ export function analyse(file: string) {
   };
 }
 
+/** The scanner's own counters, over the feed tab, via the service worker (page context can't message it). */
+type Perf = Record<string, number | null | Record<string, number>>;
+async function scannerPerf(context: BrowserContext, type: 'sifter:getPageState' | 'sifter:resetPerfPeaks'): Promise<Perf | null> {
+  const sw = context.serviceWorkers()[0];
+  if (!sw) return null;
+  try {
+    const state = (await sw.evaluate(
+      async ({ url, type }) => {
+        const [tab] = await chrome.tabs.query({ url });
+        return chrome.tabs.sendMessage(tab!.id!, { type });
+      },
+      { url: `${new URL(URLS[SITE] ?? SITE).origin}/*`, type },
+    )) as { perf?: Perf } | null;
+    return state?.perf ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function runOnce(withExt: boolean) {
   const context = await launch(withExt);
   try {
-    if (withExt && SUGGESTED) await enableSuggested(context);
+    if (withExt) await setSuggested(context, SUGGESTED);
     const page = await context.newPage();
     await page.goto(URLS[SITE] ?? SITE, { waitUntil: 'domcontentloaded' });
     // First install opens the options page; any other tab would take focus from the feed.
@@ -340,7 +373,22 @@ async function runOnce(withExt: boolean) {
     const cdp = await context.newCDPSession(page);
     mkdirSync(TRACE_DIR, { recursive: true });
     const file = join(TRACE_DIR, `${SITE}-${withExt ? 'on' : 'off'}-${Date.now()}.json`);
+    // Counters over the scroll only: peaks reset after the load-time scan.
+    const before = withExt ? await scannerPerf(context, 'sifter:resetPerfPeaks') : null;
     await recordTrace(cdp, file, () => humanScroll(page, SECONDS));
+    const after = withExt ? await scannerPerf(context, 'sifter:getPageState') : null;
+    const n = (k: string) => (before && after && typeof after[k] === 'number' && typeof before[k] === 'number' ? (after[k] as number) - (before[k] as number) : null);
+    const scanner = after
+      ? {
+          unitsExamined: n('unitsExamined'),
+          unitsDecided: n('unitsDecided'),
+          slices: n('slices'),
+          scanMs: n('totalMs') === null ? null : +(n('totalMs') as number).toFixed(1),
+          maxSliceMs: +(after.maxSliceMs as number).toFixed(1),
+          maxDecideMs: +(after.maxDecideMs as number).toFixed(1),
+          worstSlice: after.worstSlice ?? null,
+        }
+      : null;
     if (PROFILE_MODE) {
       // Sampling costs time itself: a profile run names hot functions, a plain run times them.
       // The CDP Profiler domain only sees the main world; the trace's sampler sees the isolate.
@@ -356,6 +404,7 @@ async function runOnce(withExt: boolean) {
       mode: withExt ? 'on' : 'off',
       visible,
       hidden,
+      scanner,
       frames: {
         n: frames.length,
         p50: pct(frames, 50),

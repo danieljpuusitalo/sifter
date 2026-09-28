@@ -1,5 +1,27 @@
 # Sifter checkpoint
 
+**Session 12 (2026-09-28, `fix/linkedin-suggested-feed-only`):** Daniel reported that
+suggested rules hid posts outside the feed: a single post by a page he opened, and he
+wants company pages he doesn't follow left alone, then asked for the same on every
+site. Cause: no page scope at all; the Follow/Connect rule fired on any path. Fix: new
+top-level adapter field `suggestedPaths` (regexes over `location.pathname`, absent =
+every page; top-level because X has suggested blocks but no `suggested` object).
+LinkedIn `^/$ ^/feed/?$` (not `/feed/update/...`); Facebook `^/$ ^/home\.php$
+^/groups/feed/?$` (not pages, profiles, single groups, Watch, Reels); Instagram `^/$`;
+X `^/home$` (the "Who to follow" box). Suggested rules and suggested blocks are gated;
+sponsored is not. The scanner re-checks the path on each mutation batch (a string
+compare) and re-decides the page on change, since these sites navigate without
+reloading. Fixtures can now declare `<meta name="sifter-path">` (default `/`), read by
+the eval, the unit matrix and both e2e specs; `x-home.html` says `/home`. Without it
+the eval fails (fn=1), and e2e had **silently passed** while X's suggested block was
+not being hidden at `/`: the e2e matrix does not assert suggested gold is present, a
+gap worth closing. Receipts: `pnpm verify` 301 passed / 5 skipped, eval tp=61 fp=0
+fn=0 PASS; `pnpm test:e2e` 25 passed, 1 skipped; `bench:scroll --cpu 1 --strict` OK on
+linkedin and facebook. `tests/unit/suggested-paths.test.ts` (38, table-driven over the
+four sites, plus a guard that every adapter with a suggested rule or block declares
+paths), negative-controlled per site: removing one adapter's `suggestedPaths` fails
+8 to 11 of them. **Paths not checked live on any site.**
+
 Updated 2026-09-27, end of session 11: **`v1.1.0` is released** (tag on `3e3ef34`,
 GitHub Release with `sifter-1.1.0-chrome.zip`, 96,318 bytes, release run green).
 It carries every fix from sessions 6 to 11 (PRs #10 to #16). PR #16 merged as

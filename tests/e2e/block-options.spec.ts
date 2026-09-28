@@ -72,6 +72,10 @@ const FIXTURES: Record<string, string> = {
   'www.threads.com': 'threads-feed.html',
 };
 
+/** The path the fixture was captured at (`<meta name="sifter-path">`, default `/`): suggested hiding is scoped by path. */
+const fixturePath = (file: string) =>
+  /<meta\s+name="sifter-path"\s+content="([^"]+)"/.exec(readFileSync(join('fixtures', 'public', file), 'utf8'))?.[1] ?? '/';
+
 /** The adapter's own named suggested rules, per site (empty where the adapter has none). */
 const RULE_IDS: Record<string, string[]> = {
   'www.linkedin.com': ['activity', 'follow', 'suggested'],
@@ -131,7 +135,7 @@ function released(before: GoldSnapshot, after: GoldSnapshot): GoldSnapshot {
 test.describe('Block on this site: every switch, every site', () => {
   for (const [host, file] of Object.entries(FIXTURES)) {
     test(`${host} (${file}): sponsored, suggested, every rule, site enable`, async ({ context, page }) => {
-      await page.goto(`https://${host}/`);
+      await page.goto(`https://${host}${fixturePath(file)}`);
       // The initial full scan at document_idle races the first bg call below; give it
       // a chance to converge first, the way every hide.spec.ts test does, so the
       // matrix starts from a real baseline rather than a half-scanned page.

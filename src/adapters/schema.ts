@@ -71,6 +71,14 @@ export const AdapterSchema = z.object({
     .strict()
     .optional(),
   /**
+   * Pages where the "suggested" category applies (the `suggested` markers and the
+   * suggested blocks), as regular expressions over the URL path. Absent means every
+   * page. A Follow button is a recommendation signal only in a feed the site
+   * assembles; on a company page, profile or single post the user opened on
+   * purpose, it just means they don't follow the author.
+   */
+  suggestedPaths: z.array(z.string().min(1)).optional(),
+  /**
    * Whole page modules to hide under a category, outside the feed's units: X's
    * "Who to follow" box, Facebook's right-rail "Sponsored" column.
    */

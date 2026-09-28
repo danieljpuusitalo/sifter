@@ -164,13 +164,13 @@ describe('detectMarker extras', () => {
 });
 
 describe('scanner: blocks, custom rules, context menu', () => {
-  function setup(host: string, body: string, over: Partial<SiteContext> = {}) {
+  function setup(host: string, body: string, over: Partial<SiteContext> = {}, path = '/') {
     document.body.innerHTML = body;
     const persisted: Array<[string, string | null]> = [];
     const scanner = new Scanner({
       doc: document,
       hostname: host,
-      baseUrl: `https://${host}/`,
+      baseUrl: `https://${host}${path}`,
       adapter: adapterFor(host),
       context: defaultContext(siteKey(host), over),
       persistOverride: (fp, action) => persisted.push([fp, action]),
@@ -186,9 +186,9 @@ describe('scanner: blocks, custom rules, context menu', () => {
     '<div id="promo-box"><span>Some module</span></div>';
 
   it('adapter blocks hide whole modules only when their category is on', () => {
-    setup('x.com', xPage);
+    setup('x.com', xPage, {}, '/home');
     expect(hidden('#wtf')).toBe(false);
-    setup('x.com', xPage, { categories: { sponsored: true, suggested: true, custom: true } });
+    setup('x.com', xPage, { categories: { sponsored: true, suggested: true, custom: true } }, '/home');
     expect(hidden('#wtf')).toBe(true);
     expect(hidden('#t1')).toBe(false);
   });
@@ -268,14 +268,14 @@ describe('scanner: blocks, custom rules, context menu', () => {
 
 // Regressions found by the v1 audit: each failed before its fix.
 describe('scanner: audit regressions', () => {
-  function setup(host: string, body: string, over: Partial<SiteContext> = {}, schedule: (fn: () => void, ms: number) => unknown = (fn) => fn()) {
+  function setup(host: string, body: string, over: Partial<SiteContext> = {}, schedule: (fn: () => void, ms: number) => unknown = (fn) => fn(), path = '/') {
     document.body.innerHTML = body;
     const persisted: Array<[string, string | null]> = [];
     const context = defaultContext(siteKey(host), over);
     const scanner = new Scanner({
       doc: document,
       hostname: host,
-      baseUrl: `https://${host}/`,
+      baseUrl: `https://${host}${path}`,
       adapter: adapterFor(host),
       context,
       persistOverride: (fp, action) => persisted.push([fp, action]),
@@ -290,7 +290,7 @@ describe('scanner: audit regressions', () => {
 
   it('turning a block category off shows the module again', () => {
     const html = '<div data-testid="cellInnerDiv"><div id="t1">An organic tweet</div></div><aside id="wtf" aria-label="Who to follow"><div>Follow</div></aside>';
-    const { scanner, context } = setup('x.com', html, { categories: { sponsored: true, suggested: true, custom: true } });
+    const { scanner, context } = setup('x.com', html, { categories: { sponsored: true, suggested: true, custom: true } }, undefined, '/home');
     expect(hidden('wtf')).toBe(true);
     scanner.applyContext({ ...context, categories: { ...context.categories, suggested: false } });
     expect(hidden('wtf')).toBe(false);

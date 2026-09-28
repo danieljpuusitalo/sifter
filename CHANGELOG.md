@@ -4,6 +4,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- "Suggested" hiding is now feed-only on every site that has it. Pages you
+  opened on purpose (a company page or profile you don't follow, a single post,
+  search results) are left alone. Sponsored posts are still hidden on every page.
+  In-app navigation re-decides the page, so going from the feed to a company
+  page brings its posts back without a reload. Adapters declare their feed
+  paths with `suggestedPaths`:
+  - LinkedIn: the home feed (`/`, `/feed/`), not `/feed/update/...`.
+  - Facebook: the home feed (`/`, `/home.php`) and the groups feed
+    (`/groups/feed/`); not pages, profiles, single groups, Watch or Reels.
+  - Instagram: the home feed (`/`); not profiles, posts, Explore or Reels.
+  - X: the "Who to follow" box on `/home` only.
+
 ## [1.1.0] - 2026-09-27
 
 ### Added

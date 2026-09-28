@@ -76,6 +76,7 @@ export default defineContentScript({
       doc: document,
       hostname,
       baseUrl: location.href,
+      path: () => location.pathname,
       adapter: adapterFor(hostname),
       context,
       persistOverride: (fp, action) =>

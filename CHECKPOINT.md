@@ -1,5 +1,51 @@
 # Sifter checkpoint
 
+**Session 15 (2026-09-30, branch `feat/stable-scroll`): the feed no
+longer moves when Sifter hides.** Daniel: the feed bounces, mostly down, when entries
+disappear. Plan in phases, measured first (`bench/stability.ts`, a main-world
+layout-shift + class-change probe wired into `bench:live` and `bench:scroll`; zones
+and attribution are window-based and proximity-based, so read a `hide:`/`collapse:`
+entry against the off-run's own moves). **Phase 0 baseline**, live LinkedIn, suggested
+on: in-view hides moved visible content 3672 px in one 20 s run. **Phase 1**: a hide
+lands as a *veil* (`sifter-veil`: `clip-path: inset(0 0 100% 0)` on the unit's
+children, placeholder host at zero height over it), so the box keeps its exact height;
+`src/content/viewport.ts` (one IntersectionObserver, 64 px margin) settles it into the
+user's mode once off screen. **Phase 2**: below the screen at once; above it after
+`scrollend` (150 ms idle fallback), all in one frame, reading the lowest unit's bottom
+before and after and undoing the difference with `scrollBy` on the innermost scroller
+that fired a scroll event. Chrome's anchoring would undo it too but lands after that
+read, so Sifter's scroll replaces it (no double correction; e2e holds within 1 px with
+anchoring on and off). **The live LinkedIn run then still moved 2565-5054 px per run
+from above-screen collapses**: its feed scrolls inside `<main>` under the header, so a
+card scrolled up behind the header is clipped (not intersecting) while its box still
+reaches into the window, and the old zone rule called it "below" and collapsed it at
+once, uncorrected. Fix: `zoneOf` places a non-intersecting unit by the window's middle
+(straddling while clipped counts as on screen). **After the fix, live, suggested on**:
+
+| Run | Sifter off, visible moves | Sifter on, moves attributed to Sifter |
+|---|---|---|
+| LinkedIn 1 | 7, 1216 px (site) | 0 (6 site moves, 712 px) |
+| LinkedIn 2 | 2, 500 px (site) | 1 real: `collapse:below` 884 px; a `hide:inView` 250 px is LinkedIn's own 250 px move, also present with Sifter off |
+| LinkedIn 3 (on only) | | 0 (6 site moves, 660 px) |
+| Facebook | 1, 830 px (site) | 0 moves at all |
+
+`anchorCorrections` 4-9 per LinkedIn run, 0 on Facebook. The one residual: a unit IO
+saw more than 64 px below the fold was collapsed in the frame a 120 px wheel tick
+brought it on screen, so the next post appeared early at the bottom edge. Phase 3
+(decide units ahead of the viewport) would cut both that and in-view veils (8-9 of
+33-35 hides land on screen, as a blank space with the bar on top until they leave);
+not started, Daniel should judge the look first. Receipts: `pnpm verify` 336 passed /
+5 skipped, eval tp=61 fp=0 fn=0; `pnpm test:e2e` 30 passed; `stability.spec.ts`
+`--repeat-each 8 --workers 1` 40/40; `bench:scroll --cpu 1 --strict` OK x2 on linkedin
+and facebook. Negative controls, each run and seen failing: veil removed (collapse at
+once) fails the in-view test with a 276 px move; no `scrollBy` fails the
+`overflow-anchor: none` variant with 232 px; the old zone rule fails the
+clipped-element variant with 232 px. Trade-offs: hide mode shows the same blank space
+until it settles; veiled content stays in the accessibility tree and focusable until
+it settles; the roll-up animation was dropped because the `!important` clip-path
+overrides transitions. Next: Daniel reloads `~/sifter-v1.0.0` (already holds this build) and judges the feel;
+then decide on Phase 3.
+
 **Session 14 (2026-09-28): scroll cost on the live feed, lazy label reads.** Asked
 for "no lag, fully smooth" plus correct docs. Measured first with `pnpm bench:live`
 on logged-in LinkedIn and Facebook (native Edge, 20 s wheel scroll), and found a bench
@@ -523,4 +569,7 @@ path is still unverified live (no sponsored feed post appeared this session eith
 - **`changeSignature` must equal hashing `stableText`** (session 11): it is a one-pass rewrite, pinned by `tests/unit/change-signature.test.ts` (5000 seeded random strings plus hand cases).
 - **Slice budget is 4 ms, not 8** (session 11): `HARD_RULE_MS` stays 8 for the over-budget counter. `DECIDE_COST_PRIOR_MS` (1) keeps the first slice after load from running cold code to an overrun.
 - **`decide()` and `apply()` run through `decideSafely`/`applySafely`**: a throw inside one unit must not leave `running` true with no scan scheduled.
+- **A hide in view is a veil, not a collapse** (session 15): the veil is `clip-path` on the unit's children because `renderedWithin`/`renderedText`/`checkVisibility` ignore clip-path, so a rescan reads a veiled unit as the site built it. Never "simplify" it to `visibility` or `opacity`. While veiled (and always in blur mode) the placeholder host is `display:flow-root; height:0`, so the bar adds no height. `tests/unit/hider-veil.test.ts`, `tests/e2e/stability.spec.ts`.
+- **Zones must allow for the scroller's clipping** (session 15, `zoneOf` in `src/content/viewport.ts`): not intersecting is not outside the window. A feed that scrolls inside an element clips cards behind its header while their boxes still reach into the window; place them by the window's middle. `tests/unit/viewport-zone.test.ts` and the clipped-element e2e variant.
+- **Above-screen collapses wait for `scrollend` and correct with `scrollBy` in the same task** (session 15): never mid-gesture, and never left to Chrome's anchoring, which lands later and is off in element scrollers that set `overflow-anchor: none` or move their own slots.
 - **`release.yml` matches the CHANGELOG heading with `index()`, not a regex.** `## [x.y.z]` as an awk regex is a character class and never matches; this failed the first `v1.0.0` run after every test had passed.

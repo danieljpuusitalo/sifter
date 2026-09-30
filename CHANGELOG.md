@@ -6,6 +6,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The feed no longer jumps when Sifter hides something. A post hidden while it
+  is on screen keeps its exact height: its content stops painting and the Hidden
+  bar sits over the empty space, so nothing you are reading moves. It shrinks to
+  the bar once it is off screen: at once below the screen, and above it only
+  after you stop scrolling, with the page scrolled by the same amount in the
+  same frame. This also covers feeds that scroll inside their own panel under a
+  header, as LinkedIn's does. On a live LinkedIn feed with suggested posts on,
+  content moved by Sifter fell from thousands of pixels per 20 s scroll to none
+  in most runs. Blur mode no longer adds the bar's height either. Hide mode
+  shows the same empty space until the post leaves the screen.
 - Fewer style reads mid-scroll. Sifter now checks a label node's raw text before
   reading its computed style, and reads style only for a node whose text could
   carry a marker or a suggested-post phrase at all (a leaf is checked exactly;

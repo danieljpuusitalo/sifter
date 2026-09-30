@@ -1,4 +1,5 @@
 import { DEFAULT_CATEGORIES, type BlockCategory, type CategoryToggles, type HideCategory, type HideMode, type OverrideAction } from './types';
+import type { VeilStats } from './content/viewport';
 
 // Message contract between contexts. Content scripts never touch storage; they
 // ask the service worker (see src/storage/settings.ts for why).
@@ -105,7 +106,7 @@ export type ScanPerf = {
   slicesOverBudget: number;
   /** Units still queued for a decision right now. */
   pending: number;
-};
+} & VeilStats;
 
 export function isBgRequest(m: unknown): m is BgRequest {
   return typeof m === 'object' && m !== null && typeof (m as { type?: unknown }).type === 'string' && (m as { type: string }).type.startsWith('sifter:');

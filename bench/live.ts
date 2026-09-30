@@ -1,6 +1,7 @@
 import { createWriteStream, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { chromium, type BrowserContext, type CDPSession, type Page } from '@playwright/test';
+import { STABILITY_PROBE, summariseStability, type StabRaw } from './stability';
 
 // Live-site cost trace (hard rule 7, measured where it matters).
 //
@@ -370,6 +371,8 @@ async function runOnce(withExt: boolean) {
     await page.bringToFront();
     await page.waitForTimeout(5000);
     await page.evaluate(FRAME_PROBE);
+    await page.evaluate(STABILITY_PROBE);
+    const t0 = await page.evaluate(() => performance.now());
     const cdp = await context.newCDPSession(page);
     mkdirSync(TRACE_DIR, { recursive: true });
     const file = join(TRACE_DIR, `${SITE}-${withExt ? 'on' : 'off'}-${Date.now()}.json`);
@@ -387,6 +390,7 @@ async function runOnce(withExt: boolean) {
           maxSliceMs: +(after.maxSliceMs as number).toFixed(1),
           maxDecideMs: +(after.maxDecideMs as number).toFixed(1),
           worstSlice: after.worstSlice ?? null,
+          veil: Object.fromEntries(['hidesInView', 'hidesAbove', 'hidesBelow', 'veilsSettled', 'anchorCorrections'].map((k) => [k, n(k)])),
         }
       : null;
     if (PROFILE_MODE) {
@@ -400,10 +404,12 @@ async function runOnce(withExt: boolean) {
     if (frames.length < SECONDS * 20) console.warn(`[live] only ${frames.length} frames: the tab was throttled, discard this run`);
     const visible = await page.evaluate(() => document.visibilityState);
     const hidden = await page.evaluate(() => document.querySelectorAll('.sifter-hidden').length);
+    const stability = summariseStability(await page.evaluate(() => (window as unknown as { __stab?: StabRaw }).__stab ?? null), t0);
     return {
       mode: withExt ? 'on' : 'off',
       visible,
       hidden,
+      stability,
       scanner,
       frames: {
         n: frames.length,

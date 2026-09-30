@@ -1,4 +1,5 @@
 import type { HideCategory, HideMode } from '../types';
+import type { VeilTracker } from './viewport';
 
 // Hard rule 5: never remove nodes. Hide by adding a class to the unit root (plus,
 // for "hide" mode only, an inline style), so infinite scroll and site JS keep
@@ -8,6 +9,8 @@ import type { HideCategory, HideMode } from '../types';
 export const HIDDEN_CLASS = 'sifter-hidden';
 export const COLLAPSE_CLASS = 'sifter-collapse';
 export const BLUR_CLASS = 'sifter-blur';
+/** A hide that keeps the unit's height: its content stops painting, nothing moves. Settled into the real mode once off screen. */
+export const VEIL_CLASS = 'sifter-veil';
 export const PLACEHOLDER_ATTR = 'data-sifter-placeholder';
 /** Marks the fallback `<style>` element when the document's realm has no constructable sheets. */
 const UNIT_STYLE_ATTR = 'data-sifter';
@@ -38,6 +41,8 @@ type Record_ = {
   mode: HideMode;
   /** True once the user clicked "Show": content is visible, but the placeholder stays as a "Hide" bar. */
   shown: boolean;
+  /** Hidden but not yet settled: the unit keeps its height until the viewport tracker says it is off screen. */
+  veiled: boolean;
   /** Only "hide" mode touches the unit's own inline style; collapse/blur hide via the shared stylesheet instead. */
   prev: { display: string; displayPriority: string } | null;
 };
@@ -118,10 +123,20 @@ export function usesSharedSheet(doc: Document): boolean {
  * placeholder with it. Styling the unit's *children* instead, from one shared
  * document-level sheet, keeps the unit itself measurable.
  */
+//
+// The veil hides content without touching layout. It must stay `clip-path`:
+// `renderedWithin`/`renderedText` (extract.ts) and `checkVisibility` read display,
+// visibility and opacity, so a veiled unit rescans exactly as the site built it.
+// Veiling with `visibility` or `opacity` would make a rescan read the unit as empty
+// and release it. While veiled (and always in blur mode) the placeholder is a
+// zero-height box whose row overflows on top of the content, so inserting it adds
+// no height either.
 const UNIT_CSS = `
 .${HIDDEN_CLASS}.${COLLAPSE_CLASS} > :not([${PLACEHOLDER_ATTR}]) { display: none !important; }
 .${HIDDEN_CLASS}.${BLUR_CLASS} > :not([${PLACEHOLDER_ATTR}]) { filter: blur(12px) !important; pointer-events: none !important; }
 .${HIDDEN_CLASS}.${COLLAPSE_CLASS} { min-height: 0 !important; max-height: none !important; height: auto !important; }
+.${HIDDEN_CLASS}.${VEIL_CLASS} > :not([${PLACEHOLDER_ATTR}]) { clip-path: inset(0 0 100% 0) !important; pointer-events: none !important; }
+.${HIDDEN_CLASS}.${VEIL_CLASS} > [${PLACEHOLDER_ATTR}], .${HIDDEN_CLASS}.${BLUR_CLASS} > [${PLACEHOLDER_ATTR}] { display: flow-root !important; height: 0 !important; position: relative !important; z-index: 1 !important; }
 `;
 
 const unitSheets = new WeakMap<Document, CSSStyleSheet | null>();
@@ -171,14 +186,41 @@ export class Hider {
   /** Every unit with a live record, hidden or shown: what a hard reset (`unhide`/`prune`/`setMode`) must reach. */
   private tracked = new Set<Element>();
 
+  /**
+   * @param veil When given, every new hide lands as a veil and settles into `mode`
+   *   only once the tracker reports the unit off screen. Without it (tests, evals,
+   *   a page with no IntersectionObserver) hides apply at once, as before.
+   */
   constructor(
     private doc: Document,
     private mode: HideMode,
     private cb: HiderCallbacks,
+    private veil?: VeilTracker,
   ) {}
 
   isHidden(unit: Element): boolean {
     return this.records.has(unit);
+  }
+
+  /** Hidden, but still holding its height until it is off screen. */
+  isVeiled(unit: Element): boolean {
+    return this.records.get(unit)?.veiled ?? false;
+  }
+
+  /** The veil is lifted into the real hide mode: the unit is off screen, so its height may change. */
+  settle(unit: Element): void {
+    const rec = this.records.get(unit);
+    if (!rec || !rec.veiled) return;
+    rec.veiled = false;
+    this.veil?.unwatch(unit);
+    const el = unit as HTMLElement;
+    el.classList.remove(VEIL_CLASS);
+    if (!rec.shown) this.present(el, rec);
+  }
+
+  /** Stop the viewport tracker (the scanner is being torn down). */
+  dispose(): void {
+    this.veil?.disconnect();
   }
 
   hiddenUnits(): Element[] {
@@ -210,13 +252,14 @@ export class Hider {
       placeholder: null,
       mode: this.mode,
       shown: false,
+      veiled: false,
       prev: null,
     };
     this.records.set(unit, rec);
     this.hidden.add(unit);
     this.tracked.add(unit);
     (unit as HTMLElement).classList.add(HIDDEN_CLASS);
-    this.applyMode(unit, rec);
+    this.applyMode(unit, rec, !!this.veil);
   }
 
   /** Hard reset: removes the placeholder and the record entirely. Used for a full unhide, disabling, and "Not an ad". */
@@ -226,8 +269,9 @@ export class Hider {
     this.records.delete(unit);
     this.hidden.delete(unit);
     this.tracked.delete(unit);
+    this.veil?.unwatch(unit);
     const el = unit as HTMLElement;
-    el.classList.remove(HIDDEN_CLASS);
+    el.classList.remove(HIDDEN_CLASS, VEIL_CLASS);
     const modeClass = this.classFor(rec.mode);
     if (modeClass) el.classList.remove(modeClass);
     this.restoreStyle(el, rec);
@@ -249,6 +293,12 @@ export class Hider {
     this.hidden.delete(unit);
     const el = unit as HTMLElement;
     el.classList.remove(HIDDEN_CLASS);
+    if (rec.veiled) {
+      // A click on the bar: the reader asked for the move, so the veil need not wait.
+      rec.veiled = false;
+      this.veil?.unwatch(unit);
+      el.classList.remove(VEIL_CLASS);
+    }
     const modeClass = this.classFor(rec.mode);
     if (modeClass) el.classList.remove(modeClass);
     if (rec.mode === 'hide') this.restoreStyle(el, rec);
@@ -263,12 +313,8 @@ export class Hider {
     this.hidden.add(unit);
     const el = unit as HTMLElement;
     el.classList.add(HIDDEN_CLASS);
-    if (rec.mode === 'hide') {
-      el.style.setProperty('display', 'none', 'important');
-    } else {
-      const modeClass = this.classFor(rec.mode);
-      if (modeClass) el.classList.add(modeClass);
-    }
+    // A click on the bar: collapse at once, the reader asked for it.
+    this.present(el, rec);
     if (rec.placeholder) this.renderPlaceholder(rec, unit);
   }
 
@@ -286,10 +332,14 @@ export class Hider {
       const el = u as HTMLElement;
       const oldClass = this.classFor(rec.mode);
       if (oldClass) el.classList.remove(oldClass);
+      // A veiled unit stays veiled (the tracker is still watching it) and settles into the new mode.
+      const veiled = rec.veiled;
+      el.classList.remove(VEIL_CLASS);
       this.restoreStyle(el, rec);
+      rec.prev = null;
       rec.placeholder?.remove();
       rec.placeholder = null;
-      this.applyMode(u, rec);
+      this.applyMode(u, rec, veiled);
     }
   }
 
@@ -302,6 +352,7 @@ export class Hider {
     for (const u of [...this.tracked]) {
       const rec = this.records.get(u);
       if (!u.isConnected) {
+        this.veil?.unwatch(u);
         rec?.placeholder?.remove();
         this.records.delete(u);
         this.hidden.delete(u);
@@ -318,23 +369,41 @@ export class Hider {
     return null;
   }
 
-  private applyMode(unit: Element, rec: Record_): void {
+  /**
+   * Presents a fresh (or re-moded) hide: the placeholder for collapse and blur,
+   * then either the veil (height kept, settled later) or the mode itself.
+   */
+  private applyMode(unit: Element, rec: Record_, veil: boolean): void {
     const el = unit as HTMLElement;
     rec.mode = this.mode;
-    if (this.mode === 'hide') {
-      // "Hide" mode is unchanged: no placeholder, the unit itself goes display:none.
-      rec.prev = {
+    rec.prev = null;
+    if (this.mode !== 'hide' || (veil && this.veil)) ensureUnitStylesheet(this.doc);
+    // "Hide" mode has no placeholder: the unit itself goes display:none.
+    if (this.mode !== 'hide') {
+      rec.placeholder = this.makePlaceholder(unit, rec);
+      unit.prepend(rec.placeholder);
+    }
+    if (veil && this.veil) {
+      rec.veiled = true;
+      el.classList.add(VEIL_CLASS);
+      this.veil.watch(unit);
+      return;
+    }
+    rec.veiled = false;
+    this.present(el, rec);
+  }
+
+  /** The mode's own hide, which may change the unit's height. Keeps the first saved inline display. */
+  private present(el: HTMLElement, rec: Record_): void {
+    if (rec.mode === 'hide') {
+      rec.prev ??= {
         display: el.style.getPropertyValue('display'),
         displayPriority: el.style.getPropertyPriority('display'),
       };
       el.style.setProperty('display', 'none', 'important');
       return;
     }
-    rec.prev = null;
-    el.classList.add(this.classFor(this.mode) as string);
-    ensureUnitStylesheet(this.doc);
-    rec.placeholder = this.makePlaceholder(unit, rec);
-    unit.prepend(rec.placeholder);
+    el.classList.add(this.classFor(rec.mode) as string);
   }
 
   private restoreStyle(el: HTMLElement, rec: Record_): void {

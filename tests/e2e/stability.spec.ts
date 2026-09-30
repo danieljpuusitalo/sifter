@@ -209,3 +209,89 @@ for (const variant of SCROLLERS) {
     expect(p.anchorCorrections, 'the collapse moved the page and Sifter undid it').toBeGreaterThan(0);
   });
 }
+
+for (const variant of SCROLLERS) {
+  test(`a veiled card whose bar went up under the top edge collapses without moving the screen (${variant.name})`, async ({ context, page }) => {
+    await open(page, variant.css);
+    await insertLateAd(page);
+    await expect(late(page)).toHaveClass(/\bsifter-veil\b/);
+    // Let the tracker take its first look at the veil before the page scrolls.
+    await page.waitForTimeout(300);
+    const moves = await watchShifts(page);
+    // 150 px: the late card's top (and its bar) goes under the header or the clipped edge,
+    // while most of its blank space is still on screen.
+    const before = await page.evaluate(() => {
+      const main = document.getElementById('workspace') as HTMLElement;
+      const inElement = getComputedStyle(main).overflowY === 'auto';
+      (inElement ? main : window).scrollBy(0, 150);
+      return (document.querySelector('[componentkey^="update-card-focus1005"]') as HTMLElement).getBoundingClientRect().top;
+    });
+    await expect(late(page)).toHaveClass(/\bsifter-collapse\b/);
+    await page.waitForTimeout(300);
+    const after = await topOf(page, '[componentkey^="update-card-focus1005"]');
+    expect(Math.abs(after - before), `the card below moved from ${before} to ${after}`).toBeLessThanOrEqual(1);
+    expect(await moves()).toEqual([]);
+    const p = (await perf(context)) as unknown as { veilsUnderTop: number; anchorCorrections: number };
+    expect(p.veilsUnderTop, 'settled because its top went under the edge, not because it left the screen').toBeGreaterThan(0);
+    expect(p.anchorCorrections).toBeGreaterThan(0);
+  });
+}
+
+test('a hidden card in a pinned rail collapses where it is, without a scroll; a feed card on screen stays veiled', async ({ context, page }) => {
+  await open(page, '#rail { position: fixed; top: 120px; right: 0; width: 300px; z-index: 5; background: #fff; }');
+  await insertLateAd(page);
+  const RAIL = 'update-card-focus9002FeedType_MAIN_FEED_RELEVANCE';
+  await page.evaluate((key) => {
+    const src = document.querySelector('[componentkey^="update-card-focus1002"]') as HTMLElement;
+    const clone = src.cloneNode(true) as HTMLElement;
+    clone.setAttribute('componentkey', key);
+    clone.removeAttribute('data-gold');
+    clone.removeAttribute('style');
+    for (const c of [...clone.classList]) if (c.startsWith('sifter-')) clone.classList.remove(c);
+    clone.querySelector(':scope > [data-sifter-placeholder]')?.remove();
+    const rail = document.createElement('div');
+    rail.id = 'rail';
+    rail.append(clone);
+    // Inside the feed's own container, so the scanner treats it like any other unit.
+    (document.querySelector('[componentkey^="update-card-focus1005"]') as HTMLElement).parentElement!.parentElement!.append(rail);
+  }, RAIL);
+  const rail = page.locator(`[componentkey="${RAIL}"]`);
+  // A rail never scrolls away: left veiled, it would be a blank hole for good.
+  await expect(rail).toHaveClass(/\bsifter-collapse\b/);
+  // Control: the feed card on screen got the same looks and is still veiled.
+  await page.waitForTimeout(300);
+  await expect(late(page)).toHaveClass(/\bsifter-veil\b/);
+  const p = (await perf(context)) as unknown as { veilsPinned: number };
+  expect(p.veilsPinned).toBeGreaterThan(0);
+});
+
+// LinkedIn wraps a post's content in a `display: contents` box, which clip-path cannot
+// clip: the post kept painting under its Hidden bar. Screenshots of the card with a
+// magenta probe shown and hidden must match while veiled, and differ once it is shown.
+test('a veiled card paints nothing, even through a display: contents wrapper', async ({ page }) => {
+  await open(page, `[componentkey="${LATE}"] > ._77aa { display: contents; }`);
+  await insertLateAd(page);
+  await page.evaluate((key) => {
+    const b = document.createElement('div');
+    b.id = 'paint-probe';
+    b.style.cssText = 'height: 120px; background: rgb(255, 0, 255);';
+    (document.querySelector(`[componentkey="${key}"] > ._77aa`) as HTMLElement).append(b);
+  }, LATE);
+  await expect(late(page)).toHaveClass(/\bsifter-veil\b/);
+  const probe = (v: 'visible' | 'hidden') =>
+    page.evaluate((v) => {
+      (document.getElementById('paint-probe') as HTMLElement).style.visibility = v;
+    }, v);
+  const paints = async () => {
+    await probe('visible');
+    const on = await late(page).screenshot({ animations: 'disabled' });
+    await probe('hidden');
+    const off = await late(page).screenshot({ animations: 'disabled' });
+    await probe('visible');
+    return !on.equals(off);
+  };
+  expect(await paints(), 'the probe painted under the veil').toBe(false);
+  await page.locator(`[componentkey="${LATE}"] > [data-sifter-placeholder] .row [data-act="show"]`).click();
+  await expect(late(page)).not.toHaveClass(/\bsifter-hidden\b/);
+  expect(await paints(), 'positive control: once shown, the probe paints').toBe(true);
+});

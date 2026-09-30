@@ -1,5 +1,56 @@
 # Sifter checkpoint
 
+**Session 16 (2026-09-30, branch `fix/veil-linkedin`): IN PROGRESS, paused by Daniel.
+Not merged, WIP commit, 2 stability e2e tests fail.** Daniel, on the veil from
+session 15: on LinkedIn "hidden posts sometimes are not actually hidden, they have the
+tag above but i still see the post", and hidden boxes sit on top of the next post;
+Facebook "even buggier". Root causes and state:
+
+- **LinkedIn (DONE):** each post's first child is `display: contents`; `clip-path`
+  does nothing to a box that doesn't exist, so the post painted under the bar. The veil
+  clip in `UNIT_CSS` (`hider.ts`) now also reaches `> * ` and `> * > *`. E2E paint probe
+  (`a veiled card paints nothing, even through a display: contents wrapper`) passes, and
+  fails against HEAD's CSS (negative control run). Blur mode has the same bug (`filter`
+  on a contents box), deliberately not fixed: nested blurs compound. Tell Daniel.
+- **Facebook bar under the header (DONE):** a veil whose top scrolled under the 56 px
+  header left a blank space with no bar. `viewport.ts` `lookOnScreen()` now re-reads each
+  on-screen veil in the flush; one seen moving with the page whose top is above
+  `topEdge()` (64 px, or the scroller's top + 8) joins `above` and collapses with the
+  usual correction (`veilsUnderTop`). E2E x3 scroller variants pass.
+- **Same-frame shift (DONE):** `scrollend` fires in the scroll's own frame before its rAF
+  callbacks, so a one-frame flush collapsed and corrected before the scroll painted, and
+  the Layout Instability API counted the whole collapse (5 e2e failed). `schedule()` now
+  waits two frames. Scroll events' `timeStamp` is when the scroll was *requested*, not
+  dispatched, so a timestamp check does not work. Unit test `waits a frame after the
+  scroll ends` fails against a one-frame mutant.
+- **Facebook pinned rail (OPEN, this is where it stopped):** the sponsored rail module
+  never leaves the screen, so its veil never settled: a ~400 px blank hole. First fix
+  (collapse once a scroll moved the page but not the unit, plus a fixed/sticky ancestor,
+  because Sifter's own correction scroll leaves feed cards unmoved too) made
+  `bench:scroll --site facebook` show a new 350 px visible move (Contacts moving up
+  after the first scroll; HEAD has 0). Current attempt: `fitsPinnedBox()` collapses at
+  the first look (right after the hide, as before veils) when the fixed/sticky box is no
+  taller than the window. **That breaks the 2 `element clipped under a header` e2e
+  variants**: their `#workspace` is a fixed, window-sized feed scroller (LinkedIn's
+  shape), so every feed card counts as pinned. Live Facebook probe: the rail is
+  `role=complementary`, `position: sticky`, 309 x 852 px in a 1376 x 908 window, with an
+  inner `overflow-y: auto` scroller that is scrollable; so "no scroller inside the box"
+  would exclude the real rail. **Next:** (1) require the box to be a side column too
+  (width <= half the window), confirm against LinkedIn's live shape
+  (`pnpm exec tsx bench/_rail-probe.ts linkedin` was about to run); (2) in the
+  scroll-proof path also require `!box.contains(scroller)`, or a fixed feed scroller
+  gives a false pin after a correction scroll; (3) re-run `bench:scroll --site facebook
+  --cpu 1` and check the 350 px move is gone or lands before the measured window.
+- **Then:** `pnpm verify`, `pnpm test:e2e`, `bench:scroll --cpu 1 --strict` both sites,
+  live re-probe (`bench/_veil-probe.ts`), delete both `bench/_*-probe.ts` (untracked,
+  never commit), CHANGELOG [Unreleased] Fixed, Do-not-undo lines (below), copy build to
+  `~/sifter-v1.0.0`, land via PR.
+- **Do-not-undo lines to add when it lands:** veil clip reaches depth 3 for
+  `display: contents`; pinned needs a fixed/sticky ancestor, never just "didn't move";
+  the tracker's pinned-box style walk is an idle-flush-only exception to "no
+  getComputedStyle outside `decide()`" (the rule protects the scanner's mid-scroll path);
+  the flush waits two frames after `scrollend`.
+
 **Session 15 (2026-09-30, branch `feat/stable-scroll`): the feed no
 longer moves when Sifter hides.** Daniel: the feed bounces, mostly down, when entries
 disappear. Plan in phases, measured first (`bench/stability.ts`, a main-world

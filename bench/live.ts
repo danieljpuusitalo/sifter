@@ -390,7 +390,7 @@ async function runOnce(withExt: boolean) {
           maxSliceMs: +(after.maxSliceMs as number).toFixed(1),
           maxDecideMs: +(after.maxDecideMs as number).toFixed(1),
           worstSlice: after.worstSlice ?? null,
-          veil: Object.fromEntries(['hidesInView', 'hidesAbove', 'hidesBelow', 'veilsSettled', 'anchorCorrections'].map((k) => [k, n(k)])),
+          veil: Object.fromEntries(['hidesInView', 'hidesAbove', 'hidesBelow', 'veilsSettled', 'anchorCorrections', 'veilsPinned', 'veilsUnderTop'].map((k) => [k, n(k)])),
         }
       : null;
     if (PROFILE_MODE) {

@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { chromium, type BrowserContext } from '@playwright/test';
 import type { PageState } from '../src/messages';
+import { STABILITY_PROBE, summariseStability, type StabRaw } from './stability';
 
 // Scroll benchmark (hard rule 7: the extension must not cost frames).
 //
@@ -207,6 +208,7 @@ async function run(withExt: boolean) {
     await context.waitForEvent('page', { timeout: 5000 }).catch(() => null);
   }
   const p = await context.newPage();
+  await p.addInitScript(STABILITY_PROBE);
   for (const other of context.pages()) if (other !== p) await other.close();
   await p.goto(site.url);
   await p.bringToFront();
@@ -228,11 +230,13 @@ async function run(withExt: boolean) {
   // Zero the peaks so the after-state's maxSliceMs is the scroll window's own.
   if (withExt) before = await pageState(context, 'sifter:resetPerfPeaks');
   const m0 = await metrics();
+  const t0 = await p.evaluate(() => performance.now());
   const raw = (await p.evaluate((s) => (window as unknown as { __bench: (s: number) => Promise<Raw> }).__bench(s), SECONDS)) as Raw;
   const m1 = await metrics();
   await p.waitForTimeout(600); // drain the last debounce
   const after = withExt ? await pageState(context, 'sifter:getPageState') : null;
   const hidden = await p.evaluate(() => document.querySelectorAll('.sifter-hidden').length);
+  const stab = summariseStability(await p.evaluate(() => (window as unknown as { __stab?: StabRaw }).__stab ?? null), t0);
   const railIntact = await p.evaluate(() => {
     const ads = document.querySelector('#ads');
     if (!ads) return null; // linkedin page: no rail
@@ -263,6 +267,13 @@ async function run(withExt: boolean) {
     layouts: (m1.LayoutCount ?? 0) - (m0.LayoutCount ?? 0),
     styles: (m1.RecalcStyleCount ?? 0) - (m0.RecalcStyleCount ?? 0),
     longTasks: raw.longTasks.length,
+    // Content moving under the reader during the scroll window (see bench/stability.ts).
+    shifts: stab?.shifts ?? null,
+    visibleMoves: stab?.visibleMoves ?? null,
+    maxMovedPx: stab?.maxMovedPx ?? null,
+    sumMovedPx: stab?.sumMovedPx ?? null,
+    hidesByZone: stab ? JSON.stringify(stab.hidesByZone) : null,
+    collapsesByZone: stab ? JSON.stringify(stab.collapsesByZone) : null,
     longTaskMs: +raw.longTasks.reduce((a, b) => a + b, 0).toFixed(0),
     // Scanner cost during the scroll only (the initial load is excluded).
     scanMs: after && before ? +(after.perf.totalMs - before.perf.totalMs).toFixed(1) : null,

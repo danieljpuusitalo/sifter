@@ -7,6 +7,7 @@ import { mutedWordHit, mutedWordPattern, tooBroad } from '../rules/filters';
 import { decideTier0 } from '../rules/tier0';
 import type { BlockCategory, HideCategory, OverrideAction } from '../types';
 import { Hider, PLACEHOLDER_ATTR } from './hider';
+import { EMPTY_VEIL_STATS, type VeilStats, type VeilTracker, type VeilTrackerFactory } from './viewport';
 
 // Content-script pipeline: extract -> fingerprint -> tier 0 -> apply
 // (BRIEF.md §5). Tier 1 (model) plugs in at the "unknown" branch in M2.
@@ -69,6 +70,12 @@ export type ScannerDeps = {
   dev?: boolean;
   /** Test hook: run the debounce and slices through this instead of timers and idle callbacks. */
   schedule?: (fn: () => void, ms: number) => unknown;
+  /**
+   * Where hidden units sit relative to the viewport (viewport.ts). With it, a hide
+   * keeps the unit's height while on screen and collapses once off screen, so the
+   * feed never moves under the reader. Without it, hides apply at once.
+   */
+  viewport?: VeilTrackerFactory;
 };
 
 type Seen = { sig: string; fp: string };
@@ -108,7 +115,7 @@ function suggestedHint(adapter: Adapter | null, rule: string | undefined): strin
   return label ? label.slice(0, MAX_HINT) : undefined;
 }
 
-const EMPTY_PERF: Omit<ScanPerf, 'pending'> = {
+const EMPTY_PERF: Omit<ScanPerf, 'pending' | keyof VeilStats> = {
   scans: 0,
   fullScans: 0,
   unitsExamined: 0,
@@ -153,7 +160,7 @@ export class Scanner {
   private touched = new Set<Node>();
   private added = new Set<Element>();
   private needFull = true;
-  private perf: Omit<ScanPerf, 'pending'> = { ...EMPTY_PERF };
+  private perf: Omit<ScanPerf, 'pending' | keyof VeilStats> = { ...EMPTY_PERF };
   private ctx: SiteContext;
   /** Blocks in force for the current context. */
   private blocks: Block[] = [];
@@ -178,6 +185,7 @@ export class Scanner {
   private readonly schedule: (fn: () => void, ms: number) => unknown;
   /** A selector decide() reads inside a unit counts siblings, so the placeholder must be out of the way (see decide). */
   private readonly positional: boolean;
+  private readonly veil: VeilTracker | null;
 
   constructor(private deps: ScannerDeps) {
     this.ctx = deps.context;
@@ -187,11 +195,17 @@ export class Scanner {
     this.positional = positionalSelectors(deps.adapter);
     this.now = deps.now ?? (() => performance.now());
     this.schedule = deps.schedule ?? ((fn, ms) => setTimeout(fn, ms));
-    this.hider = new Hider(deps.doc, deps.context.hideMode, {
-      onShow: (unit) => this.userShow(unit),
-      onNotAd: (unit) => this.userNotAd(unit),
-      onRehide: (unit) => this.userRehide(unit),
-    });
+    this.veil = deps.viewport?.((unit) => this.hider.settle(unit)) ?? null;
+    this.hider = new Hider(
+      deps.doc,
+      deps.context.hideMode,
+      {
+        onShow: (unit) => this.userShow(unit),
+        onNotAd: (unit) => this.userNotAd(unit),
+        onRehide: (unit) => this.userRehide(unit),
+      },
+      this.veil ?? undefined,
+    );
     this.compileContext();
   }
 
@@ -247,6 +261,7 @@ export class Scanner {
     this.observer?.disconnect();
     this.observer = null;
     this.hider.unhideAll();
+    this.hider.dispose();
   }
 
   /** New settings from the popup or options: re-decide everything on the page. */
@@ -344,7 +359,7 @@ export class Scanner {
       hiddenNow: this.hider.hiddenUnits().length,
       settled: !this.running && this.debounceTimer === null,
       noUnitsMatched: this.noUnitsMatched,
-      perf: { ...this.perf, pending: this.pending.length + this.carried.length },
+      perf: { ...this.perf, ...(this.veil?.stats() ?? EMPTY_VEIL_STATS), pending: this.pending.length + this.carried.length },
     };
   }
 

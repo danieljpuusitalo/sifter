@@ -78,6 +78,11 @@ Each site's rules are written and checked for its main feed, and for Google's
 results page. Other parts of the same site are not checked and may not be covered:
 Google Hotels, for one, has sponsored listings that Sifter does not hide.
 
+Sponsored posts are hidden on every page of a covered site. Suggested posts are
+hidden on the home feed only (LinkedIn `/feed`, Facebook home and the groups feed,
+Instagram home, X `/home`): a profile, a company page or a single post you opened
+on purpose is left alone, even with "Suggested posts" on.
+
 "Not yet" means the rules come from known markup and pass the synthetic fixtures,
 but nobody has watched them work on a logged-in feed. Each adapter's `verified`
 field in `src/adapters/` records exactly what was checked and when.

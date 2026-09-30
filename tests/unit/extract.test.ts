@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { adapterFor } from '../../src/adapters/index';
 import type { Adapter } from '../../src/adapters/schema';
 import { buildPayload, detectMarker, renderedText, renderedWithin } from '../../src/extract';
@@ -134,6 +134,81 @@ describe('detectMarker, structural and link markers', () => {
     expect(detectMarker(unit('<div><span aria-label="Why this ad?"></span>text</div>'), null, 'https://x.example/')).toBeNull());
   it('finds a standalone label on a generic site', () =>
     expect(detectMarker(unit('<div><div><small>Sponsored</small></div><p>Buy things.</p></div>'), null, 'https://x.example/')?.kind).toBe('label'));
+});
+
+describe('lazy label reads', () => {
+  const base = 'https://www.linkedin.com/';
+  const on = { suggested: true };
+
+  describe('no style reads for a unit whose labels cannot match', () => {
+    const noHitCard = () =>
+      unit(
+        '<div role="listitem" componentkey="update-card-focus-1"><p componentkey="n"><span>Priya Shah</span></p><p componentkey="t"><span>2h</span></p><p componentkey="b"><span>Nothing special happens here today.</span></p></div>',
+      );
+    const hitCard = () =>
+      unit(
+        '<div role="listitem" componentkey="update-card-focus-1"><p componentkey="n"><span>Promoted</span></p><p componentkey="t"><span>2h</span></p><p componentkey="b"><span>Nothing special happens here today.</span></p></div>',
+      );
+
+    it('pays no computed-style read when nothing in the card can carry a hit', () => {
+      const cs = vi.spyOn(window, 'getComputedStyle');
+      const cv = typeof Element.prototype.checkVisibility === 'function' ? vi.spyOn(Element.prototype, 'checkVisibility') : undefined;
+      expect(detectMarker(noHitCard(), linkedin, base, on)).toBeNull();
+      expect(cs).not.toHaveBeenCalled();
+      cs.mockRestore();
+      cv?.mockRestore();
+    });
+
+    it('positive control: the same shape with a "Promoted" label hits, and pays for a visibility read', () => {
+      // happy-dom's checkVisibility (the fast path renderedWithin takes) resolves style
+      // through an internal reference, not the public window.getComputedStyle accessor,
+      // so a defineProperty-based spy on window.getComputedStyle never sees it fire even
+      // though it does real work (confirmed against a plain `window.getComputedStyle =`
+      // reassignment, which does see it). checkVisibility is a plain method, so spy there.
+      const cv = vi.spyOn(Element.prototype, 'checkVisibility');
+      const hit = detectMarker(hitCard(), linkedin, base, on);
+      expect(hit?.category).toBe('sponsored');
+      expect(cv).toHaveBeenCalled();
+      cv.mockRestore();
+    });
+  });
+
+  // A hidden "Promoted" decoy leaf still does not hit, and the same span visible
+  // hits: already covered above by 'detectMarker on LinkedIn' > 'misses a hidden
+  // label' and 'hits a header label'.
+
+  it('hits when the marker sits inside a non-leaf label node', () =>
+    expect(detectMarker(unit(post('<span>Promoted</span>')), linkedin, base)?.category).toBe('sponsored'));
+  it('misses when that nested marker is itself hidden', () =>
+    expect(detectMarker(unit(post('<span class="vh">Promoted</span>')), linkedin, base)).toBeNull());
+
+  it('a hidden first label does not steal the "first" slot from the visible "Sam Doe likes this" line', () => {
+    const u = unit(
+      '<div role="listitem" componentkey="update-card-focus1"><p componentkey="n0"><span class="vh">Someone</span></p><button aria-label="menu"></button><button aria-label="hide"></button><p componentkey="s"><span>Sam Doe likes this</span></p><p componentkey="b"><span>Body.</span></p></div>',
+    );
+    const hit = detectMarker(u, linkedin, base, on);
+    expect(hit?.category).toBe('suggested');
+    expect(hit?.rule).toBe('activity');
+  });
+  it('positive control: a visible plain-name first label keeps the second line\'s ending from counting', () => {
+    const u = unit(
+      '<div role="listitem" componentkey="update-card-focus1"><p componentkey="n0"><span>Timo Aalto</span></p><button aria-label="menu"></button><button aria-label="hide"></button><p componentkey="s"><span>Sam Doe likes this</span></p><p componentkey="b"><span>Body.</span></p></div>',
+    );
+    expect(detectMarker(u, linkedin, base, on)).toBeNull();
+  });
+
+  it('an empty button costs nothing, and a real Follow button still hits', () => {
+    const u = unit('<div role="listitem" componentkey="update-card-focus1"><button></button><button></button><button>Follow</button></div>');
+    const hit = detectMarker(u, linkedin, base, on);
+    expect(hit?.rule).toBe('follow');
+  });
+  it('a unit with only empty buttons makes no computed-style reads', () => {
+    const cs = vi.spyOn(window, 'getComputedStyle');
+    const u = unit('<div role="listitem" componentkey="update-card-focus1"><button></button><button></button></div>');
+    expect(detectMarker(u, linkedin, base, on)).toBeNull();
+    expect(cs).not.toHaveBeenCalled();
+    cs.mockRestore();
+  });
 });
 
 describe('buildPayload (rule 3: only capped unit text leaves)', () => {

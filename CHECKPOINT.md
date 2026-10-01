@@ -1,5 +1,34 @@
 # Sifter checkpoint
 
+**Session 17 (2026-10-01): Daniel's live report on the PR #23 build, nine issues.
+Three stacked PRs, all open, none merged: #24 (`fix/live-report`, on #23), #25
+(`fix/live-measure`, on #24), #26 (`fix/fb-stories-in-feed`, on #25).** Merge in that
+order. Plan: `~/.claude/plans/shimmying-booping-whistle.md`.
+
+- **#24, the certain fixes:**
+  - **F, network-liked switch:** with `activity` off, the liked stranger's Follow button hid the post anyway as `follow`. Fixed with the rule field `covers`.
+  - **I, Google blank top, and first-load B:** there is no veil during the load grace (`LOAD_GRACE_MS` 3000, or until the first gesture).
+  - **E, pause and toggles:** releases are anchored with a `scrollBy`, and the popup broadcast is debounced to 500 ms.
+  - **G, muted words:** they save as you type, phrases split across nodes now match, and `crypto*` prefix syntax works.
+- **#25, measured first (`SIFTER_TRACE=1` builds only; a release build compiles the tracing out, checked by grep):**
+  - **A:** Sifter's cold-load cost is 37–81 ms in 5 s. LinkedIn is the slow part. No change.
+  - **Mid-scroll B:** in-view hides had mostly entered the screen while still queued, so a near-first decide queue was added (`src/content/near.ts`).
+  - **D, the 855/869 px jumps:** a tall veil whose top went under the header settled at once. The correction on its bottom edge then slid the post above it down by the whole collapse height. Now it settles only when 48 px or less of it remains below the top edge (`UNDER_TOP_VISIBLE_PX`).
+  - **Also added:** a retry for a correction that misses (not when clamped), and a below-deferral mid-scroll. Both are counted; both read 0 live.
+  - **Live LinkedIn after the fix (3 runs):** worst on-run move 250 / 0 / 250 px, against 868 / 869 / 855 before. LinkedIn moves 250 px on its own in every off-run. Correction misses 0, flips 0.
+- **#26, H:** Facebook in-feed Stories is a feed article whose story cards all sit inside a `role=region`. In the run, 19 of 19 ordinary posts had a single avatar story link and no region. The `stories` rule (relabelled "Stories") gains `[role="region"] a[href*="/stories/"]`. A fixture decoy guards precision. The capture script and its output stay in `fixtures/private/`.
+- **Receipts (on #26's head):**
+  - `pnpm verify`: 389 passed, 5 skipped; tp=62 fp=0 fn=0.
+  - `pnpm test:e2e`: 43 passed, 1 skipped.
+  - `bench:scroll --cpu 1 --strict`: exit 0 on LinkedIn and Facebook.
+  - Every new rule is mutation-checked.
+  - `~/sifter-v1.0.0` diffs identical to #26's release build. The old copy is in `%TEMP%/sifter-v1.0.0-backup-2026-10-01b`.
+- **Open:**
+  - **C** (a false hide, then the bar vanished after Show): flips stayed at 0 in every traced run, so it was not reproduced. This needs Daniel to send the text on the hidden bar, which names the rule.
+  - **A single 20 ms decide on live LinkedIn:** seen in 2 of 3 runs (`maxDecideMs` 19.6–20.5; hard rule 7 is 8 ms). It is in `decide()`, not the tracker. Profile with `--profile` and a `SIFTER_NOMINIFY` build.
+  - **The H selector depends on Facebook's English UI only through the capture.** The anchor itself (role plus href) is not localised.
+- **Next:** Daniel reloads `~/sifter-v1.0.0` and judges it live, then merges #23 → #26 in order.
+
 **Session 16 (2026-09-30 to 10-01, branch `fix/veil-linkedin`): DONE, PR #23 open,
 not merged.** (Landed 10-01: the session had ended with the final fix uncommitted, the
 branch unpushed and no PR despite this line; gates re-run green before the push.) Daniel, on the veil from session 15: on LinkedIn "hidden posts sometimes are
@@ -624,4 +653,14 @@ path is still unverified live (no sponsored feed post appeared this session eith
 - **A hide in view is a veil, not a collapse** (session 15): the veil is `clip-path` on the unit's children because `renderedWithin`/`renderedText`/`checkVisibility` ignore clip-path, so a rescan reads a veiled unit as the site built it. Never "simplify" it to `visibility` or `opacity`. While veiled (and always in blur mode) the placeholder host is `display:flow-root; height:0`, so the bar adds no height. `tests/unit/hider-veil.test.ts`, `tests/e2e/stability.spec.ts`.
 - **Zones must allow for the scroller's clipping** (session 15, `zoneOf` in `src/content/viewport.ts`): not intersecting is not outside the window. A feed that scrolls inside an element clips cards behind its header while their boxes still reach into the window; place them by the window's middle. `tests/unit/viewport-zone.test.ts` and the clipped-element e2e variant.
 - **Above-screen collapses wait for `scrollend` and correct with `scrollBy` in the same task** (session 15): never mid-gesture, and never left to Chrome's anchoring, which lands later and is off in element scrollers that set `overflow-anchor: none` or move their own slots.
+- **A rule's `covers`** (session 17): an off rule that matches a unit silences the rules its signal brings along (LinkedIn `activity` covers `follow`). Without it, switching "network liked" off just re-hides the post as "don't follow".
+- **Load grace before veils** (session 17, `LOAD_GRACE_MS`): until the first gesture, a hide collapses at once. Nothing anchors the reader yet, and a veil at load is a hole at the top (Google `#tads`).
+- **Anchored releases** (session 17, `Scanner.anchored`): pause, Show all and a switch turned off correct the scroll on the first visible unit that is not changing. Unanchored, every hidden post above the screen expands under the reader.
+- **Popup broadcast debounce 500 ms** (session 17): rapid toggling becomes one re-decide.
+- **Muted words autosave** (session 17): a typed word lost on navigation read as "muted words don't work".
+- **Tracing is gated** (session 17, `src/content/trace.ts`): only dev and `SIFTER_TRACE=1` builds record latency and flips. A release build must not contain it (grep `enteredWhileQueued` in the built `content.js`: 0).
+- **Near-first decide queue** (session 17, `src/content/near.ts`): units within a screen of the viewport are decided first. Most mid-scroll in-view hides had entered the screen while queued.
+- **An under-top veil settles only when ≤ 48 px of it is still below the top edge** (session 17, `UNDER_TOP_VISIBLE_PX`): the correction is on the unit's bottom edge, so collapsing a mostly visible tall veil slides the post above it down by its whole height (the 855/869 px live jumps). Never "simplify" it back to "top went under the edge".
+- **Below-deferral and the correction retry** (session 17): a unit reported below mid-scroll is re-checked after `scrollend` (IntersectionObserver reports go stale on a busy page). A missed correction is retried once, but never when the scroller was clamped.
+- **The Facebook `stories` selector needs the `role=region`:** a bare `/stories/` link matches every post whose author has a story (19 of 19 posts in the capture).
 - **`release.yml` matches the CHANGELOG heading with `index()`, not a regex.** `## [x.y.z]` as an awk regex is a character class and never matches; this failed the first `v1.0.0` run after every test had passed.

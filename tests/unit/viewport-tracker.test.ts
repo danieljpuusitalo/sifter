@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { viewportTracker, type VeilTracker } from '../../src/content/viewport';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { LOAD_GRACE_MS, viewportTracker, type VeilTracker } from '../../src/content/viewport';
 
 // The tracker's on-screen checks, with the browser's parts faked: an
 // IntersectionObserver that reports what the test says, frames run by hand, and
@@ -189,5 +189,42 @@ describe('viewport tracker, on-screen veils', () => {
     runFrames();
     expect(settled).toEqual([]);
     expect(scrolls).toEqual([]);
+  });
+});
+
+// Before the reader has done anything, a hide takes its real mode at once: a veil
+// at load only strands the page below a blank band (Google's ad block, 2026-10-01).
+describe('viewport tracker, load grace', () => {
+  it('says "load" until the first gesture, and counts each such hide', () => {
+    expect(tracker.loadHide?.()).toBe(true);
+    expect(tracker.loadHide?.()).toBe(true);
+    expect(tracker.stats().hidesAtLoad).toBe(2);
+    document.dispatchEvent(new Event('wheel'));
+    expect(tracker.loadHide?.()).toBe(false);
+    expect(tracker.stats().hidesAtLoad).toBe(2);
+  });
+
+  it('any scroll ends it, the site\'s own included', () => {
+    scroll(10, []);
+    expect(tracker.loadHide?.()).toBe(false);
+  });
+
+  it('a key or a pointer ends it', () => {
+    document.dispatchEvent(new Event('keydown'));
+    expect(tracker.loadHide?.()).toBe(false);
+  });
+
+  it('ends on its own after LOAD_GRACE_MS', () => {
+    vi.useFakeTimers();
+    try {
+      tracker.disconnect();
+      tracker = viewportTracker(win as unknown as Window & typeof globalThis)!(() => {});
+      vi.advanceTimersByTime(LOAD_GRACE_MS - 1);
+      expect(tracker.loadHide?.()).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(tracker.loadHide?.()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

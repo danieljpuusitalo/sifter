@@ -44,6 +44,10 @@ class FakeTracker implements VeilTracker {
   disconnect(): void {
     this.watched.clear();
   }
+  loading = false;
+  loadHide(): boolean {
+    return this.loading;
+  }
   /** Stand-in for the IntersectionObserver reporting every watched unit off screen. */
   offScreen(): void {
     for (const u of [...this.watched]) this.settle(u);
@@ -88,6 +92,19 @@ describe('Hider veil', () => {
     expect(t.watched.has(unit())).toBe(true);
     // Still counted as hidden for the popup.
     expect(h.hiddenUnits()).toEqual([unit()]);
+  });
+
+  // Google, 2026-10-01: the ad block above the results veiled at load and left a
+  // blank band at the top until the reader scrolled. Nobody is reading yet at load.
+  it('a hide while the tracker says the page is loading skips the veil and collapses at once', () => {
+    const { h, t } = veiledHider();
+    t.loading = true;
+    h.hide(unit(), 'sponsored');
+    expect(h.isHidden(unit())).toBe(true);
+    expect(h.isVeiled(unit())).toBe(false);
+    expect(unit().classList.contains(VEIL_CLASS)).toBe(false);
+    expect(unit().classList.contains(COLLAPSE_CLASS)).toBe(true);
+    expect(t.watched.has(unit())).toBe(false);
   });
 
   it('the veil CSS clips instead of hiding, and lays the placeholder over the content at zero height', () => {

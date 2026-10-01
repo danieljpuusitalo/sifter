@@ -48,6 +48,17 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator('#tads')).toHaveClass(/sifter-hidden/);
 });
 
+// Live report, 2026-10-01: the top ad block, on screen at load, became a veil that
+// kept its height, so the results sat under a blank band until a scroll. Before the
+// reader has done anything, a hide collapses at once and the results move up.
+test('#tads on screen at load collapses at once, with no veil and no blank band', async ({ page }) => {
+  const tads = page.locator('#tads');
+  await expect(tads).toHaveClass(/sifter-collapse/);
+  await expect(tads).not.toHaveClass(/sifter-veil/);
+  const box = await tads.boundingBox();
+  expect(box!.height, 'collapsed to the bar').toBeLessThan(60);
+});
+
 test('carousel appended as a whole subtree after load is hidden', async ({ page }) => {
   await page.evaluate((html) => {
     const wrap = document.createElement('div');

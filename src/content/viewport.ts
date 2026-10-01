@@ -40,6 +40,8 @@ export type VeilStats = {
   veilsPinned: number;
   /** On-screen veils settled because their top (and bar) went up under the header. */
   veilsUnderTop: number;
+  /** Hides applied at once, with no veil, because the page was still loading (see `loadHide`). */
+  hidesAtLoad: number;
 };
 
 export const EMPTY_VEIL_STATS: VeilStats = {
@@ -50,6 +52,7 @@ export const EMPTY_VEIL_STATS: VeilStats = {
   anchorCorrections: 0,
   veilsPinned: 0,
   veilsUnderTop: 0,
+  hidesAtLoad: 0,
 };
 
 export interface VeilTracker {
@@ -59,6 +62,13 @@ export interface VeilTracker {
   unwatch(unit: Element): void;
   stats(): VeilStats;
   disconnect(): void;
+  /**
+   * Whether a new hide may skip the veil and take its real mode at once, because
+   * the page is still loading: the reader has not scrolled or touched it yet, and
+   * the site itself is still moving things. Counts the hide when it says yes.
+   * Optional: without it every hide is veiled.
+   */
+  loadHide?(): boolean;
 }
 
 export type VeilTrackerFactory = (settle: (unit: Element) => void) => VeilTracker;
@@ -75,6 +85,15 @@ const MOVING_SCROLL_PX = 48;
 const HEADER_BAND_PX = 64;
 /** In a feed that scrolls inside an element, a top this far past the element's own top edge is clipped. */
 const CLIP_BAND_PX = 8;
+/**
+ * The load window: until the reader's first gesture, or this long after the
+ * tracker starts, a hide collapses at once instead of veiling. A veil on a page
+ * nobody has scrolled yet only leaves a hole at the top (Google's ad block left the
+ * results stranded below it until a scroll, 2026-10-01). Ended early by any gesture.
+ */
+export const LOAD_GRACE_MS = 3000;
+/** Anything the reader does that means they have found their place on the page. */
+const GESTURES = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
 
 type Zone = 'in' | 'above' | 'below';
 
@@ -126,6 +145,9 @@ class ViewportTracker implements VeilTracker {
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private frame: number | undefined;
   private readonly s: VeilStats = { ...EMPTY_VEIL_STATS };
+  /** True until the reader's first gesture or `LOAD_GRACE_MS`: see `loadHide`. */
+  private grace = true;
+  private graceTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     private readonly win: Window & typeof globalThis,
@@ -136,7 +158,24 @@ class ViewportTracker implements VeilTracker {
     // Capture: element scroll events do not bubble, but they do pass through the document.
     doc.addEventListener('scroll', this.onScroll, { capture: true, passive: true });
     doc.addEventListener('scrollend', this.onScrollEnd, { capture: true, passive: true });
+    for (const g of GESTURES) doc.addEventListener(g, this.endGrace, { capture: true, passive: true });
+    this.graceTimer = setTimeout(this.endGrace, LOAD_GRACE_MS);
   }
+
+  loadHide(): boolean {
+    if (!this.grace) return false;
+    this.s.hidesAtLoad++;
+    return true;
+  }
+
+  private readonly endGrace = (): void => {
+    if (!this.grace) return;
+    this.grace = false;
+    if (this.graceTimer !== undefined) clearTimeout(this.graceTimer);
+    this.graceTimer = undefined;
+    const doc = this.win.document;
+    for (const g of GESTURES) doc.removeEventListener(g, this.endGrace, { capture: true });
+  };
 
   watch(unit: Element): void {
     if (this.watched.has(unit)) return;
@@ -158,6 +197,7 @@ class ViewportTracker implements VeilTracker {
   }
 
   disconnect(): void {
+    this.endGrace();
     this.io.disconnect();
     const doc = this.win.document;
     doc.removeEventListener('scroll', this.onScroll, { capture: true });
@@ -173,6 +213,9 @@ class ViewportTracker implements VeilTracker {
   }
 
   private readonly onScroll = (e: Event): void => {
+    // Any scroll ends the load window, the site's own included: once the page sits
+    // somewhere other than its top, a collapse on screen moves what the reader sees.
+    this.endGrace();
     this.scrolling = true;
     this.scrollSeq++;
     const t = e.target as Node | null;

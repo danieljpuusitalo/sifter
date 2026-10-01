@@ -261,7 +261,8 @@ export class Hider {
     this.hidden.add(unit);
     this.tracked.add(unit);
     (unit as HTMLElement).classList.add(HIDDEN_CLASS);
-    this.applyMode(unit, rec, !!this.veil);
+    // While the page is still loading, nobody is reading yet: take the real mode at once.
+    this.applyMode(unit, rec, !!this.veil && !this.veil.loadHide?.());
   }
 
   /** Hard reset: removes the placeholder and the record entirely. Used for a full unhide, disabling, and "Not an ad". */

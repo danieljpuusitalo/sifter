@@ -93,6 +93,40 @@ describe('Tracer: hide latency', () => {
     expect(t.stats().latency.alreadyOnScreen).toMatchObject({ n: 1, max: 200 });
   });
 
+  it('splits an on-screen hide at the collect, and counts a unit queued before', () => {
+    const t = tracer();
+    const u = el();
+    const off = el();
+    t.queued(u, 0, 100, 3);
+    FakeIO.last.answer(() => false);
+    t.queued(u, 1000, 1300, 7);
+    t.queued(off, 1000, 1300, 8);
+    FakeIO.last.answer(() => false);
+    t.hid(u, 2000, { category: 'suggested' });
+    t.hid(off, 2000, { category: 'suggested' });
+    FakeIO.last.answer((e) => e === u);
+    expect(t.stats().onScreen).toMatchObject({
+      n: 1,
+      requeued: 1,
+      waitMs: { max: 300 },
+      queueMs: { max: 700 },
+      sinceFirstMs: { max: 2000 },
+      depth: { max: 7 },
+    });
+  });
+
+  it('splits the wait before the collect at the debounce firing', () => {
+    const t = tracer();
+    const u = el();
+    t.dirty(100);
+    t.due(360);
+    t.queued(u, t.takeDirty(500), 500, 0);
+    FakeIO.last.answer(() => true);
+    t.hid(u, 520, { category: 'sponsored' });
+    FakeIO.last.answer(() => true);
+    expect(t.stats().onScreen).toMatchObject({ waitMs: { max: 400 }, debounceMs: { max: 260 }, idleMs: { max: 140 } });
+  });
+
   it('an empty unit leaves the queue record: its content had not arrived', () => {
     const t = tracer();
     const u = el();

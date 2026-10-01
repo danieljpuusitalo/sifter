@@ -44,6 +44,15 @@ const SLICE_BUDGET_MS = 4;
 const STARVED_BUDGET_MS = 2;
 const IDLE_TIMEOUT_MS = 200;
 /**
+ * The idle timeout while the reader may be about to see the result: the collect
+ * after a debounce (its units are unplaced yet), and a queue whose head is near the
+ * viewport. Live LinkedIn (2026-10-01) is busy 500-800 ms of every second, so a
+ * slice there almost always starts on its timeout and decides one unit: at 200 ms
+ * that wait was most of a hide landing on screen (idle p50 201 ms, p90 575 ms; the
+ * queue after the collect up to 750 ms). The work is the same, only sooner.
+ */
+const PROMPT_IDLE_TIMEOUT_MS = 50;
+/**
  * The decide-cost estimate before any unit has been measured. Starting at zero let
  * the first slice after page load (cold code, a page whose styles are all dirty)
  * decide until it had already overrun; a warm decision costs well under this.
@@ -164,6 +173,9 @@ export class Scanner {
   /** The near tracker's version the queue was last ordered by. */
   private orderedAt = -1;
   private running = false;
+  /** The idle callback the next slice waits on, and whether it waits the prompt timeout. */
+  private sliceHandle: number | null = null;
+  private slicePrompt = false;
   /** A scan was requested: the next slice starts by collecting units. */
   private needCollect = false;
   /** Hides a slice decided but ran out of budget to write; applied first thing next slice. */
@@ -458,6 +470,7 @@ export class Scanner {
     this.debounceTimer = this.schedule(
       () => {
         this.debounceTimer = null;
+        this.deps.trace?.due(this.now());
         this.scanNow(false);
       },
       this.deps.adapter ? DEBOUNCE_MS : GENERIC_DEBOUNCE_MS,
@@ -482,7 +495,9 @@ export class Scanner {
     this.needCollect = true;
     if (!this.running) {
       this.running = true;
-      this.idle((budget) => this.runSlice(budget));
+      this.nextSlice(true);
+    } else if (this.sliceHandle !== null) {
+      this.nextSlice(true);
     }
   }
 
@@ -632,21 +647,40 @@ export class Scanner {
     return [...dirty];
   }
 
-  /** Runs `fn` in idle time, after the current frame is painted, so it never delays one. */
-  private idle(fn: (budget: number) => void): void {
+  /**
+   * Runs the next slice in idle time, after the current frame is painted, so it never
+   * delays one. `prompt` waits for idle time only `PROMPT_IDLE_TIMEOUT_MS`, and
+   * promotes a slice already waiting the long timeout (one slice chain, never two).
+   */
+  private nextSlice(prompt: boolean): void {
     if (this.deps.schedule) {
-      this.deps.schedule(() => fn(SLICE_BUDGET_MS), 0);
+      this.deps.schedule(() => this.runSlice(SLICE_BUDGET_MS), 0);
       return;
     }
     const view = this.deps.doc.defaultView;
-    if (view && typeof view.requestIdleCallback === 'function') {
-      view.requestIdleCallback(
-        (d) => fn(d.didTimeout ? STARVED_BUDGET_MS : Math.min(SLICE_BUDGET_MS, Math.max(1, d.timeRemaining()))),
-        { timeout: IDLE_TIMEOUT_MS },
-      );
-    } else {
-      setTimeout(() => fn(SLICE_BUDGET_MS), 0);
+    if (!view || typeof view.requestIdleCallback !== 'function') {
+      setTimeout(() => this.runSlice(SLICE_BUDGET_MS), 0);
+      return;
     }
+    if (this.sliceHandle !== null) {
+      if (!prompt || this.slicePrompt) return;
+      view.cancelIdleCallback(this.sliceHandle);
+    }
+    this.slicePrompt = prompt;
+    this.sliceHandle = view.requestIdleCallback(
+      (d) => {
+        this.sliceHandle = null;
+        this.runSlice(d.didTimeout ? STARVED_BUDGET_MS : Math.min(SLICE_BUDGET_MS, Math.max(1, d.timeRemaining())));
+      },
+      { timeout: prompt ? PROMPT_IDLE_TIMEOUT_MS : IDLE_TIMEOUT_MS },
+    );
+  }
+
+  /** The reader may see the next slice's result: a collect is due, or the queue's head is near the viewport. */
+  private promptNext(): boolean {
+    if (this.needCollect) return true;
+    const head = this.pending[0];
+    return !!head && !!this.deps.near?.isNear(head);
   }
 
   /**
@@ -683,7 +717,7 @@ export class Scanner {
         // Our own placeholder can match a unit selector (X's cells are bare divs).
         if (u.hasAttribute(PLACEHOLDER_ATTR)) continue;
         this.enqueue(u);
-        trace?.queued(u, since);
+        trace?.queued(u, since, t0, this.pending.length - 1);
       }
       collectMs = this.now() - t0;
       this.perf.collectMs += collectMs;
@@ -750,7 +784,7 @@ export class Scanner {
       console.warn(`[sifter] slice took ${took.toFixed(1)} ms for ${i} units${collected ? ' (with collect)' : ''}`);
     }
     if (this.pending.length > 0 || this.carried.length > 0 || this.needCollect) {
-      this.idle((b) => this.runSlice(b));
+      this.nextSlice(this.promptNext() || (collected && this.pending.length > 0));
     } else {
       this.running = false;
       this.releasing = false;

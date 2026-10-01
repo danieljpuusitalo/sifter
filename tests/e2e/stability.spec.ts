@@ -113,6 +113,7 @@ async function watchShifts(page: Page): Promise<() => Promise<number[]>> {
 
 declare const chrome: {
   tabs: { query(q: { url: string }): Promise<Array<{ id?: number }>>; sendMessage(tabId: number, message: unknown): Promise<unknown> };
+  runtime: { sendMessage(message: unknown): Promise<unknown> };
 };
 
 /** The page's scanner counters, asked the way the popup asks. */
@@ -234,6 +235,56 @@ for (const variant of SCROLLERS) {
     const p = (await perf(context)) as unknown as { veilsUnderTop: number; anchorCorrections: number };
     expect(p.veilsUnderTop, 'settled because its top went under the edge, not because it left the screen').toBeGreaterThan(0);
     expect(p.anchorCorrections).toBeGreaterThan(0);
+  });
+}
+
+// Live report, 2026-10-01: pausing (and switching a category off) released every hidden
+// card at once, and those above the screen expanded under the reader: the feed jumped.
+// Two ways in: pause releases everything in one pass; a switch turned off releases slice by slice.
+const RELEASES = [
+  { name: 'pausing', on: { type: 'sifter:pause', minutes: 5 }, off: { type: 'sifter:pause', minutes: null } },
+  {
+    name: 'switching Sponsored off',
+    on: { type: 'sifter:setSiteCategory', hostname: HOST, category: 'sponsored', value: false },
+    off: { type: 'sifter:setSiteCategory', hostname: HOST, category: 'sponsored', value: null },
+  },
+] as const;
+
+for (const variant of SCROLLERS) for (const release of RELEASES) {
+  test(`${release.name} releases hidden cards above the screen without moving the screen (${variant.name})`, async ({ context, page }) => {
+    await open(page, variant.css);
+    // Scroll the hidden cards (1002, 1004, 1006) off the top, and note the first organic card on screen.
+    const ref = await page.evaluate(() => {
+      const main = document.getElementById('workspace') as HTMLElement;
+      const inElement = getComputedStyle(main).overflowY === 'auto';
+      const clipTop = inElement ? main.getBoundingClientRect().top : 0;
+      const target = document.querySelector('[componentkey^="update-card-focus1010"]') as HTMLElement;
+      (inElement ? main : window).scrollBy(0, target.getBoundingClientRect().top - clipTop - 100);
+      return { clipTop, key: target.getAttribute('componentkey') as string };
+    });
+    await page.waitForTimeout(500);
+    const hidden = page.locator('[componentkey^="update-card-focus1004"]');
+    await expect(hidden).toHaveClass(/\bsifter-collapse\b/);
+    expect((await hidden.boundingBox())!.y, 'positive control: a hidden card sits above the screen').toBeLessThan(ref.clipTop);
+    const before = await topOf(page, `[componentkey="${ref.key}"]`);
+    const moves = await watchShifts(page);
+    const [sw] = context.serviceWorkers();
+    const control = await context.newPage();
+    await control.goto(`chrome-extension://${new URL(sw!.url()).host}/popup.html`);
+    await control.evaluate((m) => chrome.runtime.sendMessage(m), release.on);
+    await expect(hidden).not.toHaveClass(/\bsifter-hidden\b/);
+    await page.waitForTimeout(300);
+    const after = await topOf(page, `[componentkey="${ref.key}"]`);
+    expect(Math.abs(after - before), `${ref.key} moved from ${before} to ${after}`).toBeLessThanOrEqual(1);
+    expect(await moves()).toEqual([]);
+    // With anchoring on, Chrome holds the card itself before Sifter reads it (no correction
+    // needed); without it, only Sifter's scroll does, and these variants fail without it.
+    if (variant.css.includes('overflow-anchor: none')) {
+      const p = (await perf(context)) as unknown as { releaseCorrections: number };
+      expect(p.releaseCorrections, 'the release moved the page and Sifter undid it').toBeGreaterThan(0);
+    }
+    await control.evaluate((m) => chrome.runtime.sendMessage(m), release.off);
+    await control.close();
   });
 }
 

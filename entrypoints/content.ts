@@ -89,9 +89,19 @@ export default defineContentScript({
     live.start();
 
     let resumeTimer: ReturnType<typeof setTimeout> | undefined;
+    // A context plus whether it is paused right now: the same pausedUntil means
+    // something else once that moment has passed.
+    const keyOf = (ctx: SiteContext) => `${ctx.pausedUntil !== null && ctx.pausedUntil > Date.now()}${JSON.stringify(ctx)}`;
+    let applied = keyOf(context);
     const refresh = async () => {
       const ctx = await withRetry(() => send<SiteContext>({ type: 'sifter:getContext', hostname }), CONTEXT_RETRY_DELAYS_MS);
-      live.applyContext(ctx);
+      // The popup refreshes its tab at once and the settings broadcast follows it: the
+      // second brings nothing new and must not re-decide the whole page again.
+      const key = keyOf(ctx);
+      if (key !== applied) {
+        applied = key;
+        live.applyContext(ctx);
+      }
       // Answer with the re-decided page, not a half-done one; but never hang the popup.
       await Promise.race([live.settled(), new Promise((r) => setTimeout(r, SETTLE_CAP_MS))]);
       clearTimeout(resumeTimer);

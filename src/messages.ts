@@ -91,6 +91,8 @@ export type ScanPerf = {
   emptySkipped: number;
   /** Times `decide` or `apply` threw for a unit: caught, skipped, counted, warned once. */
   decideErrors: number;
+  /** Release passes (pause, a switch turned off, Show all) that scrolled back to keep the reader's post in place. */
+  releaseCorrections: number;
   slices: number;
   totalMs: number;
   /** Longest slice, including the collect step it started with. `resetPerfPeaks` zeroes it. */

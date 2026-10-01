@@ -6,6 +6,7 @@ import type { PageState, ScanPerf, SiteContext } from '../messages';
 import { mutedWordHit, mutedWordPattern, tooBroad } from '../rules/filters';
 import { decideTier0 } from '../rules/tier0';
 import type { BlockCategory, HideCategory, OverrideAction } from '../types';
+import { keepInPlace } from './anchor';
 import { Hider, PLACEHOLDER_ATTR } from './hider';
 import { EMPTY_VEIL_STATS, type VeilStats, type VeilTracker, type VeilTrackerFactory } from './viewport';
 
@@ -123,6 +124,7 @@ const EMPTY_PERF: Omit<ScanPerf, 'pending' | keyof VeilStats> = {
   foreignHidden: 0,
   emptySkipped: 0,
   decideErrors: 0,
+  releaseCorrections: 0,
   slices: 0,
   totalMs: 0,
   maxSliceMs: 0,
@@ -186,6 +188,12 @@ export class Scanner {
   /** A selector decide() reads inside a unit counts siblings, so the placeholder must be out of the way (see decide). */
   private readonly positional: boolean;
   private readonly veil: VeilTracker | null;
+  /**
+   * A pass the user started (pause, a switch, "Not an ad") is releasing posts:
+   * its writes keep the reader's post in place. Cleared when the queue drains, so
+   * the scroll-time path never pays the forced layout that costs (hard rule 7).
+   */
+  private releasing = false;
 
   constructor(private deps: ScannerDeps) {
     this.ctx = deps.context;
@@ -260,7 +268,7 @@ export class Scanner {
   stop(): void {
     this.observer?.disconnect();
     this.observer = null;
-    this.hider.unhideAll();
+    this.inPlace(() => this.hider.unhideAll());
     this.hider.dispose();
   }
 
@@ -274,13 +282,14 @@ export class Scanner {
       // Drop queued work too: a slice already scheduled must not hide anything now.
       this.dropQueue();
       this.hiddenFps.clear();
-      this.hider.unhideAll();
+      this.inPlace(() => this.hider.unhideAll());
       this.markFull();
       this.noUnitsMatched = false;
       return;
     }
     // Hidden elements a full scan may no longer collect (a block whose category or
     // rule was just switched off) still need a fresh decision, to be shown again.
+    this.releasing = true;
     for (const u of this.hider.hiddenUnits()) this.enqueue(u);
     this.scanNow();
   }
@@ -315,6 +324,7 @@ export class Scanner {
   /** A user override changed: re-decide the whole page, so copies of the same post follow it. */
   private redecideAll(): void {
     this.seen = new WeakMap();
+    this.releasing = true;
     for (const u of this.hider.hiddenUnits()) this.enqueue(u);
     this.scanNow();
   }
@@ -340,8 +350,19 @@ export class Scanner {
   }
 
   showAll(): void {
-    for (const u of this.hider.hiddenUnits()) this.userShow(u);
+    this.inPlace(() => {
+      for (const u of this.hider.hiddenUnits()) this.userShow(u);
+    });
   }
+
+  /** Runs writes that change heights across the page, then scrolls back so the reader's post has not moved. */
+  private inPlace(writes: () => void): void {
+    if (keepInPlace(this.deps.doc, this.anchorable, writes, this.deps.adapter?.feedRootSelector) !== 0) this.perf.releaseCorrections++;
+  }
+
+  /** A post the reader may be looking at: what `inPlace` anchors to. */
+  private readonly anchorable = (el: Element): boolean =>
+    this.hider.isHidden(el) || this.userShown.has(el) || (!!this.deps.adapter && this.isUnit(el));
 
   state(): PageState {
     const counts: PageState['counts'] = {};
@@ -600,13 +621,14 @@ export class Scanner {
     if (!this.active) {
       this.dropQueue();
       this.running = false;
+      this.releasing = false;
       this.settle();
       return;
     }
     const start = this.now();
     const carried = this.carried;
     this.carried = [];
-    for (const d of carried) this.applySafely(d);
+    this.applyAll(carried);
     const carriedMs = this.now() - start;
     let collected = false;
     let collectMs = 0;
@@ -652,10 +674,14 @@ export class Scanner {
     const decideMs = this.now() - decideStart;
     // Writes: count against the budget too, and carry what does not fit.
     let applied = 0;
-    while (applied < decisions.length) {
-      this.applySafely(decisions[applied++] as Decision);
-      if (applied < decisions.length && this.now() - start >= budget) break;
-    }
+    const writes = () => {
+      while (applied < decisions.length) {
+        this.applySafely(decisions[applied++] as Decision);
+        if (applied < decisions.length && this.now() - start >= budget) break;
+      }
+    };
+    if (this.releasing && decisions.some((d) => !d.hide)) this.inPlace(writes);
+    else writes();
     if (applied < decisions.length) this.carried = decisions.slice(applied);
     const took = this.now() - start;
     this.perf.slices++;
@@ -681,8 +707,17 @@ export class Scanner {
       this.idle((b) => this.runSlice(b));
     } else {
       this.running = false;
+      this.releasing = false;
       this.settle();
     }
+  }
+
+  private applyAll(ds: Decision[]): void {
+    const writes = () => {
+      for (const d of ds) this.applySafely(d);
+    };
+    if (this.releasing && ds.some((d) => !d.hide)) this.inPlace(writes);
+    else writes();
   }
 
   /**

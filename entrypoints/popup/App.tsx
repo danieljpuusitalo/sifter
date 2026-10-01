@@ -101,6 +101,20 @@ export function App() {
   );
 }
 
+// Live report, 2026-10-01: "muted words don't work" with nothing on screen to say
+// whether any were saved. The count makes that visible where the switch is.
+function FiltersNote(props: { words: number }) {
+  const n = props.words;
+  return (
+    <p class="sub muted small">
+      {n === 0 ? 'No muted words yet' : `${n} muted word${n === 1 ? '' : 's'}`} ·{' '}
+      <button class="link" onClick={() => void browser.runtime.openOptionsPage()}>
+        {n === 0 ? 'Add' : 'Edit'}
+      </button>
+    </p>
+  );
+}
+
 function Running(props: { tab: Tab; state: PageState; settings: Settings; onChange: () => void; onError: (e: string) => void }) {
   const { tab, state, settings } = props;
   const entries = Object.entries(state.counts).filter(([, n]) => n > 0) as [HideCategory, number][];
@@ -198,6 +212,7 @@ function Running(props: { tab: Tab; state: PageState; settings: Settings; onChan
                     {custom && <span class="muted small"> · this site only</span>}
                   </span>
                 </label>
+                {r.cat === 'custom' && <FiltersNote words={settings.mutedWords.length} />}
                 {rules.map((rule) => (
                   <label key={rule.id} class="switch sub">
                     <input

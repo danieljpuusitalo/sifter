@@ -391,22 +391,28 @@ export function hasContent(unit: Element): boolean {
  * walks every text node (including hidden ones) because it also feeds the
  * fingerprint, so a decoy or collapsed-tail occurrence must not change what the
  * post fingerprints as. A custom hide is a different question: it must fire only
- * on a word the reader can see. Walks the unit's own text nodes (a TreeWalker,
- * never a layout) and stops at the first one the pattern matches and
- * `renderedWithin` confirms, so this only costs style reads when a word actually
- * matched (hard rule 7).
+ * on a word the reader can see. Joins the rendered text nodes the way `unitText`
+ * joins all of them and tests once, so a muted phrase split across nodes ("mass"
+ * plain, "layoffs" in a link) matches here exactly when it matched there (live
+ * report, 2026-10-01: testing node by node never saw such a phrase). A TreeWalker
+ * and computed style, never a layout, and the scanner only calls this once
+ * `unitText` already matched (hard rule 7).
  */
 export function mutedWordRendered(unit: Element, pattern: RegExp): boolean {
   const doc = unit.ownerDocument;
   const walker = doc.createTreeWalker(unit, 4 /* NodeFilter.SHOW_TEXT */);
   const cache: VisibilityCache = new Map();
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+  const parts: string[] = [];
+  let len = 0;
+  for (let n = walker.nextNode(); n && len < MAX_UNIT_TEXT; n = walker.nextNode()) {
     const parent = n.parentElement;
     if (!parent || SKIP_TEXT_IN.has(parent.localName.toUpperCase())) continue;
     const t = n.nodeValue ?? '';
-    if (t && pattern.test(t) && renderedWithin(parent, unit, cache)) return true;
+    if (!t.trim() || !renderedWithin(parent, unit, cache)) continue;
+    parts.push(t);
+    len += t.length;
   }
-  return false;
+  return pattern.test(normaliseText(parts.join(' ')));
 }
 
 export function buildPayload(

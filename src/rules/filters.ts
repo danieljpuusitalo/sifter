@@ -13,15 +13,25 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** A muted word ending in `*` matches any word starting with it: `crypto*` hides "cryptocurrency". */
+const PREFIX_MARK = /\*$/;
+
+/** The part of a muted word that must match: the word without a trailing `*`. */
+export function mutedWordStem(word: string): string {
+  return word.trim().replace(PREFIX_MARK, '').trim();
+}
+
 /**
  * One case-insensitive pattern for all muted words, matched on word edges so
  * "cat" doesn't hide "education". Unicode-aware: \b is ASCII-only in JS, so
- * edges are "not a letter or digit" instead.
+ * edges are "not a letter or digit" instead. A trailing `*` opts a word into
+ * prefix matching, and the hit is then the whole word it matched.
  */
 export function mutedWordPattern(words: readonly string[]): RegExp | null {
-  const clean = [...new Set(words.map((w) => w.trim().toLowerCase()).filter((w) => w.length >= 2))].slice(0, MAX_WORDS);
+  const clean = [...new Set(words.map((w) => w.trim().toLowerCase()).filter((w) => mutedWordStem(w).length >= 2))].slice(0, MAX_WORDS);
   if (clean.length === 0) return null;
-  return new RegExp(`(?<![\\p{L}\\p{N}])(?:${clean.map(escapeRegExp).join('|')})(?![\\p{L}\\p{N}])`, 'iu');
+  const alts = clean.map((w) => escapeRegExp(mutedWordStem(w)) + (PREFIX_MARK.test(w) ? '[\\p{L}\\p{N}]*' : ''));
+  return new RegExp(`(?<![\\p{L}\\p{N}])(?:${alts.join('|')})(?![\\p{L}\\p{N}])`, 'iu');
 }
 
 export function mutedWordHit(text: string, pattern: RegExp | null): string | null {

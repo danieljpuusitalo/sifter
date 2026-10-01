@@ -27,7 +27,13 @@ order. Plan: `~/.claude/plans/shimmying-booping-whistle.md`.
   - **C** (a false hide, then the bar vanished after Show): flips stayed at 0 in every traced run, so it was not reproduced. This needs Daniel to send the text on the hidden bar, which names the rule.
   - **A single 20 ms decide on live LinkedIn:** seen in 2 of 3 runs (`maxDecideMs` 19.6–20.5; hard rule 7 is 8 ms). It is in `decide()`, not the tracker. Profile with `--profile` and a `SIFTER_NOMINIFY` build.
   - **The H selector depends on Facebook's English UI only through the capture.** The anchor itself (role plus href) is not localised.
-- **Next:** Daniel reloads `~/sifter-v1.0.0` and judges it live, then merges #23 → #26 in order.
+- **#27 (`fix/start-early`, on #26), after Daniel's re-test:** Daniel said "Facebook Stories bar hidden, but takes a while" and "LinkedIn somewhat but far from perfect".
+  - **Facebook:** the bar was on screen 2.3–2.9 s, because `document_idle` waited for DOMContentLoaded. The content script now runs at `document_start` and waits only for `<body>`. That brings it down to 180–455 ms, with one load at 1.4 s.
+  - **Grace clock:** it starts at DOMContentLoaded now.
+  - **LinkedIn cold-load cost:** unchanged (59.9 ms in 5 s).
+  - **Probe:** `fixtures/private/probe-fb-stories-delay.mjs`, local only.
+- **Open, LinkedIn:** no specifics from Daniel yet. One trace shows a long hide latency for posts that entered the screen while queued: p50 1.9 s, max 5.5 s; off-screen max 9.8 s. That could be LinkedIn drawing the header late, or the queue.
+- **Next:** Daniel reloads `~/sifter-v1.0.0` and judges it live, then merges #23 → #27 in order.
 
 **Session 16 (2026-09-30 to 10-01, branch `fix/veil-linkedin`): DONE, PR #23 open,
 not merged.** (Landed 10-01: the session had ended with the final fix uncommitted, the

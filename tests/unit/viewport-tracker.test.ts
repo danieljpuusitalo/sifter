@@ -225,12 +225,28 @@ describe('viewport tracker, on-screen veils', () => {
       FakeIO.last.cb([{ target: u, isIntersecting: false, boundingClientRect: u.getBoundingClientRect(), rootBounds: { top: 0, bottom: 800 } } as unknown as IntersectionObserverEntry]);
     }
 
-    it('collapses at once when nothing is scrolling', () => {
+    it('collapses at the next still frame when nothing is scrolling', () => {
       const u = unit(1000);
       tracker.watch(u);
       below(u);
+      expect(settled, 'not from the report itself').toEqual([]);
+      runFrames();
       expect(settled).toEqual([u]);
-      expect(tracker.stats().belowDeferred).toBe(0);
+      expect(tracker.stats()).toMatchObject({ belowDeferred: 1, belowCameInView: 0 });
+    });
+
+    // 2026-10-01, 881 px: a long site task held every scroll event back, so the page
+    // looked still while the compositor scrolled the unit onto the screen.
+    it('with no scroll event at all, stays veiled if a fresh look finds it on screen', () => {
+      const u = unit(1000);
+      tracker.watch(u);
+      below(u);
+      // The compositor's scroll, which the main thread only learns of at its next frame.
+      win.scrollY += 500;
+      rects.set(u, { top: 500, bottom: 900 });
+      runFrames();
+      expect(settled).toEqual([]);
+      expect(tracker.stats()).toMatchObject({ belowDeferred: 1, belowCameInView: 1 });
     });
 
     it('mid-scroll, collapses once the scroll stops if it is still below', () => {

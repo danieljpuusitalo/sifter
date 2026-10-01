@@ -5,7 +5,8 @@
 // exact height (hider.ts). This tracker tells the Hider when a veiled unit is off
 // screen, and so when its height may change:
 //
-// - below the viewport: at once. Nothing on screen sits below it.
+// - below the viewport: at the next still frame, if a fresh rect still puts it
+//   there. Nothing on screen sits below it.
 // - above the viewport: once scrolling has stopped, in one frame, with the move
 //   measured and undone by a scroll. Chrome's scroll anchoring would undo it
 //   too, but later than the read that follows the collapse; the scroll lands
@@ -24,8 +25,8 @@
 // Zones come from an IntersectionObserver, which reports after layout and never
 // forces one (hard rule 7). Only the flush reads layout, in an idle frame after
 // the gesture ended: two rect reads per batch above the viewport (a third, and a
-// retry, only when a correction missed), one rect read per unit reported below
-// while the page was scrolling, and one rect
+// retry, only when a correction missed), one rect read per unit reported below,
+// and one rect
 // and scroll-offset read per on-screen veil whose page has scrolled since. The one
 // computed-style read is the pinned-box walk, once per on-screen veil.
 
@@ -52,7 +53,7 @@ export type VeilStats = {
   veilsPinned: number;
   /** On-screen veils settled because their top (and bar) went up under the header. */
   veilsUnderTop: number;
-  /** Units reported below the viewport mid-scroll, whose collapse waited for the scroll to end. */
+  /** Units reported below the viewport, whose collapse waited for a fresh look in a still frame. */
   belowDeferred: number;
   /** Of those, the ones that had reached the screen by then: each would have been a jump (live report D). */
   belowCameInView: number;
@@ -159,11 +160,15 @@ class ViewportTracker implements VeilTracker {
   /** Off screen through the top, waiting for scrolling to stop. */
   private readonly above = new Set<Element>();
   /**
-   * Reported below the viewport while a scroll was moving: checked again once it
-   * stops. The report can be well over 100 ms old on a busy page (LinkedIn's main
-   * thread is 50-80% busy), and a compositor scroll does not wait for it, so the
-   * unit may already be on screen. Collapsing it then pulls everything under it
-   * up by its whole height: the 730-870 px jumps of live report D.
+   * Reported below the viewport: checked again with a fresh rect in the flush, in an
+   * animation frame once scrolling has stopped. The report can be well over 100 ms
+   * old on a busy page (LinkedIn's main thread is 50-80% busy), and a compositor
+   * scroll does not wait for it, so the unit may already be on screen. Collapsing it
+   * then pulls everything under it up by its whole height: the 730-870 px jumps of
+   * live report D. Not only mid-scroll: while a long site task blocks the main
+   * thread no scroll event arrives, so the page looks still while the compositor
+   * scrolls on (an 881 px jump on 2026-10-01, with `belowDeferred` at 0). An
+   * animation frame runs after the frame's scroll offset has caught up.
    */
   private readonly belowPending = new Set<Element>();
   /** On screen: where each was at the last look (null: not looked at yet). */
@@ -289,8 +294,8 @@ class ViewportTracker implements VeilTracker {
         this.above.delete(unit);
         if (!this.onScreen.has(unit)) this.onScreen.set(unit, null);
       } else if (zone === 'below') {
-        if (!this.scrolling) this.finish(unit);
-        else if (!this.belowPending.has(unit)) {
+        // Never collapsed from the report itself, scrolling or not: see `belowPending`.
+        if (!this.belowPending.has(unit)) {
           this.above.delete(unit);
           this.onScreen.delete(unit);
           this.belowPending.add(unit);
@@ -335,7 +340,7 @@ class ViewportTracker implements VeilTracker {
   }
 
   /**
-   * Where each unit reported below mid-scroll really is, now the scroll has stopped:
+   * Where each unit reported below really is, now the page is still:
    * one rect read each, in the flush's read phase. Still below, it is returned to
    * collapse after everything else. One that reached the screen becomes an on-screen
    * veil, and one that went right past it waits above, like any other.

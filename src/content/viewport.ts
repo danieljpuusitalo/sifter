@@ -23,7 +23,9 @@
 //
 // Zones come from an IntersectionObserver, which reports after layout and never
 // forces one (hard rule 7). Only the flush reads layout, in an idle frame after
-// the gesture ended: two rect reads per batch above the viewport, and one rect
+// the gesture ended: two rect reads per batch above the viewport (a third, and a
+// retry, only when a correction missed), one rect read per unit reported below
+// while the page was scrolling, and one rect
 // and scroll-offset read per on-screen veil whose page has scrolled since. The one
 // computed-style read is the pinned-box walk, once per on-screen veil.
 
@@ -36,10 +38,24 @@ export type VeilStats = {
   veilsSettled: number;
   /** Above-viewport collapses the browser did not anchor, corrected with a scroll. */
   anchorCorrections: number;
+  /** Corrections that left the reader's content more than a pixel off (the scroll fell short or overshot). */
+  correctionMisses: number;
+  /** The largest such miss, in px. */
+  maxCorrectionMissPx: number;
+  /** Misses where the scroller did not move the full amount (clamped or absorbed); a retry cannot help. */
+  correctionsClamped: number;
+  /** Misses where the scroll landed but the layout moved again; corrected once more. */
+  correctionRetries: number;
+  /** Retries that still left the content more than a pixel off. */
+  retryMisses: number;
   /** On-screen veils settled because a scroll did not move them (a sticky rail). */
   veilsPinned: number;
   /** On-screen veils settled because their top (and bar) went up under the header. */
   veilsUnderTop: number;
+  /** Units reported below the viewport mid-scroll, whose collapse waited for the scroll to end. */
+  belowDeferred: number;
+  /** Of those, the ones that had reached the screen by then: each would have been a jump (live report D). */
+  belowCameInView: number;
   /** Hides applied at once, with no veil, because the page was still loading (see `loadHide`). */
   hidesAtLoad: number;
 };
@@ -50,8 +66,15 @@ export const EMPTY_VEIL_STATS: VeilStats = {
   hidesBelow: 0,
   veilsSettled: 0,
   anchorCorrections: 0,
+  correctionMisses: 0,
+  maxCorrectionMissPx: 0,
+  correctionsClamped: 0,
+  correctionRetries: 0,
+  retryMisses: 0,
   veilsPinned: 0,
   veilsUnderTop: 0,
+  belowDeferred: 0,
+  belowCameInView: 0,
   hidesAtLoad: 0,
 };
 
@@ -83,6 +106,8 @@ const MOVE_EPSILON_PX = 0.5;
 const MOVING_SCROLL_PX = 48;
 /** A unit whose top is above this line (window) has its bar under a fixed header (Facebook's is 56 px). */
 const HEADER_BAND_PX = 64;
+/** An under-top veil settles once no more than this much of it is still below the top edge. */
+const UNDER_TOP_VISIBLE_PX = 48;
 /** In a feed that scrolls inside an element, a top this far past the element's own top edge is clipped. */
 const CLIP_BAND_PX = 8;
 /**
@@ -133,6 +158,14 @@ class ViewportTracker implements VeilTracker {
   private readonly fresh = new Set<Element>();
   /** Off screen through the top, waiting for scrolling to stop. */
   private readonly above = new Set<Element>();
+  /**
+   * Reported below the viewport while a scroll was moving: checked again once it
+   * stops. The report can be well over 100 ms old on a busy page (LinkedIn's main
+   * thread is 50-80% busy), and a compositor scroll does not wait for it, so the
+   * unit may already be on screen. Collapsing it then pulls everything under it
+   * up by its whole height: the 730-870 px jumps of live report D.
+   */
+  private readonly belowPending = new Set<Element>();
   /** On screen: where each was at the last look (null: not looked at yet). */
   private readonly onScreen = new Map<Element, Seen | null>();
   /** Counts scroll events, so a look is only repeated after something scrolled. */
@@ -188,6 +221,7 @@ class ViewportTracker implements VeilTracker {
     if (!this.watched.delete(unit)) return;
     this.fresh.delete(unit);
     this.above.delete(unit);
+    this.belowPending.delete(unit);
     this.onScreen.delete(unit);
     this.io.unobserve(unit);
   }
@@ -208,6 +242,7 @@ class ViewportTracker implements VeilTracker {
     this.watched.clear();
     this.fresh.clear();
     this.above.clear();
+    this.belowPending.clear();
     this.onScreen.clear();
     this.scrollers.clear();
   }
@@ -241,11 +276,19 @@ class ViewportTracker implements VeilTracker {
         else if (zone === 'above') this.s.hidesAbove++;
         else this.s.hidesBelow++;
       }
+      if (zone !== 'below') this.belowPending.delete(unit);
       if (zone === 'in') {
         this.above.delete(unit);
         if (!this.onScreen.has(unit)) this.onScreen.set(unit, null);
-      } else if (zone === 'below') this.finish(unit);
-      else {
+      } else if (zone === 'below') {
+        if (!this.scrolling) this.finish(unit);
+        else if (!this.belowPending.has(unit)) {
+          this.above.delete(unit);
+          this.onScreen.delete(unit);
+          this.belowPending.add(unit);
+          this.s.belowDeferred++;
+        }
+      } else {
         this.onScreen.delete(unit);
         this.above.add(unit);
       }
@@ -260,7 +303,7 @@ class ViewportTracker implements VeilTracker {
   }
 
   private schedule(): void {
-    if (this.frame !== undefined || this.scrolling || (this.above.size === 0 && this.onScreen.size === 0)) return;
+    if (this.frame !== undefined || this.scrolling || (this.above.size === 0 && this.onScreen.size === 0 && this.belowPending.size === 0)) return;
     // Two frames: `scrollend` fires in the same frame as the last scroll, before its
     // animation callbacks, so one frame would collapse and correct before that scroll
     // painted. They would paint as one move with it, and the Layout Instability API
@@ -277,15 +320,44 @@ class ViewportTracker implements VeilTracker {
   private flush(): void {
     if (this.scrolling) return;
     // Reads first, writes after: the pinned collapses land with the ones above.
+    const below = this.lookBelow();
     const pinned = this.lookOnScreen();
     this.flushAbove(pinned);
+    for (const u of below) this.finish(u);
+  }
+
+  /**
+   * Where each unit reported below mid-scroll really is, now the scroll has stopped:
+   * one rect read each, in the flush's read phase. Still below, it is returned to
+   * collapse after everything else. One that reached the screen becomes an on-screen
+   * veil, and one that went right past it waits above, like any other.
+   */
+  private lookBelow(): Element[] {
+    const below: Element[] = [];
+    for (const u of this.belowPending) {
+      if (!u.isConnected) {
+        this.unwatch(u);
+        continue;
+      }
+      const r = u.getBoundingClientRect();
+      if (r.top >= this.win.innerHeight + MARGIN_PX) {
+        below.push(u);
+        continue;
+      }
+      this.s.belowCameInView++;
+      if (r.bottom <= -MARGIN_PX) this.above.add(u);
+      else this.onScreen.set(u, null);
+    }
+    this.belowPending.clear();
+    return below;
   }
 
   /**
    * Look again at each on-screen veil whose page has scrolled since the last look.
    * One in a pinned side column, at its first look, is returned, to collapse where
-   * it is. One that moves with the page and has its top under the header joins the
-   * units above the viewport. Only a unit seen moving may: collapsing a pinned one
+   * it is. One that moves with the page and has gone up under the header, all but its
+   * last `UNDER_TOP_VISIBLE_PX`, joins the units above the viewport. Only a unit seen
+   * moving may: collapsing a pinned one
    * and scrolling to undo the move would move the feed instead.
    */
   private lookOnScreen(): Element[] {
@@ -309,14 +381,19 @@ class ViewportTracker implements VeilTracker {
       }
       const scroller = this.scrollerOf(u);
       const offset = this.win.scrollY + (scroller ? scroller.scrollTop : 0);
-      const top = u.getBoundingClientRect().top;
+      const { top, bottom } = u.getBoundingClientRect();
       let moves = seen?.moves ?? false;
       if (seen && seen.scroller === scroller) {
         const scrolled = Math.abs(offset - seen.offset);
         const moved = Math.abs(top - seen.top);
         if (scrolled >= MOVING_SCROLL_PX && moved >= scrolled / 2) moves = true;
       }
-      if (moves && top < this.topEdge(scroller)) {
+      // Its top under the header is not enough: the collapse is corrected on its bottom
+      // edge, so whatever of it was still on screen fills with the post above it, which
+      // slides down that far. A tall veil just past the header made that a whole-screen
+      // jump (855 and 869 px, live report D). Only once nearly all of it is gone.
+      const edge = this.topEdge(scroller);
+      if (moves && top < edge && bottom - edge <= UNDER_TOP_VISIBLE_PX) {
         this.onScreen.delete(u);
         this.above.add(u);
         this.s.veilsUnderTop++;
@@ -415,11 +492,34 @@ class ViewportTracker implements VeilTracker {
     for (const m of marks) {
       const delta = m.lowest.getBoundingClientRect().bottom - m.before;
       if (Math.abs(delta) <= MOVE_EPSILON_PX) continue;
-      // `instant`: a page with `scroll-behavior: smooth` would otherwise animate the correction into view.
-      const opts: ScrollToOptions = { top: delta, behavior: 'instant' };
-      if (m.scroller) m.scroller.scrollBy(opts);
-      else this.win.scrollBy(opts);
+      const applied = this.correct(m.scroller, delta);
       this.s.anchorCorrections++;
+      // A scroll dirties no layout, so this read is cheap. A miss is a jump the reader
+      // saw (live report D): either the scroller would not move that far, or it did and
+      // the layout moved again under it (content coming into view at its real size).
+      const left = m.lowest.getBoundingClientRect().bottom - m.before;
+      if (Math.abs(left) <= 1) continue;
+      this.s.correctionMisses++;
+      this.s.maxCorrectionMissPx = Math.max(this.s.maxCorrectionMissPx, Math.round(Math.abs(left)));
+      if (Math.abs(applied - delta) > 1) {
+        this.s.correctionsClamped++;
+        continue;
+      }
+      // Once only: a layout that keeps moving is the page's, not ours to chase.
+      this.correct(m.scroller, left);
+      this.s.correctionRetries++;
+      if (Math.abs(m.lowest.getBoundingClientRect().bottom - m.before) > 1) this.s.retryMisses++;
     }
+  }
+
+  /** Scroll `scroller` (or the window) by `dy`, and return how far it actually moved. */
+  private correct(scroller: Element | null, dy: number): number {
+    const at = () => (scroller ? scroller.scrollTop : this.win.scrollY);
+    const from = at();
+    // `instant`: a page with `scroll-behavior: smooth` would otherwise animate the correction into view.
+    const opts: ScrollToOptions = { top: dy, behavior: 'instant' };
+    if (scroller) scroller.scrollBy(opts);
+    else this.win.scrollBy(opts);
+    return at() - from;
   }
 }

@@ -8,7 +8,9 @@ import { decideTier0 } from '../rules/tier0';
 import type { BlockCategory, HideCategory, OverrideAction } from '../types';
 import { keepInPlace } from './anchor';
 import { Hider, PLACEHOLDER_ATTR } from './hider';
+import type { NearTracker } from './near';
 import { EMPTY_VEIL_STATS, type VeilStats, type VeilTracker, type VeilTrackerFactory } from './viewport';
+import { safeDetail, type HideTrace, type HideWhy } from './trace';
 
 // Content-script pipeline: extract -> fingerprint -> tier 0 -> apply
 // (BRIEF.md §5). Tier 1 (model) plugs in at the "unknown" branch in M2.
@@ -77,12 +79,26 @@ export type ScannerDeps = {
    * feed never moves under the reader. Without it, hides apply at once.
    */
   viewport?: VeilTrackerFactory;
+  /** Dev and bench builds: hide latency and flips (trace.ts). Absent in a release. */
+  trace?: HideTrace;
+  /** Which queued units are near the viewport (near.ts): those are decided first. Without it, document order. */
+  near?: NearTracker;
 };
 
 type Seen = { sig: string; fp: string };
 /** A whole page module hidden by rule: an adapter block, or one of the user's element rules. */
 type Block = { selector: string; category: BlockCategory; innermost?: boolean; anchor?: string; rule?: string };
-type Decision = { unit: Element; fp: string; hide: HideCategory | null; block?: boolean; hint?: string };
+type Decision = {
+  unit: Element;
+  fp: string;
+  hide: HideCategory | null;
+  block?: boolean;
+  hint?: string;
+  /** For the trace: what made it a hide, without page text. */
+  why?: HideWhy;
+  /** A release because the unit emptied. */
+  empty?: boolean;
+};
 
 /** Past this many characters a placeholder's hint is post body, not a label. */
 const MAX_HINT = 60;
@@ -145,6 +161,8 @@ export class Scanner {
   private debounceTimer: unknown = null;
   private pending: Element[] = [];
   private queued = new Set<Element>();
+  /** The near tracker's version the queue was last ordered by. */
+  private orderedAt = -1;
   private running = false;
   /** A scan was requested: the next slice starts by collecting units. */
   private needCollect = false;
@@ -268,6 +286,7 @@ export class Scanner {
   stop(): void {
     this.observer?.disconnect();
     this.observer = null;
+    this.deps.near?.disconnect();
     this.inPlace(() => this.hider.unhideAll());
     this.hider.dispose();
   }
@@ -306,15 +325,30 @@ export class Scanner {
     this.perf.maxCollectMs = 0;
     this.perf.maxDecideMs = 0;
     this.perf.worstSlice = null;
+    this.deps.trace?.reset();
   }
 
   private enqueue(u: Element): void {
     if (this.queued.has(u)) return;
     this.queued.add(u);
     this.pending.push(u);
+    this.deps.near?.watch(u);
+  }
+
+  /** Units near the viewport first, each group in document order. Only when nearness changed. */
+  private nearFirst(): void {
+    const { near } = this.deps;
+    if (!near || near.version === this.orderedAt || this.pending.length < 2) return;
+    this.orderedAt = near.version;
+    const close: Element[] = [];
+    const rest: Element[] = [];
+    for (const u of this.pending) (near.isNear(u) ? close : rest).push(u);
+    if (close.length && rest.length) this.pending = close.concat(rest);
   }
 
   private dropQueue(): void {
+    const { near } = this.deps;
+    if (near) for (const u of this.pending) near.unwatch(u);
     this.pending = [];
     this.queued.clear();
     this.carried = [];
@@ -381,6 +415,7 @@ export class Scanner {
       settled: !this.running && this.debounceTimer === null,
       noUnitsMatched: this.noUnitsMatched,
       perf: { ...this.perf, ...(this.veil?.stats() ?? EMPTY_VEIL_STATS), pending: this.pending.length + this.carried.length },
+      ...(this.deps.trace ? { trace: this.deps.trace.stats() } : {}),
     };
   }
 
@@ -406,7 +441,10 @@ export class Scanner {
       }
       if (this.touched.size + this.added.size > MAX_DIRTY) this.markFull();
     }
-    if (relevant) this.requestScan();
+    if (relevant) {
+      this.deps.trace?.dirty(this.now());
+      this.requestScan();
+    }
   }
 
   private markFull(): void {
@@ -439,6 +477,7 @@ export class Scanner {
       return;
     }
     this.perf.scans++;
+    this.deps.trace?.dirty(this.now());
     if (full) this.markFull();
     this.needCollect = true;
     if (!this.running) {
@@ -637,9 +676,14 @@ export class Scanner {
       collected = true;
       const t0 = this.now();
       this.hider.prune();
+      const { trace } = this.deps;
+      trace?.sweep(t0);
+      const since = trace?.takeDirty(t0) ?? t0;
       for (const u of this.collectUnits()) {
         // Our own placeholder can match a unit selector (X's cells are bare divs).
-        if (!u.hasAttribute(PLACEHOLDER_ATTR)) this.enqueue(u);
+        if (u.hasAttribute(PLACEHOLDER_ATTR)) continue;
+        this.enqueue(u);
+        trace?.queued(u, since);
       }
       collectMs = this.now() - t0;
       this.perf.collectMs += collectMs;
@@ -648,6 +692,7 @@ export class Scanner {
     const decisions: Decision[] = [];
     const decideStart = this.now();
     const decidedAtStart = this.perf.unitsDecided;
+    this.nearFirst();
     let i = 0;
     while (i < this.pending.length) {
       const elapsed = this.now() - start;
@@ -660,6 +705,7 @@ export class Scanner {
       }
       const unit = this.pending[i++] as Element;
       this.queued.delete(unit);
+      this.deps.near?.unwatch(unit);
       const decidedBefore = this.perf.unitsDecided;
       const t0 = this.now();
       const d = this.decideSafely(unit);
@@ -775,9 +821,10 @@ export class Scanner {
     if (!hasContent(unit)) {
       this.seen.delete(unit);
       this.perf.emptySkipped++;
+      this.deps.trace?.empty(unit);
       // It emptied after a hide (or a Show): release it, placeholder and all.
       if (!this.hider.isHidden(unit) && !this.userShown.has(unit)) return null;
-      return { unit, fp: prev?.fp ?? fingerprint(site, structuralKey(unit)), hide: null };
+      return { unit, fp: prev?.fp ?? fingerprint(site, structuralKey(unit)), hide: null, empty: true };
     }
 
     this.perf.unitsDecided++;
@@ -805,7 +852,8 @@ export class Scanner {
       });
       if (decision.action === 'hide') {
         const hint = cat === 'custom' ? ruleHint(block.selector) : suggestedHint(adapter, block.rule);
-        return { unit, fp, hide: decision.category, block: true, hint };
+        const why: HideWhy = { category: decision.category, rule: block.rule, kind: 'block', detail: block.selector };
+        return { unit, fp, hide: decision.category, block: true, hint, why };
       }
       return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;
     }
@@ -882,7 +930,9 @@ export class Scanner {
         decision.category === 'custom' && custom
           ? wordHint(custom)
           : (decision.category === 'suggested' ? suggestedHint(adapter, marker?.rule) : undefined) ?? firstHint(text);
-      return { unit, fp, hide: decision.category, hint };
+      const kind = decision.category === 'custom' && custom ? 'muted' : marker?.kind;
+      const why: HideWhy = { category: decision.category, rule: marker?.rule, kind, detail: safeDetail(kind, marker?.detail) };
+      return { unit, fp, hide: decision.category, hint, why };
     }
     return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;
   }
@@ -894,6 +944,7 @@ export class Scanner {
       if (d.hide) return; // stays shown (with its "Hide" bar) until the user hides it again
       // The user showed it, and this decision no longer hides it at all (its
       // category or rule went off): drop the "Showing…" bar and the record.
+      if (!this.releasing) this.deps.trace?.released(d.unit, this.now(), d.empty ? 'emptied' : 'redecided', true);
       this.userShown.delete(d.unit);
       this.hider.unhide(d.unit);
       this.hiddenFps.delete(d.fp);
@@ -901,11 +952,13 @@ export class Scanner {
       return;
     }
     if (d.hide) {
+      if (!this.hider.isHidden(d.unit)) this.deps.trace?.hid(d.unit, this.now(), d.why ?? { category: d.hide });
       this.hider.hide(d.unit, d.hide, d.hint);
       this.hiddenFps.set(d.fp, d.hide);
       if (d.block) this.blockHidden.set(d.unit, d.fp);
       else this.blockHidden.delete(d.unit);
     } else {
+      if (!this.releasing && this.hider.isHidden(d.unit)) this.deps.trace?.released(d.unit, this.now(), d.empty ? 'emptied' : 'redecided', false);
       this.hider.unhide(d.unit);
       this.hiddenFps.delete(d.fp);
       this.blockHidden.delete(d.unit);
@@ -921,6 +974,7 @@ export class Scanner {
 
   private userShow(unit: Element): void {
     this.userShown.add(unit);
+    this.deps.trace?.shown(unit);
     const fp = this.seen.get(unit)?.fp;
     if (fp) this.hiddenFps.delete(fp);
     this.hider.show(unit);
@@ -929,6 +983,7 @@ export class Scanner {
   /** "Hide" on a placeholder the user showed: puts the unit back into the count and the hidden state. */
   private userRehide(unit: Element): void {
     this.userShown.delete(unit);
+    this.deps.trace?.unshown(unit);
     const fp = this.seen.get(unit)?.fp;
     const category = this.hider.categoryOf(unit);
     if (fp && category) this.hiddenFps.set(fp, category);

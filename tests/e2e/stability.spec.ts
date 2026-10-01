@@ -212,21 +212,32 @@ for (const variant of SCROLLERS) {
 }
 
 for (const variant of SCROLLERS) {
-  test(`a veiled card whose bar went up under the top edge collapses without moving the screen (${variant.name})`, async ({ context, page }) => {
+  test(`a veiled card that went up under the top edge collapses once nearly all of it is gone, without moving the screen (${variant.name})`, async ({ context, page }) => {
     await open(page, variant.css);
     await insertLateAd(page);
     await expect(late(page)).toHaveClass(/\bsifter-veil\b/);
     // Let the tracker take its first look at the veil before the page scrolls.
     await page.waitForTimeout(300);
     const moves = await watchShifts(page);
+    const scrollBy = (dy: number | 'nearly-gone') =>
+      page.evaluate(([dy, key]) => {
+        const main = document.getElementById('workspace') as HTMLElement;
+        const inElement = getComputedStyle(main).overflowY === 'auto';
+        // The tracker's top edge: the header band, or 8 px into the clipped element.
+        const edge = inElement ? Math.max(64, main.getBoundingClientRect().top + 8) : 64;
+        const card = document.querySelector(`[componentkey="${key}"]`) as HTMLElement;
+        const by = dy === 'nearly-gone' ? card.getBoundingClientRect().bottom - (edge + 30) : dy;
+        (inElement ? main : window).scrollBy(0, by);
+        return (document.querySelector('[componentkey^="update-card-focus1005"]') as HTMLElement).getBoundingClientRect().top;
+      }, [dy, LATE] as const);
     // 150 px: the late card's top (and its bar) goes under the header or the clipped edge,
-    // while most of its blank space is still on screen.
-    const before = await page.evaluate(() => {
-      const main = document.getElementById('workspace') as HTMLElement;
-      const inElement = getComputedStyle(main).overflowY === 'auto';
-      (inElement ? main : window).scrollBy(0, 150);
-      return (document.querySelector('[componentkey^="update-card-focus1005"]') as HTMLElement).getBoundingClientRect().top;
-    });
+    // while most of it is still on screen. Collapsing it there, corrected on its bottom
+    // edge, would slide the post above it down into view (live report D).
+    await scrollBy(150);
+    await page.waitForTimeout(400);
+    await expect(late(page)).toHaveClass(/\bsifter-veil\b/);
+    // Then on until only its last 30 px are below the edge.
+    const before = await scrollBy('nearly-gone');
     await expect(late(page)).toHaveClass(/\bsifter-collapse\b/);
     await page.waitForTimeout(300);
     const after = await topOf(page, '[componentkey^="update-card-focus1005"]');

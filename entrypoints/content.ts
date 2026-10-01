@@ -2,6 +2,8 @@ import { browser } from 'wxt/browser';
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { adapterFor } from '../src/adapters';
 import { Scanner } from '../src/content/scanner';
+import { nearTracker } from '../src/content/near';
+import { hideTrace } from '../src/content/trace';
 import { viewportTracker } from '../src/content/viewport';
 import { defaultContext, type BgRequest, type SiteContext, type TabRequest } from '../src/messages';
 import { LAUNCH_MATCHES } from '../src/sites';
@@ -84,6 +86,8 @@ export default defineContentScript({
         void send({ type: 'sifter:setOverride', hostname, fp, action }).catch(() => undefined),
       dev: import.meta.env.DEV,
       viewport: viewportTracker(window),
+      near: nearTracker(window),
+      trace: import.meta.env.DEV || import.meta.env.SIFTER_TRACE ? hideTrace(window) : undefined,
     });
     scanner = live;
     live.start();

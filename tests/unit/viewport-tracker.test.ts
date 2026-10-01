@@ -148,12 +148,114 @@ describe('viewport tracker, on-screen veils', () => {
     tracker.watch(u);
     onScreen(u);
     runFrames();
-    scroll(250, [u]);
+    scroll(600, [u]);
     runFrames();
     expect(settled).toEqual([u]);
     expect(tracker.stats().veilsUnderTop).toBe(1);
-    // Its bottom went from 350 to -50 + 36: the page scrolls back by that much.
+    // Its bottom went from 0 to -400 + 36: the page scrolls back by that much.
     expect(scrolls).toEqual([-364]);
+  });
+
+  // Live report D: a tall veil just past the header still fills the screen. Collapsing
+  // it there, corrected on its bottom edge, slid the post above down by ~800 px.
+  it('a tall veil whose top went under the header waits until nearly all of it is gone', () => {
+    const u = unit(200, 900);
+    tracker.watch(u);
+    onScreen(u);
+    runFrames();
+    scroll(250, [u]);
+    runFrames();
+    expect(settled, 'top at -50, but 850 px of it still on screen').toEqual([]);
+    expect(scrolls).toEqual([]);
+    scroll(1000, [u]);
+    runFrames();
+    expect(settled).toEqual([u]);
+    expect(tracker.stats().veilsUnderTop).toBe(1);
+  });
+
+  // Live report D: a jump the correction should have undone. A scroll that lands
+  // leaves no miss. One the scroller swallows is counted, with its size, and left
+  // alone. One that lands while the layout moves again under it is corrected once more.
+  describe('a correction that misses', () => {
+    /** `moves`: how far the scroller goes per call; `extra`: a layout shift on the first call only. */
+    function run(moves: (dy: number) => number, extra = 0) {
+      const u = unit(200);
+      let first = true;
+      (win as unknown as { scrollBy: (o: ScrollToOptions) => void }).scrollBy = (o) => {
+        const dy = moves(o.top ?? 0);
+        scrolls.push(o.top ?? 0);
+        win.scrollY += dy;
+        const shift = dy + (first ? extra : 0);
+        first = false;
+        const r = rects.get(u)!;
+        rects.set(u, { top: r.top - shift, bottom: r.bottom - shift });
+      };
+      tracker.watch(u);
+      onScreen(u);
+      runFrames();
+      scroll(600, [u]);
+      runFrames();
+    }
+
+    it('a scroll that lands is no miss', () => {
+      run((dy) => dy);
+      expect(scrolls).toEqual([-364]);
+      expect(tracker.stats()).toMatchObject({ anchorCorrections: 1, correctionMisses: 0, correctionRetries: 0 });
+    });
+
+    it('a clamped scroll is counted and not retried', () => {
+      run(() => 0);
+      expect(scrolls).toEqual([-364]);
+      expect(tracker.stats()).toMatchObject({ correctionMisses: 1, maxCorrectionMissPx: 364, correctionsClamped: 1, correctionRetries: 0 });
+    });
+
+    it('a layout that moved again under a landed scroll is corrected once more', () => {
+      run((dy) => dy, -100);
+      // The first scroll landed, but the content came down 100 px further: one more scroll takes it back.
+      expect(scrolls).toEqual([-364, 100]);
+      expect(tracker.stats()).toMatchObject({ correctionMisses: 1, maxCorrectionMissPx: 100, correctionsClamped: 0, correctionRetries: 1, retryMisses: 0 });
+    });
+  });
+
+  // Live report D: a "below" report can be 100+ ms old on a busy page, and the scroll
+  // does not wait for it. Mid-scroll, the collapse waits for the scroll to stop and a
+  // look at where the unit really is.
+  describe('a unit reported below the viewport', () => {
+    function below(u: Element): void {
+      FakeIO.last.cb([{ target: u, isIntersecting: false, boundingClientRect: u.getBoundingClientRect(), rootBounds: { top: 0, bottom: 800 } } as unknown as IntersectionObserverEntry]);
+    }
+
+    it('collapses at once when nothing is scrolling', () => {
+      const u = unit(1000);
+      tracker.watch(u);
+      below(u);
+      expect(settled).toEqual([u]);
+      expect(tracker.stats().belowDeferred).toBe(0);
+    });
+
+    it('mid-scroll, collapses once the scroll stops if it is still below', () => {
+      const u = unit(1000);
+      tracker.watch(u);
+      document.dispatchEvent(new Event('scroll'));
+      below(u);
+      expect(settled, 'not while the page is moving').toEqual([]);
+      document.dispatchEvent(new Event('scrollend'));
+      runFrames();
+      expect(settled).toEqual([u]);
+      expect(tracker.stats()).toMatchObject({ belowDeferred: 1, belowCameInView: 0 });
+    });
+
+    it('mid-scroll, stays veiled if it reached the screen meanwhile', () => {
+      const u = unit(1000);
+      tracker.watch(u);
+      document.dispatchEvent(new Event('scroll'));
+      below(u);
+      // The scroll the report did not know about: the unit is now on screen.
+      scroll(500, [u]);
+      runFrames();
+      expect(settled).toEqual([]);
+      expect(tracker.stats()).toMatchObject({ belowDeferred: 1, belowCameInView: 1 });
+    });
   });
 
   // `scrollend` fires in the scroll's own frame, before that frame paints: a collapse in
@@ -163,7 +265,7 @@ describe('viewport tracker, on-screen veils', () => {
     tracker.watch(u);
     onScreen(u);
     runFrames();
-    scroll(250, [u]);
+    scroll(600, [u]);
     frames.shift()!();
     expect(settled, 'nothing in the frame the scroll ended in').toEqual([]);
     runFrames();

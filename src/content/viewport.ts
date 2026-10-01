@@ -111,8 +111,8 @@ const UNDER_TOP_VISIBLE_PX = 48;
 /** In a feed that scrolls inside an element, a top this far past the element's own top edge is clipped. */
 const CLIP_BAND_PX = 8;
 /**
- * The load window: until the reader's first gesture, or this long after the
- * tracker starts, a hide collapses at once instead of veiling. A veil on a page
+ * The load window: until the reader's first gesture, or this long after
+ * DOMContentLoaded, a hide collapses at once instead of veiling. A veil on a page
  * nobody has scrolled yet only leaves a hole at the top (Google's ad block left the
  * results stranded below it until a scroll, 2026-10-01). Ended early by any gesture.
  */
@@ -192,8 +192,15 @@ class ViewportTracker implements VeilTracker {
     doc.addEventListener('scroll', this.onScroll, { capture: true, passive: true });
     doc.addEventListener('scrollend', this.onScrollEnd, { capture: true, passive: true });
     for (const g of GESTURES) doc.addEventListener(g, this.endGrace, { capture: true, passive: true });
-    this.graceTimer = setTimeout(this.endGrace, LOAD_GRACE_MS);
+    // The content script starts at document_start, seconds before a feed has drawn
+    // anything: the clock runs from DOMContentLoaded, so the window is not spent on a blank page.
+    if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', this.startGraceClock, { once: true });
+    else this.startGraceClock();
   }
+
+  private readonly startGraceClock = (): void => {
+    if (this.grace) this.graceTimer = setTimeout(this.endGrace, LOAD_GRACE_MS);
+  };
 
   loadHide(): boolean {
     if (!this.grace) return false;
@@ -208,6 +215,7 @@ class ViewportTracker implements VeilTracker {
     this.graceTimer = undefined;
     const doc = this.win.document;
     for (const g of GESTURES) doc.removeEventListener(g, this.endGrace, { capture: true });
+    doc.removeEventListener('DOMContentLoaded', this.startGraceClock);
   };
 
   watch(unit: Element): void {

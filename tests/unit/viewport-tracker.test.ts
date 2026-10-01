@@ -329,4 +329,27 @@ describe('viewport tracker, load grace', () => {
       vi.useRealTimers();
     }
   });
+
+  // The content script runs at document_start (Facebook's Stories bar was on screen
+  // 2.3-2.9 s before a document_idle script ran, 2026-10-01). The clock waits for the page.
+  it('started while the document is still loading, counts from DOMContentLoaded', () => {
+    vi.useFakeTimers();
+    const state = Object.getOwnPropertyDescriptor(document, 'readyState');
+    try {
+      Object.defineProperty(document, 'readyState', { value: 'loading', configurable: true });
+      tracker.disconnect();
+      tracker = viewportTracker(win as unknown as Window & typeof globalThis)!(() => {});
+      vi.advanceTimersByTime(LOAD_GRACE_MS * 2);
+      expect(tracker.loadHide?.(), 'no clock before DOMContentLoaded').toBe(true);
+      document.dispatchEvent(new Event('DOMContentLoaded'));
+      vi.advanceTimersByTime(LOAD_GRACE_MS - 1);
+      expect(tracker.loadHide?.()).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(tracker.loadHide?.()).toBe(false);
+    } finally {
+      if (state) Object.defineProperty(document, 'readyState', state);
+      else delete (document as { readyState?: string }).readyState;
+      vi.useRealTimers();
+    }
+  });
 });

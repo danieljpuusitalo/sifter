@@ -1,7 +1,8 @@
 # Sifter checkpoint
 
-**Session 16 (2026-09-30 to 10-01, branch `fix/veil-linkedin`): DONE, PR open, not
-merged.** Daniel, on the veil from session 15: on LinkedIn "hidden posts sometimes are
+**Session 16 (2026-09-30 to 10-01, branch `fix/veil-linkedin`): DONE, PR #23 open,
+not merged.** (Landed 10-01: the session had ended with the final fix uncommitted, the
+branch unpushed and no PR despite this line; gates re-run green before the push.) Daniel, on the veil from session 15: on LinkedIn "hidden posts sometimes are
 not actually hidden, they have the tag above but i still see the post", and hidden
 boxes sat on top of the next post; Facebook "even buggier". Three causes, all fixed:
 
@@ -43,7 +44,9 @@ boxes sat on top of the next post; Facebook "even buggier". Three causes, all fi
   strict run exited 1 with no output captured; two reruns were OK.
 - **Next:** Daniel judges the build in `~/sifter-v1.0.0` live (an on-screen hidden
   feed post still shows as a bar over blank space until it scrolls away, by design),
-  then merge the PR.
+  then merge the PR. The folder held a stale mid-session `content.js` until 10-01;
+  it now diffs identical to the PR's build (old copy in
+  `%TEMP%/sifter-v1.0.0-backup-2026-10-01`). Reload on chrome://extensions first.
 
 **Session 15 (2026-09-30, branch `feat/stable-scroll`): the feed no
 longer moves when Sifter hides.** Daniel: the feed bounces, mostly down, when entries

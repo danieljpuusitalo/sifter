@@ -40,3 +40,22 @@ describe('Facebook: Stories bar', () => {
     expect(hidden()).toBe(false);
   });
 });
+
+// Live report H (2026-10-01): Stories also come as a feed unit, its cards inside a
+// role=region. An ordinary post links one story from its author's avatar, with no region.
+describe('Facebook: Stories in the feed', () => {
+  const post = (n: number) => document.querySelector(`[aria-posinset="${n}"]`)!.classList.contains(HIDDEN_CLASS);
+  it('is hidden under the "stories" rule', () => {
+    scan([]);
+    expect(post(13)).toBe(true);
+  });
+  it('a post whose avatar links to a story stays visible', () => {
+    scan([]);
+    expect(post(13), 'positive control').toBe(true);
+    expect(post(14)).toBe(false);
+  });
+  it('stays visible when "stories" is switched off', () => {
+    scan(['stories']);
+    expect(post(13)).toBe(false);
+  });
+});

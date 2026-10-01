@@ -32,8 +32,29 @@ order. Plan: `~/.claude/plans/shimmying-booping-whistle.md`.
   - **Grace clock:** it starts at DOMContentLoaded now.
   - **LinkedIn cold-load cost:** unchanged (59.9 ms in 5 s).
   - **Probe:** `fixtures/private/probe-fb-stories-delay.mjs`, local only.
-- **Open, LinkedIn:** no specifics from Daniel yet. One trace shows a long hide latency for posts that entered the screen while queued: p50 1.9 s, max 5.5 s; off-screen max 9.8 s. That could be LinkedIn drawing the header late, or the queue.
-- **Next:** Daniel reloads `~/sifter-v1.0.0` and judges it live, then merges #23 → #27 in order.
+- **#28 (`fix/linkedin-latency`, on #27): Daniel picked "feed jumps" and "post visible, then hidden".**
+  - **Measured first.** The trace (dev and `SIFTER_TRACE=1` only) now splits each on-screen hide into stages: `onScreen.{debounceMs, idleMs, queueMs, sinceFirstMs, depth, requeued}`.
+    - `requeued` was 1–2 of 12–14, so the delay is Sifter's scheduling, not LinkedIn supplying the signal late.
+    - The time went to the 250 ms debounce (hard rule 7), stretched by LinkedIn's long tasks (up to 516 ms), plus the idle wait (p50 201 ms at the 200 ms idle timeout).
+  - **Prompt slices** (`PROMPT_IDLE_TIMEOUT_MS` 50 in `scanner.ts`):
+    - The next slice waits at most 50 ms for idle time while a collect is due, or while the queue's head is near the reader. Otherwise it keeps the 200 ms timeout.
+    - Only one slice chain runs at a time: a mutation's scan promotes the waiting slice; it does not add a second one.
+    - Result: idle p50 is now 46–76 ms. `tests/unit/near.test.ts` has both mutations checked.
+  - **Jumps, 881 px blamed on `collapse:below`, with `belowDeferred` at 0:**
+    - A long LinkedIn task holds every scroll event back. The tracker saw a still page and collapsed a unit from a stale "below" report. Meanwhile the compositor had already scrolled it onto the screen.
+    - Fix: every below report now waits for `lookBelow`'s fresh rect in the two-frame flush, not only reports that arrive mid-scroll.
+    - Live, 3 runs: `belowCameInView` 6/70, 2/57 and 1/66. Each one was a jump avoided. No move over 250 px; the 250 px pairs are LinkedIn's own. `lookBelow` costs 1.2 ms of forced style per 30 s.
+    - Unit test, mutation-checked: restoring the immediate collapse fails 2 tests.
+  - **Receipts:**
+    - `pnpm verify`: 394 passed, 5 skipped; tp=62 fp=0 fn=0.
+    - e2e: 43 passed, 1 skipped.
+    - `bench:scroll --cpu 1 --strict`: exit 0 on both sites, max slice 3.8–5.2 ms.
+    - 4x run: OK/OK.
+    - Release `content.js`: 0 `enteredWhileQueued`.
+    - `~/sifter-v1.0.0` diffs identical. Backup in `%TEMP%/sifter-v1.0.0-backup-2026-10-01c`.
+  - **Daniel's call (not raised before):** the remaining floor for "visible, then hidden" is the 250 ms debounce, which LinkedIn's long tasks stretch to p50 280 ms (max 783 ms). Deciding a unit that arrives already in view before first paint would cut it, but it bends hard rule 7.
+  - **Still open:** `maxDecideMs` 13–28 ms on live LinkedIn (rule 7's 8 ms). The forced style is in `decide()` (minified `I←R←Me`, likely `renderedText`) and in the flush's `lookOnScreen` (84 ms over 72 reads per 30 s).
+- **Next:** Daniel reloads `~/sifter-v1.0.0` and judges it live, then merges #23 → #28 in order.
 
 **Session 16 (2026-09-30 to 10-01, branch `fix/veil-linkedin`): DONE, PR #23 open,
 not merged.** (Landed 10-01: the session had ended with the final fix uncommitted, the
@@ -627,6 +648,9 @@ path is still unverified live (no sponsored feed post appeared this session eith
 - **Categories and filters:** the categories, muted words and element rules (`site##selector`) are an ad-blocker-style layer on top of the brief.
 
 ## Do not undo
+
+- **A below report never collapses a unit by itself:** every one waits for `lookBelow`'s fresh rect in the flush. A long site task holds scroll events back, so "not scrolling" can be false while the compositor scrolls (881 px, 2026-10-01; `belowCameInView` counts the jumps this prevents).
+- **One slice chain, prompt only when the reader may see the result:** `nextSlice(prompt)` in `scanner.ts`. Two chains would double the per-frame cost. A 50 ms timeout for everything would bill idle-less slices to LinkedIn's scroll.
 
 - **Veil clip reaches depth 3:** `clip-path` does nothing to a `display: contents` box (LinkedIn wraps every post in one). The e2e paint probe guards it.
 - **Pinned means a fixed or sticky side column, at the first look:** never "it stayed put through a scroll" (a correction scroll leaves every feed card put), never "its box fits the window" (a full-width fixed feed box fits). `sideColumnOf()` in `viewport.ts`.

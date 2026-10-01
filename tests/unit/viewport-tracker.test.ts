@@ -25,13 +25,13 @@ let settled: Element[];
 let tracker: VeilTracker;
 const rects = new Map<Element, Rect>();
 
-/** A unit at `top`; `pinned` puts it in a sticky box that tall. */
-function unit(top: number, height = 400, pinned?: number): Element {
+/** A unit at `top`; `pinned` puts it in a sticky box that tall, `width` wide (a 300 px rail). */
+function unit(top: number, height = 400, pinned?: number, width = 300): Element {
   const u = document.createElement('div');
   if (pinned !== undefined) {
     const rail = document.createElement('div');
     rail.dataset.pos = 'sticky';
-    rail.getBoundingClientRect = () => ({ top: 0, bottom: pinned, height: pinned }) as DOMRect;
+    rail.getBoundingClientRect = () => ({ top: 0, bottom: pinned, height: pinned, width }) as DOMRect;
     rail.append(u);
     document.body.append(rail);
   } else document.body.append(u);
@@ -77,6 +77,7 @@ beforeEach(() => {
     getComputedStyle: (e: Element) => ({ position: (e as HTMLElement).dataset?.pos ?? 'static' }),
     scrollY: 0,
     innerHeight: 800,
+    innerWidth: 1200,
     scrollBy: (o: ScrollToOptions) => scrolls.push(o.top ?? 0),
   };
   win = w;
@@ -104,21 +105,15 @@ describe('viewport tracker, on-screen veils', () => {
     expect(tracker.stats().veilsPinned).toBe(1);
   });
 
-  // A sticky wrapper taller than the window scrolls like the page until its end.
-  it('a veil in a taller sticky box settles only once a scroll did not move it', () => {
+  // A rail taller than the window (the bench's) is still a side column: waiting for a
+  // scroll to prove it pinned only moves its lower modules later, out of nowhere.
+  it('a veil in a sticky side column taller than the window settles at the first look too', () => {
     const rail = unit(70, 400, 2000);
-    const feed = unit(300);
     tracker.watch(rail);
-    tracker.watch(feed);
     onScreen(rail);
-    onScreen(feed);
-    runFrames();
-    expect(settled, 'nothing settles on the first look').toEqual([]);
-    scroll(200, [feed]);
     runFrames();
     expect(settled).toEqual([rail]);
     expect(scrolls).toEqual([]);
-    expect(tracker.stats().veilsPinned).toBe(1);
   });
 
   // Something above collapsed and a scroll undid the move (Sifter's own correction, or
@@ -135,14 +130,17 @@ describe('viewport tracker, on-screen veils', () => {
     expect(tracker.stats().veilsPinned).toBe(0);
   });
 
-  it('a scroll shorter than the pin threshold proves nothing', () => {
-    const rail = unit(70, 400, 2000);
-    tracker.watch(rail);
-    onScreen(rail);
+  // LinkedIn's shape: the feed scrolls inside a fixed box the size of the window.
+  it('a veil in a fixed box wider than half the window (the feed itself) is not pinned', () => {
+    const card = unit(300, 400, 800, 1200);
+    tracker.watch(card);
+    onScreen(card);
     runFrames();
-    scroll(20, []);
+    expect(settled, 'not at the first look').toEqual([]);
+    scroll(-300, []);
     runFrames();
-    expect(settled).toEqual([]);
+    expect(settled, 'nor after a scroll that left it put').toEqual([]);
+    expect(tracker.stats().veilsPinned).toBe(0);
   });
 
   it('a moving veil whose top went under the header settles, and the move is undone', () => {

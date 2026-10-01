@@ -1,55 +1,49 @@
 # Sifter checkpoint
 
-**Session 16 (2026-09-30, branch `fix/veil-linkedin`): IN PROGRESS, paused by Daniel.
-Not merged, WIP commit, 2 stability e2e tests fail.** Daniel, on the veil from
-session 15: on LinkedIn "hidden posts sometimes are not actually hidden, they have the
-tag above but i still see the post", and hidden boxes sit on top of the next post;
-Facebook "even buggier". Root causes and state:
+**Session 16 (2026-09-30 to 10-01, branch `fix/veil-linkedin`): DONE, PR open, not
+merged.** Daniel, on the veil from session 15: on LinkedIn "hidden posts sometimes are
+not actually hidden, they have the tag above but i still see the post", and hidden
+boxes sat on top of the next post; Facebook "even buggier". Three causes, all fixed:
 
-- **LinkedIn (DONE):** each post's first child is `display: contents`; `clip-path`
-  does nothing to a box that doesn't exist, so the post painted under the bar. The veil
-  clip in `UNIT_CSS` (`hider.ts`) now also reaches `> * ` and `> * > *`. E2E paint probe
-  (`a veiled card paints nothing, even through a display: contents wrapper`) passes, and
-  fails against HEAD's CSS (negative control run). Blur mode has the same bug (`filter`
-  on a contents box), deliberately not fixed: nested blurs compound. Tell Daniel.
-- **Facebook bar under the header (DONE):** a veil whose top scrolled under the 56 px
-  header left a blank space with no bar. `viewport.ts` `lookOnScreen()` now re-reads each
-  on-screen veil in the flush; one seen moving with the page whose top is above
-  `topEdge()` (64 px, or the scroller's top + 8) joins `above` and collapses with the
-  usual correction (`veilsUnderTop`). E2E x3 scroller variants pass.
-- **Same-frame shift (DONE):** `scrollend` fires in the scroll's own frame before its rAF
-  callbacks, so a one-frame flush collapsed and corrected before the scroll painted, and
-  the Layout Instability API counted the whole collapse (5 e2e failed). `schedule()` now
-  waits two frames. Scroll events' `timeStamp` is when the scroll was *requested*, not
-  dispatched, so a timestamp check does not work. Unit test `waits a frame after the
-  scroll ends` fails against a one-frame mutant.
-- **Facebook pinned rail (OPEN, this is where it stopped):** the sponsored rail module
-  never leaves the screen, so its veil never settled: a ~400 px blank hole. First fix
-  (collapse once a scroll moved the page but not the unit, plus a fixed/sticky ancestor,
-  because Sifter's own correction scroll leaves feed cards unmoved too) made
-  `bench:scroll --site facebook` show a new 350 px visible move (Contacts moving up
-  after the first scroll; HEAD has 0). Current attempt: `fitsPinnedBox()` collapses at
-  the first look (right after the hide, as before veils) when the fixed/sticky box is no
-  taller than the window. **That breaks the 2 `element clipped under a header` e2e
-  variants**: their `#workspace` is a fixed, window-sized feed scroller (LinkedIn's
-  shape), so every feed card counts as pinned. Live Facebook probe: the rail is
-  `role=complementary`, `position: sticky`, 309 x 852 px in a 1376 x 908 window, with an
-  inner `overflow-y: auto` scroller that is scrollable; so "no scroller inside the box"
-  would exclude the real rail. **Next:** (1) require the box to be a side column too
-  (width <= half the window), confirm against LinkedIn's live shape
-  (`pnpm exec tsx bench/_rail-probe.ts linkedin` was about to run); (2) in the
-  scroll-proof path also require `!box.contains(scroller)`, or a fixed feed scroller
-  gives a false pin after a correction scroll; (3) re-run `bench:scroll --site facebook
-  --cpu 1` and check the 350 px move is gone or lands before the measured window.
-- **Then:** `pnpm verify`, `pnpm test:e2e`, `bench:scroll --cpu 1 --strict` both sites,
-  live re-probe (`bench/_veil-probe.ts`), delete both `bench/_*-probe.ts` (untracked,
-  never commit), CHANGELOG [Unreleased] Fixed, Do-not-undo lines (below), copy build to
-  `~/sifter-v1.0.0`, land via PR.
-- **Do-not-undo lines to add when it lands:** veil clip reaches depth 3 for
-  `display: contents`; pinned needs a fixed/sticky ancestor, never just "didn't move";
-  the tracker's pinned-box style walk is an idle-flush-only exception to "no
-  getComputedStyle outside `decide()`" (the rule protects the scanner's mid-scroll path);
-  the flush waits two frames after `scrollend`.
+- **LinkedIn:** each post's first child is `display: contents`, and `clip-path` does
+  nothing to a box that doesn't exist, so the post painted under (and over) the bar.
+  The veil clip in `UNIT_CSS` now also reaches `> *` and `> * > *`. E2E paint probe
+  (`a veiled card paints nothing, even through a display: contents wrapper`) fails
+  against session 15's CSS. Blur mode has the same gap (`filter` on a contents box);
+  deliberately not fixed, nested blurs compound.
+- **Facebook rail:** the sponsored rail module never leaves the screen, so its veil
+  never settled: a ~400 px hole for good. A veil whose fixed or sticky ancestor is a
+  side column (at most half the window wide) now collapses at its first look, right
+  after the hide, as before veils; only its column moves. Two rejected shapes, both
+  measured: "collapse once a scroll moved the page and not the unit" (Sifter's own
+  correction scroll leaves every feed card unmoved too, and the bench showed Contacts
+  jumping 350 px after the first scroll), and "fits the window" (LinkedIn-shaped
+  fixed full-width feed boxes counted as pinned: 2 e2e failed; and the bench's
+  taller rail still moved late). Live structure: Facebook rail = `DIV sticky`, 309 px
+  of 1376; LinkedIn feed cards have **no** fixed/sticky ancestor (`<main>` is
+  `relative`, `overflow: scroll`, 1376 wide), so they can't be mistaken for a rail.
+- **Bar under the header:** a veil whose top scrolled under a fixed header left
+  unexplained blank space. An on-screen veil seen moving with the page whose top is
+  above `topEdge()` now joins `above` and collapses with the usual correction
+  (`veilsUnderTop`).
+- **Same-frame shift:** `scrollend` fires in the scroll's own frame before its rAF
+  callbacks, so a one-frame flush painted the collapse together with the scroll and
+  the Layout Instability API counted it (5 e2e failed). `schedule()` waits two
+  frames. Scroll events' `timeStamp` is the *request* time, so a timestamp check
+  can't replace it.
+- **Bench fix:** `bench/stability.ts` observed `document.documentElement` from an
+  init script, before it exists; the observe threw, so `hidesByZone` and
+  `collapsesByZone` were `{}` in every bench run until now (session 15's blame
+  columns included). It observes `document`.
+- **Receipts (2026-10-01):** `pnpm verify` green (344 passed, eval tp=61 fp=0
+  fn=0); `pnpm test:e2e` 35 passed, 1 skipped; `tests/unit/viewport-tracker.test.ts`
+  8 tests, the width rule and the two-frame wait each mutation-checked;
+  `bench:scroll --cpu 1 --strict` exit 0 both sites, **0 visible moves with Sifter
+  on** (Facebook was 350 px), hides and collapses all `below`. One earlier LinkedIn
+  strict run exited 1 with no output captured; two reruns were OK.
+- **Next:** Daniel judges the build in `~/sifter-v1.0.0` live (an on-screen hidden
+  feed post still shows as a bar over blank space until it scrolls away, by design),
+  then merge the PR.
 
 **Session 15 (2026-09-30, branch `feat/stable-scroll`): the feed no
 longer moves when Sifter hides.** Daniel: the feed bounces, mostly down, when entries
@@ -596,6 +590,10 @@ path is still unverified live (no sponsored feed post appeared this session eith
 
 ## Do not undo
 
+- **Veil clip reaches depth 3:** `clip-path` does nothing to a `display: contents` box (LinkedIn wraps every post in one). The e2e paint probe guards it.
+- **Pinned means a fixed or sticky side column, at the first look:** never "it stayed put through a scroll" (a correction scroll leaves every feed card put), never "its box fits the window" (a full-width fixed feed box fits). `sideColumnOf()` in `viewport.ts`.
+- **The tracker flush waits two frames after `scrollend`:** one frame paints the collapse with the scroll, as a layout shift.
+- **The tracker pinned-box style walk** is the one `getComputedStyle` outside `decide()`: idle flush only, once per on-screen veil, never mid-scroll.
 - **`renderedWithin` in `src/extract.ts`:** innerText returns the full text of an element that is itself `display:none`.
 - **`renderedText`, not innerText, for labels:** innerText forces whole-page layout mid-scroll.
 - **`hasContent` guard at the top of `decide()`:** a unit with no text, media or link is never hidden, whatever marks it, and is released if it empties after a hide. Google serves `#tads`/`#atvcap`/`#bottomads` empty on no-ads pages; without the guard each one got a "Hidden" row over nothing (live report, 2026-09-27). It keeps no `seen` record, so an image-only fill is still decided. `tests/unit/empty-shell.test.ts` + the e2e case in `google-late.spec.ts`.

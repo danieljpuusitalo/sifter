@@ -14,9 +14,9 @@
 //   Sites that move their own slots get no anchoring at all.
 // - on screen, but pinned: a unit in a sticky rail (Facebook's) never leaves the
 //   screen, so it would stay a blank hole under its bar for good. In a fixed or
-//   sticky box that fits the window it collapses at the first look, right after
-//   the hide; in a taller one, once a scroll has moved the page and not the unit.
-//   Either way it collapses where it is: the feed is in another column.
+//   sticky side column (at most half the window wide; a wider one is the feed)
+//   it collapses at the first look, right after the hide, where it is: the feed
+//   is in another column.
 // - on screen, top under the header: the bar has scrolled up behind a fixed
 //   header, leaving blank space with nothing to say why. It collapses like a unit
 //   above the viewport: everything below its bottom edge holds still.
@@ -69,8 +69,8 @@ const MARGIN_PX = 64;
 const SCROLL_IDLE_MS = 150;
 /** Below this, a measured move is rounding. */
 const MOVE_EPSILON_PX = 0.5;
-/** A scroll this long that moves an on-screen unit by less than MOVE_EPSILON_PX means it is pinned. */
-const PIN_SCROLL_PX = 48;
+/** A scroll this long that moves an on-screen unit by half as much or more means it moves with the page. */
+const MOVING_SCROLL_PX = 48;
 /** A unit whose top is above this line (window) has its bar under a fixed header (Facebook's is 56 px). */
 const HEADER_BAND_PX = 64;
 /** In a feed that scrolls inside an element, a top this far past the element's own top edge is clipped. */
@@ -240,10 +240,10 @@ class ViewportTracker implements VeilTracker {
 
   /**
    * Look again at each on-screen veil whose page has scrolled since the last look.
-   * One the scroll did not move is pinned: returned, to collapse where it is. One
-   * that moves with the page and has its top under the header joins the units
-   * above the viewport. Only a unit seen moving may: collapsing a pinned one and
-   * scrolling to undo the move would move the feed instead.
+   * One in a pinned side column, at its first look, is returned, to collapse where
+   * it is. One that moves with the page and has its top under the header joins the
+   * units above the viewport. Only a unit seen moving may: collapsing a pinned one
+   * and scrolling to undo the move would move the feed instead.
    */
   private lookOnScreen(): Element[] {
     const pinned: Element[] = [];
@@ -253,11 +253,13 @@ class ViewportTracker implements VeilTracker {
         continue;
       }
       if (seen && seen.seq === this.scrollSeq) continue;
-      // A box that stays on screen whole (a sticky rail) never scrolls the unit away:
-      // collapse it at the first look, right after the hide, as before veils. Only its
-      // own column moves (a rail's lower modules), while the page is still settling
-      // in; after the first scroll that move would come out of nowhere.
-      if (!seen && this.fitsPinnedBox(u)) {
+      // A pinned side column (a sticky rail) may never scroll the unit away: collapse it
+      // at the first look, right after the hide, as before veils. Only its own column
+      // moves (a rail's lower modules), while the page is still settling in; after the
+      // first scroll that move would come out of nowhere. Not "it stayed put through a
+      // scroll" either: when something above collapses and a scroll undoes the move
+      // (Sifter's own correction, or Chrome's anchoring), every feed card stays put too.
+      if (!seen && this.sideColumnOf(u)) {
         pinned.push(u);
         this.onScreen.delete(u);
         continue;
@@ -269,14 +271,7 @@ class ViewportTracker implements VeilTracker {
       if (seen && seen.scroller === scroller) {
         const scrolled = Math.abs(offset - seen.offset);
         const moved = Math.abs(top - seen.top);
-        // Staying put is not enough: when something above collapses and a scroll undoes the
-        // move (Sifter's own correction, or Chrome's anchoring), every card below stays put too.
-        if (scrolled >= PIN_SCROLL_PX && moved <= MOVE_EPSILON_PX && this.pinnedBoxOf(u)) {
-          pinned.push(u);
-          this.onScreen.delete(u);
-          continue;
-        }
-        if (scrolled >= PIN_SCROLL_PX && moved >= scrolled / 2) moves = true;
+        if (scrolled >= MOVING_SCROLL_PX && moved >= scrolled / 2) moves = true;
       }
       if (moves && top < this.topEdge(scroller)) {
         this.onScreen.delete(u);
@@ -311,13 +306,13 @@ class ViewportTracker implements VeilTracker {
   }
 
   /**
-   * In a pinned box no taller than the window. A taller one scrolls like the page
-   * (a sticky wrapper around a whole feed), so it has to prove itself pinned by
-   * staying put through a scroll first.
+   * The unit's fixed or sticky box, if it is a side column: at most half the window
+   * wide. A wider one is the feed itself, pinned in place while it scrolls inside
+   * (LinkedIn's `<main>`), and its cards come and go like the page's.
    */
-  private fitsPinnedBox(u: Element): boolean {
+  private sideColumnOf(u: Element): Element | null {
     const box = this.pinnedBoxOf(u);
-    return box !== null && box.getBoundingClientRect().height <= this.win.innerHeight;
+    return box && box.getBoundingClientRect().width <= this.win.innerWidth / 2 ? box : null;
   }
 
   /** Above this line a unit's bar cannot be seen: under a fixed header, or clipped by its scroller's top edge. */

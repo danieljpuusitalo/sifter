@@ -889,10 +889,13 @@ export class Scanner {
     let overBudget = cut;
     const hasOverrides = Object.keys(this.ctx.overrides).length > 0;
     const hits: LaneHit[] = [];
+    const { trace } = this.deps;
+    let readUpTo = born.length;
     for (let i = 0; i < born.length; i++) {
       const u = born[i]!;
       if (i > 0 && over()) {
         overBudget = true;
+        readUpTo = i;
         break;
       }
       if (this.hider.isHidden(u) || this.userShown.has(u) || this.seen.has(u)) continue;
@@ -905,19 +908,28 @@ export class Scanner {
       } catch {
         hit = 'abstain';
       }
-      if (hit === 'abstain') this.perf.laneAbstain++;
-      else if (hit) hits.push(hit);
+      if (hit === 'abstain') {
+        this.perf.laneAbstain++;
+        trace?.laneSkipped(u, 'abstain');
+      } else if (hit) hits.push(hit);
+      // Trace builds only: an extra content check, to tell a shell filled later from a slow decide.
+      else if (trace && !hasContent(u)) trace.bornBare(u);
     }
     // Writes after every read, so no hide forces the next unit's read to restyle.
     const now = this.now();
     for (const h of hits) {
       this.hider.hide(h.unit, h.category, h.hint, true);
       this.laneHidden.add(h.unit);
-      this.deps.trace?.hid(h.unit, now, h.why);
+      trace?.hid(h.unit, now, h.why);
       this.perf.laneHits++;
     }
     if (overBudget) this.perf.laneOverBudget++;
     this.laneTook(t0);
+    // Trace builds only, after the lane's clock stopped: which born units the budget cut.
+    if (trace && overBudget) {
+      const read = new Set(born.slice(0, readUpTo));
+      for (const u of bornUnits(records, adapter.unitSelector, () => false).units) if (!read.has(u)) trace.laneSkipped(u, 'overflow');
+    }
   }
 
   /** One born unit's lane verdict: a hide, 'abstain' (a marker, but decide() might not hide), or null (no marker). */

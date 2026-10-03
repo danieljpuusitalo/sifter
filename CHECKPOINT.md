@@ -47,6 +47,28 @@ this session removes both. Plan: `~/.claude/plans/memoized-tumbling-beacon.md`.
   - **Facebook's lane share is unknown.** One live hide is not a sample; run longer with
     `--suggested`.
 
+**Session 18b (2026-10-03, same branch): the tag build leaks ads.** Daniel: "more and
+more as you scroll you begin to see the posts we are trying to hide ... removes 80% of
+the value." His choice: an ad caught on screen is **blurred in place** under the pill.
+Plan, approved: `~/.claude/plans/memoized-tumbling-beacon.md` (P0 measure, P1 collapse
+off screen below mid-scroll, P2 decide before the screen, P3 widen the lane, P4 blur).
+
+- **P0 exposure counters:**
+  - `tagsScrolledIn`, every build: a tag off the real screen at its first report that the reader then scrolled onto.
+  - Arrival class per debounced hide, trace builds: `filled` / `overflow` / `abstain` / `labelLate` / `slow`.
+  - `bench:live` prints `exposure` = (hid on screen + `tagsScrolledIn`) / all hides.
+- **Baseline, PR #29 build, `SIFTER_TRACE=1`, `bench:live --suggested --seconds 60 --mode on`, native Edge:**
+  - **LinkedIn: exposure 30 %**, 27 readable of 90 hides.
+    - The 27: 7 hidden on screen and 20 tags scrolled in.
+    - The 90: lane 22 and debounced 68.
+    - **All 68 debounced hides are `overflow`:** born whole, cut by the lane's budget. `filled`, `labelLate`, `slow` and `abstain` are all 0.
+    - `laneOverBudget` 24 batches; `laneMaxMs` **72.7**, the first unit's forced style recalc.
+    - Debounced hide latency p50 796 ms, max 3353.
+    - `belowCameNear` 20, `lateFarBelow` 41.
+  - **Facebook: exposure 0 %**, 46 hides, all from the lane; 0 debounced. `laneOverBudget` 1, `laneMaxMs` 27.2.
+    - Its `collapse:inView` moves (10) are blamed by time only. A lane hide always shares its frame with the site's insertion, so the blame cannot tell them apart.
+  - Conclusion: on LinkedIn the lane's budget is the lever, not filled shells. The fill half of P3 is skipped unless a later run shows `filled` > 0.
+
 **Session 17 (2026-10-01): Daniel's live report on the PR #23 build, nine issues.
 Three stacked PRs, all open, none merged: #24 (`fix/live-report`, on #23), #25
 (`fix/live-measure`, on #24), #26 (`fix/fb-stories-in-feed`, on #25).** Merge in that

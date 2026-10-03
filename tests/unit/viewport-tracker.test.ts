@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { LOAD_GRACE_MS, viewportTracker, type LateTracker } from '../../src/content/viewport';
+import { LOAD_GRACE_MS, MIN_LEAD_PX, viewportTracker, type LateTracker } from '../../src/content/viewport';
 
 // The tracker's three rules (load, far below, pinned rail), with the browser's
 // parts faked: an IntersectionObserver that reports what the test says, frames run
@@ -11,16 +11,22 @@ import { LOAD_GRACE_MS, viewportTracker, type LateTracker } from '../../src/cont
 type Rect = { top: number; bottom: number };
 
 class FakeIO {
+  /** Every observer made, in order: a tracker makes its band, then its screen. */
+  static made: FakeIO[] = [];
+  /** The current tracker's band and real-screen observers. */
   static last: FakeIO;
+  static screen: FakeIO;
   constructor(readonly cb: (entries: IntersectionObserverEntry[]) => void) {
-    FakeIO.last = this;
+    FakeIO.made.push(this);
   }
   observe(): void {}
   unobserve(): void {}
   disconnect(): void {}
 }
 
-let frames: Array<() => void>;
+let frames: Array<(t: number) => void>;
+/** The frame clock, in ms: each frame is 16 ms after the last. */
+let clock: number;
 let scrolls: number[];
 let win: { scrollY: number };
 let settled: Element[];
@@ -51,13 +57,21 @@ function onScreen(u: Element): void {
   FakeIO.last.cb([{ target: u, isIntersecting: true, boundingClientRect: u.getBoundingClientRect(), rootBounds: null } as unknown as IntersectionObserverEntry]);
 }
 
-/** The observer says `u` is outside the band; its rect says which side. */
-function outside(u: Element): void {
-  FakeIO.last.cb([{ target: u, isIntersecting: false, boundingClientRect: u.getBoundingClientRect(), rootBounds: { top: 0, bottom: 800 } } as unknown as IntersectionObserverEntry]);
+/** The observer says `u` is outside the band; its rect says which side. `time`: when it measured (else no sample). */
+function outside(u: Element, time?: number): void {
+  FakeIO.last.cb([{ target: u, isIntersecting: false, time, boundingClientRect: u.getBoundingClientRect(), rootBounds: { top: 0, bottom: 800 } } as unknown as IntersectionObserverEntry]);
 }
 
-function runFrames(): void {
-  while (frames.length) frames.shift()!();
+/** Run frames until none is asked for (capped, so a frame loop fails the test instead of hanging it). */
+function runFrames(cap = 50): void {
+  for (let i = 0; frames.length && i < cap; i++) frames.shift()!((clock += 16));
+  if (frames.length) throw new Error('frames still asked for');
+}
+
+function oneFrame(): void {
+  const f = frames.splice(0);
+  clock += 16;
+  for (const x of f) x(clock);
 }
 
 /** Scroll the page by `dy`; units in `moving` move with it, the rest stay put. */
@@ -75,11 +89,12 @@ beforeEach(() => {
   document.body.innerHTML = '';
   rects.clear();
   frames = [];
+  clock = 1000;
   scrolls = [];
   settled = [];
   const w = {
     IntersectionObserver: FakeIO,
-    requestAnimationFrame: (f: () => void) => frames.push(f),
+    requestAnimationFrame: (f: (t: number) => void) => frames.push(f),
     cancelAnimationFrame: () => {},
     document,
     getComputedStyle: (e: Element) => ({ position: (e as HTMLElement).dataset?.pos ?? 'static' }),
@@ -98,6 +113,7 @@ beforeEach(() => {
     const r = rects.get(u)!;
     rects.set(u, { top: r.top, bottom: r.top + 36 });
   });
+  [FakeIO.last, FakeIO.screen] = FakeIO.made.slice(-2) as [FakeIO, FakeIO];
   // The tests below are about a page the reader is already scrolling.
   document.dispatchEvent(new Event('wheel'));
 });
@@ -131,27 +147,67 @@ describe('viewport tracker, on screen and above: a tag stays a tag', () => {
   });
 });
 
-describe('viewport tracker, far below', () => {
-  it('a late catch two screens or more below collapses at the next still frame', () => {
-    const u = unit(2000);
+describe('viewport tracker, below the screen', () => {
+  // The screen ends at 800; the lead is MIN_LEAD_PX (120) for a unit that is not moving.
+  it('a late catch past the lead below the screen collapses in the next frame', () => {
+    const u = unit(MIN_LEAD_PX + 800);
     tracker.watch(u);
     outside(u);
     expect(settled, 'not from the report itself').toEqual([]);
     runFrames();
     expect(settled).toEqual([u]);
     expect(scrolls).toEqual([]);
-    expect(tracker.stats()).toMatchObject({ lateFarBelow: 1, lateInView: 0, belowCameNear: 0 });
+    expect(tracker.stats()).toMatchObject({ lateFarBelow: 1, lateInView: 0, belowCameNear: 0, collapsedMidScroll: 0 });
   });
 
-  // Negative control for the threshold: the observer's band reaches a screen below the
-  // window, but its report can be stale. A fresh rect nearer than that stays a tag.
-  it('reported below but nearer than two screens: stays a tag, counted as one that came near', () => {
-    const u = unit(1000);
+  // Negative control for the lead: the report can be stale, and the compositor runs ahead.
+  it('reported below but within the lead: stays a tag, counted as one that came near', () => {
+    const u = unit(MIN_LEAD_PX + 799);
     tracker.watch(u);
     outside(u);
     runFrames();
     expect(settled).toEqual([]);
     expect(tracker.stats()).toMatchObject({ lateFarBelow: 0, lateInView: 1, belowCameNear: 1 });
+  });
+
+  // Session 18b: a reader scrolling without pause never gave the old rule its still
+  // frame, so every tag reached the screen (20 of 90 hides on LinkedIn).
+  it('mid-scroll, collapses anyway: below the screen it moves nothing the reader sees', () => {
+    const u = unit(2000);
+    tracker.watch(u);
+    document.dispatchEvent(new Event('scroll'));
+    outside(u);
+    runFrames();
+    expect(settled).toEqual([u]);
+    expect(tracker.stats()).toMatchObject({ lateFarBelow: 1, collapsedMidScroll: 1 });
+  });
+
+  it('a tag coming up fast gets a longer lead: the compositor is ahead of the rect', () => {
+    const u = unit(1400);
+    tracker.watch(u);
+    document.dispatchEvent(new Event('scroll'));
+    outside(u, clock);
+    // 400 px in one 16 ms frame: 25 px/ms, a lead of 2500 px.
+    scroll(400, [u]);
+    oneFrame();
+    expect(settled, 'past the 120 px minimum, but not past the speed lead').toEqual([]);
+    // The control: the same place, the reader stopped. A frame later it has not moved.
+    document.dispatchEvent(new Event('scrollend'));
+    runFrames();
+    expect(settled).toEqual([u]);
+  });
+
+  it('a tag the reader scrolled onto is not collapsed when it is on screen', () => {
+    const u = unit(MIN_LEAD_PX + 799);
+    tracker.watch(u);
+    outside(u);
+    runFrames();
+    scroll(400, [u]);
+    onScreen(u);
+    runFrames();
+    scroll(-50, [u]);
+    runFrames();
+    expect(settled).toEqual([]);
   });
 
   // 2026-10-01, 881 px: a long site task held every scroll event back, so the page
@@ -167,20 +223,8 @@ describe('viewport tracker, far below', () => {
     expect(tracker.stats().belowCameNear).toBe(1);
   });
 
-  it('mid-scroll, waits for the scroll to stop and then looks again', () => {
-    const u = unit(2000);
-    tracker.watch(u);
-    document.dispatchEvent(new Event('scroll'));
-    outside(u);
-    runFrames();
-    expect(settled, 'not while the page is moving').toEqual([]);
-    document.dispatchEvent(new Event('scrollend'));
-    runFrames();
-    expect(settled).toEqual([u]);
-  });
-
-  it('a near tag the reader leaves far behind (scrolling back up) collapses then', () => {
-    const u = unit(1000);
+  it('a near tag the reader leaves behind (scrolling back up) collapses then, however fast', () => {
+    const u = unit(850);
     tracker.watch(u);
     outside(u);
     runFrames();
@@ -195,20 +239,6 @@ describe('viewport tracker, far below', () => {
     const u = unit(300, 0);
     tracker.watch(u);
     outside(u);
-    runFrames();
-    expect(settled).toEqual([u]);
-  });
-
-  // `scrollend` fires in the scroll's own frame, before that frame paints: a collapse in
-  // its first animation frame would paint together with the scroll, as one visible move.
-  it('waits a frame after the scroll ends before it collapses anything', () => {
-    const u = unit(1000);
-    tracker.watch(u);
-    outside(u);
-    runFrames();
-    scroll(-1500, [u]);
-    frames.shift()!();
-    expect(settled, 'nothing in the frame the scroll ended in').toEqual([]);
     runFrames();
     expect(settled).toEqual([u]);
   });
@@ -265,6 +295,42 @@ describe('viewport tracker, pinned side column', () => {
     runFrames();
     expect(settled).toEqual([]);
     expect(tracker.stats().lateInView).toBe(1);
+  });
+});
+
+// Exposure the hide-latency trace misses: a tag hidden off screen that the reader then
+// scrolls onto. The real-screen observer has no margin; the band's reports don't count.
+describe('viewport tracker, tags scrolled in', () => {
+  const report = (u: Element, isIntersecting: boolean) =>
+    FakeIO.screen.cb([{ target: u, isIntersecting, boundingClientRect: u.getBoundingClientRect(), rootBounds: { top: 0, bottom: 800 } } as unknown as IntersectionObserverEntry]);
+
+  it('off the screen at its first report, then on it: counted once', () => {
+    const u = unit(1000);
+    tracker.watch(u);
+    report(u, false);
+    expect(tracker.stats().tagsScrolledIn).toBe(0);
+    report(u, true);
+    report(u, false);
+    report(u, true);
+    expect(tracker.stats().tagsScrolledIn).toBe(1);
+  });
+
+  it('negative control: on screen at its first report is not counted (the trace has it as hidden on screen)', () => {
+    const u = unit(200);
+    tracker.watch(u);
+    report(u, true);
+    report(u, false);
+    report(u, true);
+    expect(tracker.stats().tagsScrolledIn).toBe(0);
+  });
+
+  it('a tag let go (settled, released, shown) stops counting', () => {
+    const u = unit(1000);
+    tracker.watch(u);
+    report(u, false);
+    tracker.unwatch(u);
+    report(u, true);
+    expect(tracker.stats().tagsScrolledIn).toBe(0);
   });
 });
 

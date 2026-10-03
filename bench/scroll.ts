@@ -301,6 +301,8 @@ async function run(withExt: boolean) {
     laneMaxMs: after ? +after.perf.laneMaxMs.toFixed(2) : null,
     lateInView: d('lateInView'),
     lateFarBelow: d('lateFarBelow'),
+    collapsedMidScroll: d('collapsedMidScroll'),
+    tagsScrolledIn: d('tagsScrolledIn'),
     maxSliceAtLoad: atLoad ? +atLoad.perf.maxSliceMs.toFixed(1) : null,
     initialScanMs: atLoad ? +atLoad.perf.totalMs.toFixed(1) : null,
     firstPassWallMs: firstPassMs,

@@ -7,6 +7,7 @@ import { adapterFor } from '../../src/adapters/index';
 import type { Adapter } from '../../src/adapters/schema';
 import { HIDDEN_CLASS } from '../../src/content/hider';
 import { Scanner, type ScannerDeps } from '../../src/content/scanner';
+import type { HideTrace } from '../../src/content/trace';
 import { unitText } from '../../src/extract';
 import { fingerprint } from '../../src/fingerprint';
 import { defaultContext, type SiteContext } from '../../src/messages';
@@ -133,6 +134,32 @@ describe('pre-paint lane', () => {
     expect(f.perf()).toMatchObject({ laneHits: 1, laneOverBudget: 1 });
     f.drain();
     expect(f.hidden(1004), 'positive control: the debounced pass hides the rest').toBe(true);
+  });
+
+  // The trace's arrival class needs the lane to say what it left behind, and why.
+  it('tells the trace which units it cut, abstained on, or saw born empty', async () => {
+    const calls: string[] = [];
+    const key = (u: Element) => u.getAttribute('componentkey')?.slice(17, 21) ?? '?';
+    const noop = () => {};
+    const trace: HideTrace = {
+      dirty: noop, due: noop, takeDirty: () => 0, queued: noop, empty: noop, hid: noop, released: noop,
+      shown: noop, unshown: noop, sweep: noop, reset: noop,
+      stats: () => ({}) as ReturnType<HideTrace['stats']>,
+      bornBare: (u) => calls.push(`bare ${key(u)}`),
+      laneSkipped: (u, why) => calls.push(`${why} ${key(u)}`),
+    };
+    let t = 0;
+    const f = feed({ trace, now: () => (t += 2) });
+    f.append(card(1006) + card(1004));
+    await observed();
+    expect(f.hidden(1006), 'positive control: the first unit fit').toBe(true);
+    expect(calls).toEqual(['overflow 1004']);
+    f.s.stop();
+    calls.length = 0;
+    const g = feed({ trace });
+    g.append('<div><div role="listitem" componentkey="update-card-focus3001x"></div></div>');
+    await observed();
+    expect(calls).toEqual(['bare 3001']);
   });
 
   it('over budget, stops collecting after the first record', async () => {

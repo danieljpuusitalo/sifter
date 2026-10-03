@@ -9,9 +9,13 @@
 //
 // - while the page is still loading (`loadHide`): nobody is reading yet, and the
 //   site itself is still moving things, so the hide applies at once.
-// - far below: a full screen or more under the reader, checked with a fresh rect in
-//   a still frame. Nothing the reader can see sits below it. A tag that later ends
-//   up that far below (the reader scrolled back up) collapses then.
+// - below the screen: past the visible bottom edge by a lead, checked with a fresh
+//   rect in the next animation frame, scrolling or not. Nothing the reader can see
+//   sits below it, so the collapse moves nothing they can see. The lead covers the
+//   compositor scrolling ahead of the main thread: at least `MIN_LEAD_PX`, more the
+//   faster the unit moves (session 18b: waiting for a still frame two screens away
+//   let every tag reach the reader of a continuous scroll, 20 of 90 on LinkedIn).
+//   A tag that later ends up below (the reader scrolled back up) collapses then.
 // - pinned in a side column: Facebook's sticky rail never scrolls away, so its
 //   sponsored module collapses at the first look, where it is: the feed is in
 //   another column.
@@ -21,23 +25,31 @@
 // the reader no matter how carefully they were timed (sessions 15-17).
 //
 // Zones come from an IntersectionObserver, which reports after layout and never
-// forces one (hard rule 7). The flush reads layout only in an idle frame after
-// the gesture ended: one rect read per unit reported below, and the pinned-box
-// style walk once per tag at its first look on screen.
+// forces one (hard rule 7). The flush reads layout only in an animation frame,
+// before any write: one rect read per tag waiting below, and the pinned-box style
+// walk once per tag at its first look on screen, in a still frame.
 
 export type LateStats = {
   /** Hides applied at once, with no tag, because the page was still loading (see `loadHide`). */
   hidesAtLoad: number;
-  /** Late catches on screen, above it, or within a screen below at the first look: tagged in place. */
+  /** Late catches on screen, above it, or within the lead below at the first look: tagged in place. */
   lateInView: number;
-  /** Late catches a full screen or more below at the first look: collapsed at once. */
+  /** Late catches past the lead below the screen at the first look: collapsed at once. */
   lateFarBelow: number;
-  /** Tags collapsed later, once the reader had left them a full screen behind. */
+  /** Tags collapsed later, once they were past the lead below (the reader scrolled back up). */
   tagsCollapsed: number;
+  /** Of `lateFarBelow` and `tagsCollapsed`, those collapsed while the page was scrolling. */
+  collapsedMidScroll: number;
   /** Tags in a pinned side column (Facebook's rail), collapsed at the first look. */
   railCollapsed: number;
-  /** Units reported below whose fresh rect was nearer than a screen: each would have been a jump. */
+  /** Units reported below whose fresh rect was within the lead: each would have been a jump. */
   belowCameNear: number;
+  /**
+   * Tags off the real screen at their first report that the reader then scrolled onto
+   * it. While a tag was a plain pill, each was an ad the reader could read: exposure
+   * the hide-latency trace misses, because the post was off screen at the hide.
+   */
+  tagsScrolledIn: number;
 };
 
 export const EMPTY_LATE_STATS: LateStats = {
@@ -45,8 +57,10 @@ export const EMPTY_LATE_STATS: LateStats = {
   lateInView: 0,
   lateFarBelow: 0,
   tagsCollapsed: 0,
+  collapsedMidScroll: 0,
   railCollapsed: 0,
   belowCameNear: 0,
+  tagsScrolledIn: 0,
 };
 
 export interface LateTracker {
@@ -69,6 +83,10 @@ export type LateTrackerFactory = (settle: (unit: Element) => void) => LateTracke
 
 /** A unit this close above the viewport still counts as on screen. */
 const MARGIN_PX = 64;
+/** A tag below the screen collapses only this far past its bottom edge, at least. */
+export const MIN_LEAD_PX = 120;
+/** And at least as far as it moves in this long: six frames of the compositor running ahead. */
+export const LEAD_MS = 100;
 /** Scrolling counts as over this long after the last scroll event, if `scrollend` never comes. */
 const SCROLL_IDLE_MS = 150;
 /**
@@ -114,13 +132,15 @@ class ViewportTracker implements LateTracker {
   /** Watched units not yet measured once: their first look is counted in the stats. */
   private readonly fresh = new Set<Element>();
   /**
-   * Reported below the observed band: checked again with a fresh rect in a still
-   * frame. The report can be well over 100 ms old on a busy page, and a compositor
-   * scroll does not wait for it. A unit still nearer than a screen stays here and is
-   * looked at again after the next scroll: in a feed that scrolls inside an element
-   * the observer reports it once, when it leaves that element, and never again.
+   * Reported below the screen: checked again with a fresh rect in the next frame.
+   * The report can be well over 100 ms old on a busy page, and a compositor scroll
+   * does not wait for it. A unit still within the lead stays here and is looked at
+   * again every frame the page scrolls: the observer has no margin below, so it
+   * says nothing more until the unit comes onto the screen.
    */
   private readonly farPending = new Set<Element>();
+  /** Each pending unit's last known top and when: its speed, without reading the scroll offset. */
+  private readonly lastSeen = new WeakMap<Element, { top: number; at: number }>();
   /** Units in `farPending` whose first look has not been counted yet. */
   private readonly firstLook = new Set<Element>();
   /** Reported on screen at the first look: checked once for a pinned side column. */
@@ -134,13 +154,19 @@ class ViewportTracker implements LateTracker {
   /** True until the reader's first gesture or `LOAD_GRACE_MS`: see `loadHide`. */
   private grace = true;
   private graceTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The real screen, no margin: only counts `tagsScrolledIn`. */
+  private readonly screen: IntersectionObserver;
+  /** Watched tags whose first screen report has not come yet, and those it found off screen. */
+  private readonly screenFirst = new Set<Element>();
+  private readonly offScreenAtFirst = new Set<Element>();
 
   constructor(
     private readonly win: Window & typeof globalThis,
     private readonly settle: (unit: Element) => void,
   ) {
-    // The band reaches a full screen below the window: anything outside it below is "far".
-    this.io = new win.IntersectionObserver((entries) => this.onEntries(entries), { rootMargin: `${MARGIN_PX}px 0px 100% 0px` });
+    // No margin below: anything past the screen's bottom edge is "below".
+    this.io = new win.IntersectionObserver((entries) => this.onEntries(entries), { rootMargin: `${MARGIN_PX}px 0px 0px 0px` });
+    this.screen = new win.IntersectionObserver((entries) => this.onScreenEntries(entries));
     const doc = win.document;
     // Capture: element scroll events do not bubble, but they do pass through the document.
     doc.addEventListener('scroll', this.onScroll, { capture: true, passive: true });
@@ -177,10 +203,15 @@ class ViewportTracker implements LateTracker {
     this.watched.add(unit);
     this.fresh.add(unit);
     this.io.observe(unit);
+    this.screenFirst.add(unit);
+    this.screen.observe(unit);
   }
 
   unwatch(unit: Element): void {
     if (!this.watched.delete(unit)) return;
+    this.screen.unobserve(unit);
+    this.screenFirst.delete(unit);
+    this.offScreenAtFirst.delete(unit);
     this.fresh.delete(unit);
     this.farPending.delete(unit);
     this.firstLook.delete(unit);
@@ -195,6 +226,9 @@ class ViewportTracker implements LateTracker {
   disconnect(): void {
     this.endGrace();
     this.io.disconnect();
+    this.screen.disconnect();
+    this.screenFirst.clear();
+    this.offScreenAtFirst.clear();
     const doc = this.win.document;
     doc.removeEventListener('scroll', this.onScroll, { capture: true });
     doc.removeEventListener('scrollend', this.onScrollEnd, { capture: true });
@@ -215,6 +249,7 @@ class ViewportTracker implements LateTracker {
     this.scrolling = true;
     if (this.idleTimer !== undefined) clearTimeout(this.idleTimer);
     this.idleTimer = setTimeout(this.onScrollEnd, SCROLL_IDLE_MS);
+    this.schedule();
   };
 
   private readonly onScrollEnd = (): void => {
@@ -234,6 +269,7 @@ class ViewportTracker implements LateTracker {
         // Never collapsed from the report itself: see `farPending`.
         this.farPending.add(unit);
         if (first) this.firstLook.add(unit);
+        if (typeof e.time === 'number') this.lastSeen.set(unit, { top: e.boundingClientRect.top, at: e.time });
         continue;
       }
       this.farPending.delete(unit);
@@ -245,23 +281,35 @@ class ViewportTracker implements LateTracker {
     this.schedule();
   }
 
+  private onScreenEntries(entries: IntersectionObserverEntry[]): void {
+    for (const e of entries) {
+      const unit = e.target;
+      if (!this.watched.has(unit)) continue;
+      if (this.screenFirst.delete(unit)) {
+        if (e.isIntersecting) this.screen.unobserve(unit);
+        else this.offScreenAtFirst.add(unit);
+      } else if (e.isIntersecting && this.offScreenAtFirst.delete(unit)) {
+        this.s.tagsScrolledIn++;
+        this.screen.unobserve(unit);
+      }
+    }
+  }
+
   private schedule(): void {
-    if (this.frame !== undefined || this.scrolling || (this.farPending.size === 0 && this.firstInView.size === 0)) return;
-    // Two frames: `scrollend` fires in the same frame as the last scroll, before its
-    // animation callbacks; a frame later the scroll offset has caught up.
-    this.frame = this.win.requestAnimationFrame(() => {
-      this.frame = this.win.requestAnimationFrame(() => {
-        this.frame = undefined;
-        this.flush();
-      });
+    if (this.frame !== undefined) return;
+    // The rail check waits for a still frame; a tag below does not.
+    if (this.farPending.size === 0 && (this.scrolling || this.firstInView.size === 0)) return;
+    this.frame = this.win.requestAnimationFrame((t) => {
+      this.frame = undefined;
+      this.flush(t);
     });
   }
 
   /** Reads first, then writes: every collapse lands in one frame, after every rect was read. */
-  private flush(): void {
-    if (this.scrolling) return;
+  private flush(now: number): void {
     const collapse: Element[] = [];
-    const far = this.win.innerHeight * 2;
+    const bottom = this.win.innerHeight;
+    let heldBySpeed = false;
     for (const u of this.farPending) {
       if (!u.isConnected) {
         this.unwatch(u);
@@ -269,30 +317,51 @@ class ViewportTracker implements LateTracker {
       }
       const first = this.firstLook.delete(u);
       const r = u.getBoundingClientRect();
+      const lead = Math.max(MIN_LEAD_PX, this.speedOf(u, r.top, now) * LEAD_MS);
       // No box at all (inside a hidden subtree): collapsing it moves nothing on screen.
-      if (r.top >= far || (r.width === 0 && r.height === 0)) {
+      if (r.top >= bottom + lead || (r.width === 0 && r.height === 0)) {
         if (first) this.s.lateFarBelow++;
         else this.s.tagsCollapsed++;
+        if (this.scrolling) this.s.collapsedMidScroll++;
         collapse.push(u);
         continue;
       }
-      // Nearer than a screen: it stays tagged, and is looked at again after the next scroll.
+      // Within the lead: it stays tagged, and is looked at again next frame the page
+      // scrolls, or next frame anyway if only its speed held it (it may have stopped).
+      if (r.top >= bottom + MIN_LEAD_PX) heldBySpeed = true;
       if (first) {
         this.s.lateInView++;
         this.s.belowCameNear++;
       }
     }
-    for (const u of this.firstInView) {
-      if (u.isConnected && this.sideColumnOf(u)) {
-        this.s.railCollapsed++;
-        collapse.push(u);
+    if (!this.scrolling) {
+      for (const u of this.firstInView) {
+        if (u.isConnected && this.sideColumnOf(u)) {
+          this.s.railCollapsed++;
+          collapse.push(u);
+        }
       }
+      this.firstInView.clear();
     }
-    this.firstInView.clear();
     for (const u of collapse) {
       this.unwatch(u);
       this.settle(u);
     }
+    if (heldBySpeed) this.schedule();
+  }
+
+  /**
+   * How fast the unit moves up the screen, toward the reader, in px/ms, from its last
+   * known top. Moving down (the reader scrolling back up) takes it further away, which
+   * a compositor running ahead only adds to. Zero without a sample, or with a stale
+   * one (the page sat still in between).
+   */
+  private speedOf(u: Element, top: number, now: number): number {
+    const prev = this.lastSeen.get(u);
+    this.lastSeen.set(u, { top, at: now });
+    if (!prev) return 0;
+    const dt = now - prev.at;
+    return dt > 0 && dt < 500 ? Math.max(0, prev.top - top) / dt : 0;
   }
 
   /**

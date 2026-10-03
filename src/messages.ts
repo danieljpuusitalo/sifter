@@ -117,8 +117,14 @@ export type ScanPerf = {
   laneHits: number;
   /** Marker found, but the lane would not decide alone (hidden label, empty unit, not a hide): left to the debounced pass. */
   laneAbstain: number;
-  /** Batches whose born units did not all fit the lane's 1 ms: the rest went to the debounced pass. */
+  /** Batches whose born units did not all fit the lane's 1 ms: the rest went to the next frame's continuation. */
   laneOverBudget: number;
+  /** Of `laneHits`, hidden in that same-frame continuation (still before their first paint). */
+  laneFrameHits: number;
+  /** Continuations that did not fit their own 1 ms either: the rest were queued for the debounced pass, watched for nearness. */
+  laneFrameOverBudget: number;
+  /** Debounces cut short because a queued unit came within a screen of the reader. */
+  approachScans: number;
   /** Lane hides the full decision then disagreed with, released in place. Target 0: each is a rule-6 near miss. */
   laneReleases: number;
   laneMs: number;

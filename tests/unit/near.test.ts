@@ -52,6 +52,24 @@ describe('NearObserver', () => {
     expect(n.version).toBe(v + 1);
     expect(FakeIO.last.observed.has(a)).toBe(false);
   });
+
+  it('tells its listener once per batch in which a unit came near, never when one left', () => {
+    const n = near();
+    let calls = 0;
+    n.listen(() => calls++);
+    const a = document.body.appendChild(document.createElement('div'));
+    const b = document.body.appendChild(document.createElement('div'));
+    n.watch(a);
+    n.watch(b);
+    FakeIO.last.answer(() => false);
+    expect(calls, 'control: nothing near').toBe(0);
+    FakeIO.last.answer(() => true);
+    expect(calls, 'two came near in one batch: one call').toBe(1);
+    FakeIO.last.answer(() => true);
+    expect(calls, 'no change').toBe(1);
+    FakeIO.last.answer((el) => el === a);
+    expect(calls, 'b left').toBe(1);
+  });
 });
 
 describe('Scanner queue order', () => {

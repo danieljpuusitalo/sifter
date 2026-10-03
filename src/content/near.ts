@@ -18,6 +18,8 @@ export interface NearTracker {
   isNear(unit: Element): boolean;
   /** Changes whenever a watched unit's nearness does: the queue reorders only then. */
   readonly version: number;
+  /** Called after a batch of answers in which some watched unit came near. */
+  listen?(fn: () => void): void;
   disconnect(): void;
 }
 
@@ -27,6 +29,7 @@ const NEAR_MARGIN = '100% 0px';
 export class NearObserver implements NearTracker {
   private readonly io: IntersectionObserver;
   private readonly near = new Set<Element>();
+  private onNear: (() => void) | null = null;
   version = 0;
 
   constructor(IO: typeof IntersectionObserver) {
@@ -52,19 +55,27 @@ export class NearObserver implements NearTracker {
     return this.near.has(unit);
   }
 
+  listen(fn: () => void): void {
+    this.onNear = fn;
+  }
+
   disconnect(): void {
     this.io.disconnect();
     this.near.clear();
   }
 
   private onEntries(entries: IntersectionObserverEntry[]): void {
+    let came = false;
     for (const e of entries) {
       const was = this.near.has(e.target);
       if (e.isIntersecting === was) continue;
-      if (e.isIntersecting) this.near.add(e.target);
-      else this.near.delete(e.target);
+      if (e.isIntersecting) {
+        this.near.add(e.target);
+        came = true;
+      } else this.near.delete(e.target);
       this.version++;
     }
+    if (came) this.onNear?.();
   }
 }
 

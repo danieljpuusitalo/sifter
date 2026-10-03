@@ -49,6 +49,7 @@ function feed(over: Partial<ScannerDeps> = {}, context = ctx()) {
   document.head.innerHTML = `<style>${style}</style>`;
   document.body.innerHTML = '<main><div data-testid="mainFeed" role="list"></div></main>';
   const queue: Array<() => void> = [];
+  const frames: Array<() => void> = [];
   scanner = new Scanner({
     doc: document,
     hostname: 'www.linkedin.com',
@@ -57,6 +58,7 @@ function feed(over: Partial<ScannerDeps> = {}, context = ctx()) {
     context,
     persistOverride: () => {},
     schedule: (fn) => void queue.push(fn),
+    frame: (fn) => void frames.push(fn),
     // happy-dom's style reads cost milliseconds: a frozen clock keeps the 1 ms cap out of
     // tests about what the lane decides. The budget has its own test.
     now: () => 0,
@@ -72,10 +74,43 @@ function feed(over: Partial<ScannerDeps> = {}, context = ctx()) {
   return {
     s,
     drain,
+    /** The next animation frame: the lane's continuation, before anything is debounced. */
+    frame: () => {
+      for (const fn of frames.splice(0)) fn();
+    },
+    frames,
+    queue,
     append: (html: string) => root.insertAdjacentHTML('beforeend', html),
     hidden: (n: number) => !!document.querySelector(`[componentkey^="update-card-focus${n}"]`)?.classList.contains(HIDDEN_CLASS),
     perf: () => s.state().perf,
   };
+}
+
+const unitOf = (n: number) => document.querySelector(`[componentkey^="update-card-focus${n}"]`) as Element;
+
+/** A near tracker the test moves by hand: `come(u)` is the observer reporting `u` within a screen. */
+function fakeNear() {
+  const watched = new Set<Element>();
+  const close = new Set<Element>();
+  let onNear: (() => void) | null = null;
+  const t = {
+    version: 0,
+    watched,
+    watch: (u: Element) => void watched.add(u),
+    unwatch: (u: Element) => {
+      watched.delete(u);
+      if (close.delete(u)) t.version++;
+    },
+    isNear: (u: Element) => close.has(u),
+    listen: (fn: () => void) => void (onNear = fn),
+    disconnect: () => {},
+    come: (u: Element) => {
+      close.add(u);
+      t.version++;
+      onNear?.();
+    },
+  };
+  return t;
 }
 
 describe('pre-paint lane', () => {
@@ -124,16 +159,110 @@ describe('pre-paint lane', () => {
     expect(f.hidden(2001), 'positive control: the debounced pass hides it').toBe(true);
   });
 
-  it('over budget, takes the first unit and leaves the rest of the batch to the debounced pass', async () => {
+  it('over budget, takes the first unit and carries the rest to the next frame', async () => {
     let t = 0;
     const f = feed({ now: () => (t += 2) });
     f.append(card(1006) + card(1004));
     await observed();
     expect(f.hidden(1006), 'the first unit always fits').toBe(true);
     expect(f.hidden(1004)).toBe(false);
-    expect(f.perf()).toMatchObject({ laneHits: 1, laneOverBudget: 1 });
+    expect(f.perf()).toMatchObject({ laneHits: 1, laneOverBudget: 1, laneFrameHits: 0 });
+    expect(f.frames.length, 'one continuation asked for').toBe(1);
+    f.frame();
+    expect(f.hidden(1004), 'hidden in the frame, before any debounce').toBe(true);
+    expect(f.perf()).toMatchObject({ laneHits: 2, laneFrameHits: 1, laneFrameOverBudget: 0 });
     f.drain();
-    expect(f.hidden(1004), 'positive control: the debounced pass hides the rest').toBe(true);
+    expect(f.hidden(1004)).toBe(true);
+    expect(f.perf().laneReleases).toBe(0);
+  });
+
+  it('within budget asks for no frame', async () => {
+    const f = feed();
+    f.append(card(1006) + card(1004));
+    await observed();
+    expect(f.hidden(1004), 'positive control: both fit').toBe(true);
+    expect(f.frames).toEqual([]);
+  });
+
+  it('the continuation has its own 1 ms: what does not fit then is the debounced pass\'s', async () => {
+    let t = 0;
+    const f = feed({ now: () => (t += 2) });
+    f.append(card(1006) + card(1004) + card(1001) + card(1002));
+    await observed();
+    f.frame();
+    expect(f.hidden(1004), 'the continuation\'s first unit always fits').toBe(true);
+    expect(f.hidden(1002)).toBe(false);
+    expect(f.perf()).toMatchObject({ laneFrameHits: 1, laneFrameOverBudget: 1 });
+    expect(f.frames, 'one continuation, never a chain').toEqual([]);
+    f.drain();
+    expect(f.hidden(1002), 'positive control: the debounced pass hides the rest').toBe(true);
+  });
+
+  it('batches cut before the frame share one continuation, and it never re-reads a unit', async () => {
+    let t = 0;
+    let slow = true;
+    const f = feed({ now: () => (slow ? (t += 2) : 0) });
+    f.append(card(1006) + card(1004));
+    await observed();
+    f.append(card(1002) + card(1001));
+    await observed();
+    expect(f.frames.length).toBe(1);
+    const units = f.perf().laneUnits;
+    slow = false;
+    f.frame();
+    expect(f.hidden(1004)).toBe(true);
+    expect(f.perf().laneUnits - units, 'the two units the cap cut, not 1006 or 1002 again').toBe(2);
+    expect(f.perf().laneFrameOverBudget).toBe(0);
+  });
+
+  it('a unit the continuation cut that comes near the reader is decided without waiting out the debounce', async () => {
+    let t = 0;
+    const near = fakeNear();
+    const f = feed({ now: () => (t += 2), near });
+    // One record each: the lane reads 1006, the frame 1004, its capped collect reaches 1002 and cuts 1001.
+    f.append(card(1006) + card(1004) + card(1002) + card(1001));
+    await observed();
+    f.frame();
+    const ad = unitOf(1002);
+    expect(f.hidden(1002), 'positive control: the frame\'s budget cut it').toBe(false);
+    expect(near.watched.has(ad), 'queued and watched before any debounce').toBe(true);
+    expect(f.queue.length, 'only the debounce is waiting').toBe(1);
+    const debounce = f.queue.shift()!;
+    near.come(unitOf(1006));
+    expect(f.perf().approachScans, 'control: a unit the lane already hid is not queued').toBe(0);
+    near.come(ad);
+    expect(f.perf().approachScans).toBe(1);
+    f.drain();
+    expect(f.hidden(1002), 'hidden by the scan the approach started').toBe(true);
+    const scans = f.perf().scans;
+    debounce();
+    expect(f.perf().scans, 'the superseded debounce does nothing').toBe(scans);
+  });
+
+  it('without an approach, the cut unit waits for the debounce', async () => {
+    let t = 0;
+    const near = fakeNear();
+    const f = feed({ now: () => (t += 2), near });
+    // One record each: the lane reads 1006, the frame 1004, its capped collect reaches 1002 and cuts 1001.
+    f.append(card(1006) + card(1004) + card(1002) + card(1001));
+    await observed();
+    f.frame();
+    expect(f.perf().approachScans).toBe(0);
+    expect(f.queue.length).toBe(1);
+    f.drain();
+    expect(f.hidden(1002), 'positive control: the debounce still hides it').toBe(true);
+    expect(f.perf().approachScans).toBe(0);
+  });
+
+  it('a paused scanner\'s continuation hides nothing', async () => {
+    let t = 0;
+    const f = feed({ now: () => (t += 2) });
+    f.append(card(1006) + card(1004));
+    await observed();
+    f.s.applyContext(ctx({ pausedUntil: Date.now() + 60_000 }));
+    f.frame();
+    expect(f.hidden(1004)).toBe(false);
+    expect(f.perf().laneFrameHits).toBe(0);
   });
 
   // The trace's arrival class needs the lane to say what it left behind, and why.
@@ -150,10 +279,13 @@ describe('pre-paint lane', () => {
     };
     let t = 0;
     const f = feed({ trace, now: () => (t += 2) });
-    f.append(card(1006) + card(1004));
+    f.append(card(1006) + card(1004) + card(1001));
     await observed();
     expect(f.hidden(1006), 'positive control: the first unit fit').toBe(true);
-    expect(calls).toEqual(['overflow 1004']);
+    expect(calls, 'nothing is overflow while the next frame may still read it').toEqual([]);
+    f.frame();
+    expect(f.hidden(1004), 'positive control: the continuation read one').toBe(true);
+    expect(calls).toEqual(['overflow 1001']);
     f.s.stop();
     calls.length = 0;
     const g = feed({ trace });

@@ -4,12 +4,12 @@ import { HOST, SCROLLERS, fromPopup, insertCard, insertLateAd, late, LATE, open,
 // The feed must never move under the reader when Sifter hides something.
 //
 // A card that arrives with its label is hidden before it paints (tests/e2e/prepaint.spec.ts).
-// One whose label comes later may already be on screen: Sifter tags it in place, with a
-// zero-height "Sponsored · Hide" bar over its top, and collapses it only once the reader
-// has left it a full screen behind, where nothing they can see moves. A tag the reader
+// One whose label comes later may already be on screen: Sifter blurs it in place, with a
+// zero-height "Sponsored · Hide · Show" bar over its top, and collapses it only once it is
+// off screen below, where nothing the reader can see moves. A tag the reader
 // scrolls past upwards stays a tag: Sifter never collapses or scrolls above the reader.
 
-test('a sponsored card caught on screen is tagged in place: nothing moves, and Hide collapses it', async ({ context, page }) => {
+test('a sponsored card caught on screen is blurred in place: nothing moves, Show unblurs, Hide collapses', async ({ context, page }) => {
   await open(page);
   const { top: before, bareAtFirstFrame } = await insertLateAd(page, 'filled');
   expect(bareAtFirstFrame, 'its shell painted before its label arrived: the late path').toBe(true);
@@ -25,6 +25,18 @@ test('a sponsored card caught on screen is tagged in place: nothing moves, and H
   const row = page.locator(`[componentkey="${LATE}"] > [data-sifter-placeholder] .row`);
   await expect(row).toBeVisible();
   await expect(row).toContainText('Sponsored');
+  // Unreadable at once: its content is blurred. Show unblurs it in place, Hide re-blurs it via a collapse.
+  const blur = () =>
+    page.evaluate((key) => {
+      const kid = document.querySelector(`[componentkey="${key}"] > :not([data-sifter-placeholder])`);
+      return kid ? getComputedStyle(kid).filter : null;
+    }, LATE);
+  expect(await blur()).toContain('blur(12px)');
+  const height = await page.evaluate((key) => document.querySelector(`[componentkey="${key}"]`)!.getBoundingClientRect().height, LATE);
+  await row.locator('[data-act="show"]').click();
+  expect(await blur(), 'control: Show on a tag unblurs it').toBe('none');
+  expect(await page.evaluate((key) => document.querySelector(`[componentkey="${key}"]`)!.getBoundingClientRect().height, LATE)).toBe(height);
+  expect(await moves()).toEqual([]);
   await row.locator('[data-act="hide-tag"]').click();
   await expect(late(page)).toHaveClass(/\bsifter-hidden\b/);
   await expect(late(page)).not.toHaveClass(/\bsifter-tag\b/);

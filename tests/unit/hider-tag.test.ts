@@ -12,6 +12,7 @@ import {
   type HiderCallbacks,
   PLACEHOLDER_ATTR,
   TAG_CLASS,
+  TAG_OPEN_CLASS,
   placeholderRoot,
   unitStylesheetText,
 } from '../../src/content/hider';
@@ -22,9 +23,9 @@ import { defaultContext } from '../../src/messages';
 import { siteKey } from '../../src/storage/settings';
 import type { CategoryToggles } from '../../src/types';
 
-// The tag: a hide decided after the post was drawn never moves it. The post stays
-// as the site built it, with a zero-height "Sponsored · Hide" pill on top, until
-// the reader clicks Hide or the tracker reports it far below (viewport.ts). These
+// The tag: a hide decided after the post was drawn never moves it. The post keeps
+// its height, blurred under a zero-height "Sponsored · Hide · Show" pill, until the
+// reader clicks Hide or the tracker reports it off screen below (viewport.ts). These
 // tests drive a fake tracker by hand; the real one is covered end to end in
 // tests/e2e/stability.spec.ts.
 
@@ -89,7 +90,7 @@ describe('Hider tag', () => {
   });
   const unit = () => document.getElementById('u') as HTMLElement;
 
-  it('a late hide lands as a tag: content untouched, pill in, tracker watching, not counted as hidden', () => {
+  it('a late hide lands as a blurred tag: no collapse, pill in, tracker watching, counted as hidden', () => {
     const { h, t } = lateHider();
     h.hide(unit(), 'sponsored', 'Acme');
     expect(h.isHidden(unit())).toBe(true);
@@ -101,12 +102,35 @@ describe('Hider tag', () => {
     expect(host(unit()).hasAttribute('data-tag')).toBe(true);
     expect(label(unit())).toBe('Sponsored');
     expect(button(unit(), 'hide-tag')?.textContent).toBe('Hide');
+    expect(button(unit(), 'show')?.textContent).toBe('Show');
     expect(button(unit(), 'not-ad')?.textContent).toBe('Not an ad');
-    expect(button(unit(), 'show')).toBeNull();
     expect(t.watched.has(unit())).toBe(true);
-    // The popup counts hides; a tag is not one yet. A settings change must still reach it.
-    expect(h.hiddenUnits()).toEqual([]);
+    // The reader can't read it, so the popup counts it.
+    expect(h.hiddenUnits()).toEqual([unit()]);
     expect(h.trackedHides()).toEqual([unit()]);
+  });
+
+  it('Show on a tag unblurs it in place; it stays put, drops out of the count, and the tracker lets go', () => {
+    const { h, t } = lateHider();
+    h.hide(unit(), 'sponsored');
+    h.show(unit());
+    expect(h.isTagged(unit()), 'still a tag: same height, pill kept').toBe(true);
+    expect(unit().classList.contains(TAG_OPEN_CLASS)).toBe(true);
+    expect(host(unit()).hasAttribute('data-tag')).toBe(true);
+    expect(button(unit(), 'hide-tag')).not.toBeNull();
+    expect(button(unit(), 'show')).toBeNull();
+    expect(h.hiddenUnits()).toEqual([]);
+    expect(t.watched.size, 'never collapsed under a reader who chose to read it').toBe(0);
+    h.rehide(unit());
+    expect(unit().classList.contains(TAG_OPEN_CLASS), 'rehide blurs again').toBe(false);
+    expect(h.hiddenUnits()).toEqual([unit()]);
+    expect(t.watched.size).toBe(1);
+    h.show(unit());
+    h.settle(unit());
+    expect(unit().classList.contains(COLLAPSE_CLASS), 'Hide on an opened tag collapses it').toBe(true);
+    expect(unit().classList.contains(TAG_OPEN_CLASS)).toBe(false);
+    expect(h.hiddenUnits()).toEqual([unit()]);
+    expect(button(unit(), 'show')).not.toBeNull();
   });
 
   // Google, 2026-10-01: nobody is reading yet at load, so a collapse moves nothing they see.
@@ -147,17 +171,20 @@ describe('Hider tag', () => {
     expect(t.watched.size).toBe(0);
   });
 
-  it('the tag CSS only places the placeholder, at zero height, over content it never touches', () => {
+  it('the tag CSS places the placeholder at zero height and blurs the content, changing no layout', () => {
     const { h } = lateHider();
     h.hide(unit(), 'sponsored');
     const css = unitStylesheetText(document);
     const tagRules = css.split('\n').filter((l) => l.includes(TAG_CLASS));
-    expect(tagRules.length, 'positive control: a tag rule exists').toBeGreaterThan(0);
-    for (const rule of tagRules) {
-      expect(rule).toContain(`.${TAG_CLASS} > [${PLACEHOLDER_ATTR}]`);
-      expect(rule).not.toContain(':not(');
-      expect(rule).toMatch(/height: 0(px)? !important/);
-    }
+    expect(tagRules.length, 'positive control: tag rules exist').toBe(2);
+    const place = tagRules.find((r) => r.includes(`.${TAG_CLASS} > [${PLACEHOLDER_ATTR}]`));
+    expect(place).toMatch(/height: 0(px)? !important/);
+    const blur = tagRules.find((r) => r !== place) as string;
+    expect(blur).toContain(`.${TAG_CLASS}:not(.${TAG_OPEN_CLASS}) > :not([${PLACEHOLDER_ATTR}])`);
+    // Paint-only properties: no display, height, margin, padding or position.
+    const decl = /\{([^}]*)\}/.exec(blur)?.[1] ?? '';
+    const props = decl.split(';').map((d) => d.split(':')[0]!.trim()).filter(Boolean).sort();
+    expect(props).toEqual(['filter', 'pointer-events']);
     // The pill overflows its zero-height host instead of pushing the post down.
     const shadowCss = Array.from(placeholderRoot(host(unit()))?.adoptedStyleSheets ?? [])
       .flatMap((s) => Array.from(s.cssRules).map((r) => r.cssText))

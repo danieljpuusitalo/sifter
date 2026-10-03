@@ -10,11 +10,14 @@ export const HIDDEN_CLASS = 'sifter-hidden';
 export const COLLAPSE_CLASS = 'sifter-collapse';
 export const BLUR_CLASS = 'sifter-blur';
 /**
- * A late catch the reader may be looking at: the post stays exactly as the site drew
- * it, with a zero-height "Sponsored · Hide" pill on top. Nothing moves. It becomes a
- * real hide on a click, or once it is a full screen below the reader.
+ * A late catch the reader may be looking at: the post keeps its place and height,
+ * blurred under a zero-height "Sponsored · Hide · Show" pill. Nothing moves, and it
+ * is unreadable at once. It collapses on a click, or once it is off screen below the
+ * reader (viewport.ts).
  */
 export const TAG_CLASS = 'sifter-tag';
+/** A tag the reader chose to see: unblurred in place, pill kept so it can be hidden again. */
+export const TAG_OPEN_CLASS = 'sifter-tag-open';
 export const PLACEHOLDER_ATTR = 'data-sifter-placeholder';
 /** Marks the fallback `<style>` element when the document's realm has no constructable sheets. */
 const UNIT_STYLE_ATTR = 'data-sifter';
@@ -54,7 +57,7 @@ type Record_ = {
   mode: HideMode;
   /** True once the user clicked "Show": content is visible, but the placeholder stays as a "Hide" bar. */
   shown: boolean;
-  /** Caught late while the reader could see it: tagged, not hidden, until a click or the tracker settles it. */
+  /** Caught late while the reader could see it: blurred in place, until a click or the tracker settles it. */
   tagged: boolean;
   /** Only "hide" mode touches the unit's own inline style; collapse/blur hide via the shared stylesheet instead. */
   prev: { display: string; displayPriority: string } | null;
@@ -148,11 +151,11 @@ export function usesSharedSheet(doc: Document): boolean {
 //
 // A tag (and blur mode) never changes the unit's height: the placeholder is a
 // zero-height box whose row overflows on top of the content, so inserting it adds
-// nothing to layout. A tagged unit's own content is untouched, so a rescan reads it
-// exactly as the site built it.
+// nothing to layout. A tag blurs the unit's content the way blur mode does: a filter
+// is paint only, so a rescan still reads the unit exactly as the site built it.
 const UNIT_CSS = `
 .${HIDDEN_CLASS}.${COLLAPSE_CLASS} > :not([${PLACEHOLDER_ATTR}]) { display: none !important; }
-.${HIDDEN_CLASS}.${BLUR_CLASS} > :not([${PLACEHOLDER_ATTR}]) { filter: blur(12px) !important; pointer-events: none !important; }
+.${HIDDEN_CLASS}.${BLUR_CLASS} > :not([${PLACEHOLDER_ATTR}]), .${TAG_CLASS}:not(.${TAG_OPEN_CLASS}) > :not([${PLACEHOLDER_ATTR}]) { filter: blur(12px) !important; pointer-events: none !important; }
 .${HIDDEN_CLASS}.${COLLAPSE_CLASS} { min-height: 0 !important; max-height: none !important; height: auto !important; }
 .${TAG_CLASS} > [${PLACEHOLDER_ATTR}], .${HIDDEN_CLASS}.${BLUR_CLASS} > [${PLACEHOLDER_ATTR}] { display: flow-root !important; height: 0 !important; position: relative !important; z-index: 1 !important; }
 `;
@@ -199,7 +202,7 @@ export function unitStylesheetText(doc: Document): string {
 
 export class Hider {
   private records = new WeakMap<Element, Record_>();
-  /** Units currently, visibly hidden (excludes "shown" and tagged ones): what `hiddenUnits()`/counts report. */
+  /** Units currently hidden, blurred tags included (excludes "shown" ones): what `hiddenUnits()`/counts report. */
   private hidden = new Set<Element>();
   /** Every unit with a live record, hidden, tagged or shown: what a hard reset (`unhide`/`prune`/`setMode`) must reach. */
   private tracked = new Set<Element>();
@@ -222,18 +225,20 @@ export class Hider {
     return this.records.has(unit);
   }
 
-  /** Caught late and tagged in place: the post is still fully visible. */
+  /** Caught late and tagged in place: blurred (or, after Show, open), at its full height. */
   isTagged(unit: Element): boolean {
     return this.records.get(unit)?.tagged ?? false;
   }
 
   /**
-   * A tag becomes the real hide. The tracker calls this once the unit is far below
-   * the reader; the scanner calls it (inside `keepInPlace`) when the reader clicks Hide.
+   * A tag becomes the real hide. The tracker calls this once the unit is off screen
+   * below the reader; the scanner calls it (inside `keepInPlace`) when the reader
+   * clicks Hide, on a blurred tag or one they opened.
    */
   settle(unit: Element): void {
     const rec = this.records.get(unit);
     if (!rec || !rec.tagged) return;
+    rec.shown = false;
     this.untag(unit, rec);
     this.hidden.add(unit);
     const el = unit as HTMLElement;
@@ -246,7 +251,7 @@ export class Hider {
     this.late?.disconnect();
   }
 
-  /** Units hidden right now: what the popup counts. Tags are not hides. */
+  /** Units hidden right now: what the popup counts. A blurred tag is one; the reader can't read it. */
   hiddenUnits(): Element[] {
     return [...this.hidden];
   }
@@ -293,10 +298,8 @@ export class Hider {
     this.tracked.add(unit);
     // Blur never changes layout, and while the page is still loading nobody is reading yet.
     const tag = !now && !!this.late && this.mode !== 'blur' && !this.late.loadHide?.();
-    if (!tag) {
-      this.hidden.add(unit);
-      (unit as HTMLElement).classList.add(HIDDEN_CLASS);
-    }
+    this.hidden.add(unit);
+    if (!tag) (unit as HTMLElement).classList.add(HIDDEN_CLASS);
     this.applyMode(unit, rec, tag);
   }
 
@@ -309,7 +312,7 @@ export class Hider {
     this.tracked.delete(unit);
     this.late?.unwatch(unit);
     const el = unit as HTMLElement;
-    el.classList.remove(HIDDEN_CLASS, TAG_CLASS);
+    el.classList.remove(HIDDEN_CLASS, TAG_CLASS, TAG_OPEN_CLASS);
     const modeClass = this.classFor(rec.mode);
     if (modeClass) el.classList.remove(modeClass);
     this.restoreStyle(el, rec);
@@ -328,13 +331,15 @@ export class Hider {
     const rec = this.records.get(unit);
     if (!rec || rec.shown) return;
     rec.shown = true;
+    this.hidden.delete(unit);
     if (rec.tagged) {
-      // Already in plain view: drop the tag; the bar the reader can rehide from comes back with the next hide.
-      this.untag(unit, rec);
-      if (rec.placeholder) this.renderPlaceholder(rec, unit);
+      // Unblur in place: same height, pill kept (Hide still collapses it), and the
+      // tracker lets go, so it never collapses a post the reader chose to read.
+      (unit as HTMLElement).classList.add(TAG_OPEN_CLASS);
+      this.late?.unwatch(unit);
+      this.renderPlaceholder(rec, unit);
       return;
     }
-    this.hidden.delete(unit);
     const el = unit as HTMLElement;
     el.classList.remove(HIDDEN_CLASS);
     const modeClass = this.classFor(rec.mode);
@@ -350,6 +355,13 @@ export class Hider {
     rec.shown = false;
     this.hidden.add(unit);
     const el = unit as HTMLElement;
+    if (rec.tagged) {
+      // An opened tag blurs again in place, and the tracker may collapse it once it is off screen.
+      el.classList.remove(TAG_OPEN_CLASS);
+      this.late?.watch(unit);
+      this.renderPlaceholder(rec, unit);
+      return;
+    }
     el.classList.add(HIDDEN_CLASS);
     // A click on the bar: collapse at once, the reader asked for it.
     if (!rec.placeholder && rec.mode !== 'hide') {
@@ -441,7 +453,7 @@ export class Hider {
   private untag(unit: Element, rec: Record_): void {
     rec.tagged = false;
     this.late?.unwatch(unit);
-    (unit as HTMLElement).classList.remove(TAG_CLASS);
+    (unit as HTMLElement).classList.remove(TAG_CLASS, TAG_OPEN_CLASS);
     if (rec.mode === 'hide') {
       rec.placeholder?.remove();
       rec.placeholder = null;
@@ -528,6 +540,7 @@ export class Hider {
     row.append(label);
     if (rec.tagged) {
       row.append(this.button('Hide', 'hide-tag', () => this.cb.onHideTag(unit)));
+      if (!rec.shown) row.append(this.button('Show', 'show', () => this.cb.onShow(unit)));
     } else if (rec.shown) {
       row.append(this.button('Hide', 'hide', () => this.cb.onRehide(unit)));
     } else {

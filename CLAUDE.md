@@ -76,6 +76,11 @@ First e2e run on a new machine: `pnpm exec playwright install chromium`.
   `node -e` strings mangle `\.`, `\n` and `\u0000` (this corrupted a regex and put
   a NUL byte into a .tsx file in session 3).
 - Python is not used here. Node 24, pnpm 12.
+- **A bench pass can be vacuous.** On battery saver this laptop renders at 30 fps (frame
+  p50 33 ms with Sifter off), which makes frame A/Bs noise and stops `bench:scroll`
+  reaching its append threshold. Then `cards` equals `--start` and no new code path runs.
+  Bench plugged in, and check `cards` > `--start` and the lane counters are non-zero
+  before reading a pass.
 - **Two shapes for per-adapter evidence, not three.** For a whole page module
   (a rail, a carousel), use `blocks[]` with an `anchor`: the scanner finds the
   anchor cheaply in a dirty subtree and climbs to the module, instead of

@@ -56,7 +56,21 @@ export type OnScreenStages = {
   depth: LatencySummary;
 };
 
+/**
+ * How a unit the debounced pass hid reached the page, which says which lever would
+ * have caught it before paint. `filled`: first seen as an empty shell (born bare in
+ * the lane, or decided empty), its content came later. `overflow`: born whole, cut
+ * by the lane's budget. `abstain`: born whole, the lane left it to decide().
+ * `labelLate`: decided "no hide" before, the signal came later. `slow`: none of
+ * these, the label was there and the decision was late.
+ */
+export type Arrival = 'filled' | 'overflow' | 'abstain' | 'labelLate' | 'slow';
+export const ARRIVALS: readonly Arrival[] = ['filled', 'overflow', 'abstain', 'labelLate', 'slow'];
+export type ArrivalCount = { onScreen: number; offScreen: number };
+
 export type TraceStats = {
+  /** Debounced-pass hides by arrival class, split by where the unit was at the hide. */
+  arrival: Record<Arrival, ArrivalCount>;
   /** Content to hide, in ms, by where the unit was when queued and when hidden. */
   latency: {
     /** On screen when its content arrived, and still when hidden. */
@@ -88,6 +102,10 @@ export interface HideTrace {
   queued(unit: Element, since: number, now?: number, depth?: number): void;
   /** A queued unit turned out empty: its content has not arrived yet. */
   empty(unit: Element): void;
+  /** The lane saw this unit born with no content (an empty shell the site fills later). */
+  bornBare(unit: Element): void;
+  /** The lane met this born unit and left it to the debounced pass: over budget, or abstained. */
+  laneSkipped(unit: Element, why: 'overflow' | 'abstain'): void;
   hid(unit: Element, now: number, why: HideWhy): void;
   /** A hide (or a Show) let go by a decision the user did not make. */
   released(unit: Element, now: number, what: 'redecided' | 'emptied', userShown: boolean): void;
@@ -140,6 +158,9 @@ export class Tracer implements HideTrace {
   private flips: Flip[] = [];
   private flipCount = 0;
   private hiddenLeft = 0;
+  private arrival = Tracer.noArrival();
+  private shells = new WeakSet<Element>();
+  private skipped = new WeakMap<Element, 'overflow' | 'abstain'>();
   private readonly io: IntersectionObserver | null;
 
   constructor(IO: typeof IntersectionObserver | undefined) {
@@ -179,7 +200,16 @@ export class Tracer implements HideTrace {
   }
 
   empty(unit: Element): void {
+    this.shells.add(unit);
     if (this.pending.delete(unit)) this.io?.unobserve(unit);
+  }
+
+  bornBare(unit: Element): void {
+    this.shells.add(unit);
+  }
+
+  laneSkipped(unit: Element, why: 'overflow' | 'abstain'): void {
+    this.skipped.set(unit, why);
   }
 
   hid(unit: Element, now: number, why: HideWhy): void {
@@ -225,6 +255,7 @@ export class Tracer implements HideTrace {
 
   stats(): TraceStats {
     return {
+      arrival: Object.fromEntries(ARRIVALS.map((a) => [a, { ...this.arrival[a] }])) as Record<Arrival, ArrivalCount>,
       latency: {
         alreadyOnScreen: summary(this.lat.alreadyOnScreen),
         enteredWhileQueued: summary(this.lat.enteredWhileQueued),
@@ -252,6 +283,7 @@ export class Tracer implements HideTrace {
     this.flips = [];
     this.flipCount = 0;
     this.hiddenLeft = 0;
+    this.arrival = Tracer.noArrival();
   }
 
   private flip(f: Flip): void {
@@ -269,14 +301,24 @@ export class Tracer implements HideTrace {
       // Not hidden (yet): `hid` observes it again for the zone at the hide. Watching
       // every queued post for its whole life would bill the trace's callbacks to Sifter.
       if (p.hiddenAt === undefined) continue;
-      this.record(p, e.isIntersecting);
+      this.record(e.target, p, e.isIntersecting);
       this.pending.delete(e.target);
     }
   }
 
+  private arrivalOf(unit: Element, p: Pending): Arrival {
+    if (this.shells.has(unit)) return 'filled';
+    const skipped = this.skipped.get(unit);
+    if (skipped) return skipped;
+    return p.times > 1 ? 'labelLate' : 'slow';
+  }
+
   /** Called with the zone at the hide. A unit queued and never hidden leaves with its element (a WeakMap). */
-  private record(p: Pending, inViewAtHide: boolean): void {
+  private record(unit: Element, p: Pending, inViewAtHide: boolean): void {
     const at = p.hiddenAt as number;
+    const a = this.arrival[this.arrivalOf(unit, p)];
+    if (inViewAtHide) a.onScreen++;
+    else a.offScreen++;
     const bucket = !inViewAtHide ? this.lat.offScreen : p.inViewAtQueue ? this.lat.alreadyOnScreen : this.lat.enteredWhileQueued;
     if (bucket.length < MAX_SAMPLES) bucket.push(at - p.since);
     const s = this.stages;
@@ -288,6 +330,10 @@ export class Tracer implements HideTrace {
     s.sinceFirst.push(at - p.firstSince);
     s.depth.push(p.depth);
     if (p.times > 1) s.requeued++;
+  }
+
+  private static noArrival(): Record<Arrival, ArrivalCount> {
+    return Object.fromEntries(ARRIVALS.map((a) => [a, { onScreen: 0, offScreen: 0 }])) as Record<Arrival, ArrivalCount>;
   }
 
   private static noStages() {

@@ -120,6 +120,13 @@ export const AdapterSchema = z.object({
     )
     .default([]),
   feedRootSelector: z.string().optional(),
+  /**
+   * Decide units in the same mutation callback that adds them, before their first
+   * paint (hard rule 7's pre-paint lane), so a sponsored post is never drawn and
+   * then collapsed. Turn it on only where the label is in the markup when the card
+   * is inserted; a card filled in later still takes the debounced pass.
+   */
+  prepaint: z.boolean().optional(),
   /** Free-text provenance: when and how the selectors were last checked against the live site. */
   verified: z.string().optional(),
 })

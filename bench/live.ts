@@ -382,8 +382,22 @@ export function analyse(file: string) {
 /** The scanner's own counters, over the feed tab, via the service worker (page context can't message it). */
 type Perf = Record<string, number | null | Record<string, number>>;
 /** content/trace.ts's TraceStats; only in a SIFTER_TRACE=1 build. Counts and rule ids, never page text. */
-type Trace = { latency: Record<string, unknown>; flips: unknown[]; flipCount: number; hiddenLeft: number };
+type Trace = { arrival?: Record<string, unknown>; latency: Record<string, unknown>; flips: unknown[]; flipCount: number; hiddenLeft: number };
 type ScannerState = { perf: Perf; trace: Trace | null };
+
+/**
+ * The share of hides over the scroll that the reader could read first: hidden while on
+ * screen, readable until the decision. Needs the trace (the hide latency buckets count
+ * the debounced pass's hides by where they landed). A tag is blurred, so one scrolled
+ * onto the screen (`tagsScrolledIn`, reported alongside) is not readable.
+ */
+function exposure(laneHits: number | null, tagsScrolledIn: number | null, trace: Trace | null) {
+  const lat = trace?.latency as Record<string, { n: number }> | undefined;
+  if (laneHits === null || tagsScrolledIn === null || !lat?.alreadyOnScreen) return null;
+  const hidOn = lat.alreadyOnScreen.n + (lat.enteredWhileQueued?.n ?? 0);
+  const hides = laneHits + hidOn + (lat.offScreen?.n ?? 0);
+  return { hides, readable: hidOn, hidOnScreen: hidOn, tagsScrolledIn, pct: hides ? Math.round((1000 * hidOn) / hides) / 10 : null };
+}
 async function scannerState(context: BrowserContext, type: 'sifter:getPageState' | 'sifter:resetPerfPeaks'): Promise<ScannerState | null> {
   const sw = context.serviceWorkers()[0];
   if (!sw) return null;
@@ -462,8 +476,10 @@ async function runOnce(withExt: boolean) {
           scanMs: n('totalMs') === null ? null : +(n('totalMs') as number).toFixed(1),
           maxSliceMs: +(after.maxSliceMs as number).toFixed(1),
           maxDecideMs: +(after.maxDecideMs as number).toFixed(1),
+          laneMaxMs: typeof after.laneMaxMs === 'number' ? +after.laneMaxMs.toFixed(2) : null,
           worstSlice: after.worstSlice ?? null,
-          veil: Object.fromEntries(['hidesInView', 'hidesAbove', 'hidesBelow', 'veilsSettled', 'anchorCorrections', 'correctionMisses', 'maxCorrectionMissPx', 'correctionsClamped', 'correctionRetries', 'retryMisses', 'veilsPinned', 'veilsUnderTop', 'belowDeferred', 'belowCameInView'].map((k) => [k, n(k)])),
+          late: Object.fromEntries(['hidesAtLoad', 'lateInView', 'lateFarBelow', 'tagsCollapsed', 'railCollapsed', 'belowCameNear', 'collapsedMidScroll', 'tagsScrolledIn', 'laneUnits', 'laneHits', 'laneAbstain', 'laneOverBudget', 'laneFrameHits', 'laneFrameOverBudget', 'approachScans', 'approachPromotes', 'laneReleases', 'laneMs'].map((k) => [k, n(k)])),
+          exposure: exposure(n('laneHits'), n('tagsScrolledIn'), afterState?.trace ?? null),
           trace: afterState?.trace ?? null,
         }
       : null;

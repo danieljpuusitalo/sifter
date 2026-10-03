@@ -6,16 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- The feed no longer jumps when Sifter hides something. A post hidden while it
-  is on screen keeps its exact height: its content stops painting and the Hidden
-  bar sits over the empty space, so nothing you are reading moves. It shrinks to
-  the bar once it is off screen: at once below the screen, and above it only
-  after you stop scrolling, with the page scrolled by the same amount in the
-  same frame. This also covers feeds that scroll inside their own panel under a
-  header, as LinkedIn's does. On a live LinkedIn feed with suggested posts on,
-  content moved by Sifter fell from thousands of pixels per 20 s scroll to none
-  in most runs. Blur mode no longer adds the bar's height either. Hide mode
-  shows the same empty space until the post leaves the screen.
+- The feed no longer jumps or leaves blank gaps when Sifter hides something.
+  On LinkedIn and Facebook, a sponsored post that arrives with its label is
+  hidden before the browser ever draws it, so its first appearance is already
+  the slim Hidden bar and nothing moves. When LinkedIn inserts many posts at
+  once, the ones that don't fit that first moment are still checked before the
+  next frame is drawn, and any left over are checked as soon as they come near
+  the screen instead of after a fixed wait. A post whose label only shows up
+  after it is on screen is not collapsed under you: it keeps its place, blurred
+  so it can't be read, under a small "Sponsored · Hide · Show" tag. Show unblurs
+  it where it is. A tagged post that is off screen below shrinks to its bar
+  while you scroll, where you can't see it move. Sifter never scrolls the page
+  to make room.
 - Fewer style reads mid-scroll. Sifter now checks a label node's raw text before
   reading its computed style, and reads style only for a node whose text could
   carry a marker or a suggested-post phrase at all (a leaf is checked exactly;
@@ -31,16 +33,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- A post hidden on LinkedIn while on screen could still show under its Hidden
-  bar, and overlap the next post. LinkedIn wraps each post in a box that has no
-  box of its own, which the hiding did not reach; it now reaches through it.
-- On Facebook, a hidden module in the right-hand column left a blank hole that
-  never went away, because that column never scrolls off screen. It now shrinks
-  to its bar as soon as it is hidden, as before; only that column moves, never
-  the feed.
-- A hidden post whose bar had scrolled up under a site's fixed header left
-  blank space with nothing to explain it. It now shrinks once you stop
-  scrolling, with the page scrolled back so nothing you are reading moves.
+- On Facebook, a hidden module in the right-hand column shrinks to its bar at
+  once: that column never scrolls off screen, and only it moves, never the feed.
 - The scroll bench reported no hides or collapses at all: its probe watched the
   page's root element before the page had one. It now attributes moves to them.
 - `pnpm bench:live --suggested` was sticky: it turned the suggested category on

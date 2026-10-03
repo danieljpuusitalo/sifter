@@ -46,6 +46,8 @@ const RUNS = arg('runs', 2);
 const CPU = arg('cpu', 4);
 const SITE = strArg('site', 'linkedin');
 const STRICT = process.argv.includes('--strict');
+/** A native browser to run instead of Playwright's Chromium (x64, emulated on this ARM laptop): its ms are real. */
+const BROWSER = strArg('browser', '');
 const EXT = resolve('.output/chrome-mv3');
 
 /**
@@ -54,8 +56,10 @@ const EXT = resolve('.output/chrome-mv3');
  * it scales with the throttle, and the scanner's unscaled `slicesOverBudget`
  * counter is reported but only judged at `--cpu 1`. On this laptop the bench
  * runs emulated x64 Chromium, whose off-runs already show 10 ms spikes at 4x.
+ * The pre-paint lane checks its 1 ms before each unit, so one unit may overrun it:
+ * its limit allows that, at `--cpu 1` only, like the slice counter.
  */
-const LIMITS = { maxSliceScrollMs: 12 * CPU, extraLongTasks: 1 };
+const LIMITS = { maxSliceScrollMs: 12 * CPU, extraLongTasks: 1, laneMaxMs: 2 };
 
 type Site = { host: string; url: string; html: () => string };
 
@@ -187,7 +191,7 @@ function pct(xs: number[], p: number): number {
 
 async function run(withExt: boolean) {
   const context: BrowserContext = await chromium.launchPersistentContext('', {
-    channel: 'chromium',
+    ...(BROWSER ? { executablePath: BROWSER } : { channel: 'chromium' }),
     headless: true,
     viewport: { width: 1280, height: 900 },
     args: withExt ? [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`] : [],
@@ -289,6 +293,20 @@ async function run(withExt: boolean) {
     maxCollectScroll: after ? +after.perf.maxCollectMs.toFixed(1) : null,
     maxDecideScroll: after ? +after.perf.maxDecideMs.toFixed(1) : null,
     worstSlice: after?.perf.worstSlice ? JSON.stringify(after.perf.worstSlice) : null,
+    // Pre-paint lane over the scroll window: hides made before the browser drew the card.
+    laneHits: d('laneHits'),
+    laneAbstain: d('laneAbstain'),
+    laneOverBudget: d('laneOverBudget'),
+    laneFrameHits: d('laneFrameHits'),
+    laneFrameOverBudget: d('laneFrameOverBudget'),
+    approachScans: d('approachScans'),
+    approachPromotes: d('approachPromotes'),
+    laneReleases: d('laneReleases'),
+    laneMaxMs: after ? +after.perf.laneMaxMs.toFixed(2) : null,
+    lateInView: d('lateInView'),
+    lateFarBelow: d('lateFarBelow'),
+    collapsedMidScroll: d('collapsedMidScroll'),
+    tagsScrolledIn: d('tagsScrolledIn'),
     maxSliceAtLoad: atLoad ? +atLoad.perf.maxSliceMs.toFixed(1) : null,
     initialScanMs: atLoad ? +atLoad.perf.totalMs.toFixed(1) : null,
     firstPassWallMs: firstPassMs,
@@ -314,6 +332,8 @@ function verdict(off: Result, on: Result): string[] {
   if (CPU === 1 && (on.overBudget ?? 0) > 0) problems.push(`${on.overBudget} slice(s) over budget while scrolling`);
   if ((on.maxSliceScroll ?? 0) > LIMITS.maxSliceScrollMs) problems.push(`maxSliceScroll ${on.maxSliceScroll} ms > ${LIMITS.maxSliceScrollMs} ms`);
   if (on.longTasks > off.longTasks + LIMITS.extraLongTasks) problems.push(`longTasks ${on.longTasks} vs ${off.longTasks} off`);
+  if (CPU === 1 && (on.laneMaxMs ?? 0) > LIMITS.laneMaxMs) problems.push(`laneMaxMs ${on.laneMaxMs} ms > ${LIMITS.laneMaxMs} ms`);
+  if ((on.laneReleases ?? 0) > 0) problems.push(`${on.laneReleases} lane hide(s) released by decide(): the lane hid something it should not`);
   if (on.railOk === false) problems.push('rail module not hidden, or a neighbour was');
   if (on.hidden === 0) problems.push('nothing hidden: the bench is not exercising the scanner');
   return problems;

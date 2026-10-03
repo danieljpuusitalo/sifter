@@ -1,6 +1,6 @@
 import { DEFAULT_CATEGORIES, type BlockCategory, type CategoryToggles, type HideCategory, type HideMode, type OverrideAction } from './types';
 import type { TraceStats } from './content/trace';
-import type { VeilStats } from './content/viewport';
+import type { LateStats } from './content/viewport';
 
 // Message contract between contexts. Content scripts never touch storage; they
 // ask the service worker (see src/storage/settings.ts for why).
@@ -111,7 +111,28 @@ export type ScanPerf = {
   slicesOverBudget: number;
   /** Units still queued for a decision right now. */
   pending: number;
-} & VeilStats;
+  /** Pre-paint lane (scanner.ts): units born in a mutation batch that it looked at. */
+  laneUnits: number;
+  /** Of those, hidden before their first paint. */
+  laneHits: number;
+  /** Marker found, but the lane would not decide alone (hidden label, empty unit, not a hide): left to the debounced pass. */
+  laneAbstain: number;
+  /** Batches whose born units did not all fit the lane's 1 ms: the rest went to the next frame's continuation. */
+  laneOverBudget: number;
+  /** Of `laneHits`, hidden in that same-frame continuation (still before their first paint). */
+  laneFrameHits: number;
+  /** Continuations that did not fit their own 1 ms either: the rest were queued for the debounced pass, watched for nearness. */
+  laneFrameOverBudget: number;
+  /** Debounces cut short because a queued unit came within a screen of the reader. */
+  approachScans: number;
+  /** Idle slices, waiting the long timeout, promoted because a queued unit came within a screen while slices ran. */
+  approachPromotes: number;
+  /** Lane hides the full decision then disagreed with, released in place. Target 0: each is a rule-6 near miss. */
+  laneReleases: number;
+  laneMs: number;
+  /** The lane's longest single batch. `resetPerfPeaks` zeroes it. */
+  laneMaxMs: number;
+} & LateStats;
 
 export function isBgRequest(m: unknown): m is BgRequest {
   return typeof m === 'object' && m !== null && typeof (m as { type?: unknown }).type === 'string' && (m as { type: string }).type.startsWith('sifter:');

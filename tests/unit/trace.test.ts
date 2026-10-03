@@ -138,6 +138,57 @@ describe('Tracer: hide latency', () => {
   });
 });
 
+describe('Tracer: arrival class', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  /** Queue, hide and place one unit; `before` runs first (the lane's and the empty pass's hooks). */
+  function hideOne(t: Tracer, inView: boolean, before: (u: Element) => void = () => {}, times = 1): Element {
+    const u = el();
+    before(u);
+    for (let i = 0; i < times; i++) {
+      t.queued(u, i * 1000);
+      FakeIO.last.answer(() => false);
+    }
+    t.hid(u, times * 1000, { category: 'sponsored' });
+    FakeIO.last.answer(() => inView);
+    return u;
+  }
+
+  it('sorts each debounced hide by how its unit arrived, split by where it was at the hide', () => {
+    const t = tracer();
+    hideOne(t, true, (u) => t.bornBare(u));
+    hideOne(t, false, (u) => t.empty(u));
+    hideOne(t, true, (u) => t.laneSkipped(u, 'overflow'));
+    hideOne(t, true, (u) => t.laneSkipped(u, 'abstain'));
+    hideOne(t, true, undefined, 2);
+    hideOne(t, false);
+    expect(t.stats().arrival).toEqual({
+      filled: { onScreen: 1, offScreen: 1 },
+      overflow: { onScreen: 1, offScreen: 0 },
+      abstain: { onScreen: 1, offScreen: 0 },
+      labelLate: { onScreen: 1, offScreen: 0 },
+      slow: { onScreen: 0, offScreen: 1 },
+    });
+  });
+
+  it('a lane hide is not counted: it never queued', () => {
+    const t = tracer();
+    const u = el();
+    t.hid(u, 0, { category: 'sponsored' });
+    FakeIO.last.answer(() => true);
+    expect(Object.values(t.stats().arrival).every((c) => c.onScreen + c.offScreen === 0)).toBe(true);
+  });
+
+  it('reset starts the counts over', () => {
+    const t = tracer();
+    hideOne(t, true);
+    t.reset();
+    expect(t.stats().arrival.slow).toEqual({ onScreen: 0, offScreen: 0 });
+  });
+});
+
 describe('Tracer: flips', () => {
   beforeEach(() => {
     document.body.innerHTML = '';

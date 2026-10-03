@@ -9,7 +9,7 @@ import type { BlockCategory, HideCategory, OverrideAction } from '../types';
 import { keepInPlace } from './anchor';
 import { Hider, PLACEHOLDER_ATTR } from './hider';
 import type { NearTracker } from './near';
-import { EMPTY_VEIL_STATS, type VeilStats, type VeilTracker, type VeilTrackerFactory } from './viewport';
+import { EMPTY_LATE_STATS, type LateStats, type LateTracker, type LateTrackerFactory } from './viewport';
 import { safeDetail, type HideTrace, type HideWhy } from './trace';
 
 // Content-script pipeline: extract -> fingerprint -> tier 0 -> apply
@@ -28,6 +28,8 @@ import { safeDetail, type HideTrace, type HideWhy } from './trace';
 // `pnpm bench:scroll` measures frames with the extension off and on.
 
 const DEBOUNCE_MS = 250; // hard rule 7
+/** The pre-paint lane's cap per mutation batch (hard rule 7's exception): what does not fit waits for the debounced pass. */
+export const LANE_BUDGET_MS = 1;
 /** The generic extractor re-derives units from the whole page, so it runs less often. */
 const GENERIC_DEBOUNCE_MS = 1000;
 /** Hard rule 7's ceiling on main-thread work per batch; `slicesOverBudget` counts against it. */
@@ -82,12 +84,16 @@ export type ScannerDeps = {
   dev?: boolean;
   /** Test hook: run the debounce and slices through this instead of timers and idle callbacks. */
   schedule?: (fn: () => void, ms: number) => unknown;
+  /** Test hook: the lane's same-frame continuation runs through this instead of requestAnimationFrame. */
+  frame?: (fn: () => void) => unknown;
   /**
-   * Where hidden units sit relative to the viewport (viewport.ts). With it, a hide
-   * keeps the unit's height while on screen and collapses once off screen, so the
-   * feed never moves under the reader. Without it, hides apply at once.
+   * Where late hides sit relative to the reader (viewport.ts). With it, a hide
+   * decided after the post was drawn is tagged in place unless it is far below, so
+   * the feed never moves under the reader. Without it, hides apply at once.
    */
-  viewport?: VeilTrackerFactory;
+  viewport?: LateTrackerFactory;
+  /** False switches the pre-paint lane off even where the adapter asks for it (tests). */
+  prepaint?: boolean;
   /** Dev and bench builds: hide latency and flips (trace.ts). Absent in a release. */
   trace?: HideTrace;
   /** Which queued units are near the viewport (near.ts): those are decided first. Without it, document order. */
@@ -95,6 +101,8 @@ export type ScannerDeps = {
 };
 
 type Seen = { sig: string; fp: string };
+/** A unit the pre-paint lane hides, with what the hide records. */
+type LaneHit = { unit: Element; category: HideCategory; hint?: string; why: HideWhy };
 /** A whole page module hidden by rule: an adapter block, or one of the user's element rules. */
 type Block = { selector: string; category: BlockCategory; innermost?: boolean; anchor?: string; rule?: string };
 type Decision = {
@@ -141,7 +149,7 @@ function suggestedHint(adapter: Adapter | null, rule: string | undefined): strin
   return label ? label.slice(0, MAX_HINT) : undefined;
 }
 
-const EMPTY_PERF: Omit<ScanPerf, 'pending' | keyof VeilStats> = {
+const EMPTY_PERF: Omit<ScanPerf, 'pending' | keyof LateStats> = {
   scans: 0,
   fullScans: 0,
   unitsExamined: 0,
@@ -158,6 +166,17 @@ const EMPTY_PERF: Omit<ScanPerf, 'pending' | keyof VeilStats> = {
   maxDecideMs: 0,
   worstSlice: null,
   slicesOverBudget: 0,
+  laneUnits: 0,
+  laneHits: 0,
+  laneAbstain: 0,
+  laneOverBudget: 0,
+  laneFrameHits: 0,
+  laneFrameOverBudget: 0,
+  approachScans: 0,
+  approachPromotes: 0,
+  laneReleases: 0,
+  laneMs: 0,
+  laneMaxMs: 0,
 };
 
 export class Scanner {
@@ -192,7 +211,7 @@ export class Scanner {
   private touched = new Set<Node>();
   private added = new Set<Element>();
   private needFull = true;
-  private perf: Omit<ScanPerf, 'pending' | keyof VeilStats> = { ...EMPTY_PERF };
+  private perf: Omit<ScanPerf, 'pending' | keyof LateStats> = { ...EMPTY_PERF };
   private ctx: SiteContext;
   /** Blocks in force for the current context. */
   private blocks: Block[] = [];
@@ -217,11 +236,24 @@ export class Scanner {
   private readonly schedule: (fn: () => void, ms: number) => unknown;
   /** A selector decide() reads inside a unit counts siblings, so the placeholder must be out of the way (see decide). */
   private readonly positional: boolean;
-  private readonly veil: VeilTracker | null;
+  private readonly late: LateTracker | null;
+  /** The adapter runs the pre-paint lane (see `prepaint`). */
+  private readonly lane: boolean;
+  /** Hidden by the lane and not yet confirmed by `decide()`: a disagreement releases in place. */
+  private laneHidden = new WeakSet<Element>();
+  /** Born units the lane has read, so its same-frame continuation never reads one twice. */
+  private laneLooked = new WeakSet<Element>();
+  /** Batches the 1 ms cap cut, for the next frame's continuation (`carryLane`). */
+  private laneCarry: MutationRecord[] = [];
+  private laneCarryUnits: Element[] = [];
+  private laneFrame = false;
+  private readonly frame: (fn: () => void) => unknown;
   /**
-   * A pass the user started (pause, a switch, "Not an ad") is releasing posts:
-   * its writes keep the reader's post in place. Cleared when the queue drains, so
-   * the scroll-time path never pays the forced layout that costs (hard rule 7).
+   * A pass the user started (pause, a switch, "Not an ad", an in-app navigation):
+   * its writes keep the reader's post in place, and a new hide in it applies at once
+   * instead of as a tag, because the reader asked for it (a switch turned on must
+   * visibly work). Cleared when the queue drains, so the scroll-time path never pays
+   * the forced layout that costs (hard rule 7).
    */
   private releasing = false;
 
@@ -233,7 +265,11 @@ export class Scanner {
     this.positional = positionalSelectors(deps.adapter);
     this.now = deps.now ?? (() => performance.now());
     this.schedule = deps.schedule ?? ((fn, ms) => setTimeout(fn, ms));
-    this.veil = deps.viewport?.((unit) => this.hider.settle(unit)) ?? null;
+    const win = deps.doc.defaultView;
+    this.frame = deps.frame ?? (win ? (fn) => win.requestAnimationFrame(() => fn()) : (fn) => setTimeout(fn, 0));
+    this.late = deps.viewport?.((unit) => this.hider.settle(unit)) ?? null;
+    // A unit inside an ad-only container is hidden as the container, which the lane never sees born.
+    this.lane = deps.prepaint !== false && !!deps.adapter?.prepaint && !deps.adapter.adContainerSelector;
     this.hider = new Hider(
       deps.doc,
       deps.context.hideMode,
@@ -241,9 +277,15 @@ export class Scanner {
         onShow: (unit) => this.userShow(unit),
         onNotAd: (unit) => this.userNotAd(unit),
         onRehide: (unit) => this.userRehide(unit),
+        onHideTag: (unit) => {
+          // Hide on a tag the reader opened with Show: back in the count, then collapsed like any tag.
+          if (this.userShown.has(unit)) this.userRehide(unit);
+          this.inPlace(() => this.hider.settle(unit));
+        },
       },
-      this.veil ?? undefined,
+      this.late ?? undefined,
     );
+    deps.near?.listen?.(() => this.approach());
     this.compileContext();
   }
 
@@ -321,7 +363,7 @@ export class Scanner {
     // Hidden elements a full scan may no longer collect (a block whose category or
     // rule was just switched off) still need a fresh decision, to be shown again.
     this.releasing = true;
-    for (const u of this.hider.hiddenUnits()) this.enqueue(u);
+    for (const u of this.hider.trackedHides()) this.enqueue(u);
     this.scanNow();
   }
 
@@ -337,6 +379,7 @@ export class Scanner {
     this.perf.maxCollectMs = 0;
     this.perf.maxDecideMs = 0;
     this.perf.worstSlice = null;
+    this.perf.laneMaxMs = 0;
     this.deps.trace?.reset();
   }
 
@@ -345,6 +388,33 @@ export class Scanner {
     this.queued.add(u);
     this.pending.push(u);
     this.deps.near?.watch(u);
+  }
+
+  /**
+   * A queued unit came within a screen of the reader: decide it promptly. While the
+   * debounce still runs, scan now instead. The lane queues the units its budget cut
+   * (`laneContinue`), and a unit on screen at mutation time waited the whole debounce
+   * in the open: live LinkedIn, 2026-10-03, 6 of 108 hides were readable first, all
+   * lane overflow, for 375 ms p50 and 1.8 s at worst. Units far away keep the debounce.
+   * While slices already run, promote a slice waiting the long idle timeout: the queue
+   * puts the near unit first, but on a starved page each slice then waited 200 ms.
+   */
+  private approach(): void {
+    const { near } = this.deps;
+    if (!this.active || !near) return;
+    if (this.debounceTimer === null && !this.running) return;
+    if (!this.pending.some((u) => near.isNear(u))) return;
+    if (this.debounceTimer === null) {
+      if (this.sliceHandle !== null && !this.slicePrompt) {
+        this.perf.approachPromotes++;
+        this.nextSlice(true);
+      }
+      return;
+    }
+    this.debounceTimer = null;
+    this.perf.approachScans++;
+    this.deps.trace?.due(this.now());
+    this.scanNow(false);
   }
 
   /** Units near the viewport first, each group in document order. Only when nearness changed. */
@@ -371,7 +441,7 @@ export class Scanner {
   private redecideAll(): void {
     this.seen = new WeakMap();
     this.releasing = true;
-    for (const u of this.hider.hiddenUnits()) this.enqueue(u);
+    for (const u of this.hider.trackedHides()) this.enqueue(u);
     this.scanNow();
   }
 
@@ -388,7 +458,8 @@ export class Scanner {
       this.deps.persistOverride(seen.fp, 'hide');
       this.userShown.delete(el);
       this.hiddenFps.set(seen.fp, 'manual');
-      this.hider.hide(el, 'manual');
+      // The reader asked for it: collapse now, not as a tag, and keep their place.
+      this.inPlace(() => this.hider.hide(el, 'manual', undefined, true));
       this.redecideAll();
       return true;
     }
@@ -397,7 +468,7 @@ export class Scanner {
 
   showAll(): void {
     this.inPlace(() => {
-      for (const u of this.hider.hiddenUnits()) this.userShow(u);
+      for (const u of this.hider.trackedHides()) this.userShow(u);
     });
   }
 
@@ -426,7 +497,7 @@ export class Scanner {
       hiddenNow: this.hider.hiddenUnits().length,
       settled: !this.running && this.debounceTimer === null,
       noUnitsMatched: this.noUnitsMatched,
-      perf: { ...this.perf, ...(this.veil?.stats() ?? EMPTY_VEIL_STATS), pending: this.pending.length + this.carried.length },
+      perf: { ...this.perf, ...(this.late?.stats() ?? EMPTY_LATE_STATS), pending: this.pending.length + this.carried.length },
       ...(this.deps.trace ? { trace: this.deps.trace.stats() } : {}),
     };
   }
@@ -440,6 +511,7 @@ export class Scanner {
       this.applyContext(this.ctx);
       return;
     }
+    if (this.lane && this.active) this.prepaint(records);
     let relevant = false;
     for (const r of records) {
       if (isOwnMutation(r)) continue;
@@ -467,8 +539,12 @@ export class Scanner {
 
   requestScan(): void {
     if (this.debounceTimer !== null) return;
-    this.debounceTimer = this.schedule(
+    // A token, not the timer's handle: `approach` supersedes a pending debounce by replacing it.
+    const token = {};
+    this.debounceTimer = token;
+    this.schedule(
       () => {
+        if (this.debounceTimer !== token) return;
         this.debounceTimer = null;
         this.deps.trace?.due(this.now());
         this.scanNow(false);
@@ -716,6 +792,8 @@ export class Scanner {
       for (const u of this.collectUnits()) {
         // Our own placeholder can match a unit selector (X's cells are bare divs).
         if (u.hasAttribute(PLACEHOLDER_ATTR)) continue;
+        // Still queued (the lane queued it early): its wait already runs.
+        if (this.queued.has(u)) continue;
         this.enqueue(u);
         trace?.queued(u, since, t0, this.pending.length - 1);
       }
@@ -760,7 +838,7 @@ export class Scanner {
         if (applied < decisions.length && this.now() - start >= budget) break;
       }
     };
-    if (this.releasing && decisions.some((d) => !d.hide)) this.inPlace(writes);
+    if (this.releasing && decisions.some(this.changesHeight)) this.inPlace(writes);
     else writes();
     if (applied < decisions.length) this.carried = decisions.slice(applied);
     const took = this.now() - start;
@@ -792,11 +870,14 @@ export class Scanner {
     }
   }
 
+  /** In a user-started pass: a release, or a hide that collapses a unit now (see `releasing`). */
+  private readonly changesHeight = (d: Decision): boolean => !d.hide || (!this.hider.isHidden(d.unit) && !this.hider.isTagged(d.unit));
+
   private applyAll(ds: Decision[]): void {
     const writes = () => {
       for (const d of ds) this.applySafely(d);
     };
-    if (this.releasing && ds.some((d) => !d.hide)) this.inPlace(writes);
+    if (this.releasing && ds.some(this.changesHeight)) this.inPlace(writes);
     else writes();
   }
 
@@ -832,6 +913,161 @@ export class Scanner {
     if (this.decideErrorWarned) return;
     this.decideErrorWarned = true;
     console.warn('[sifter] decide failed', e);
+  }
+
+  /**
+   * The pre-paint lane (hard rule 7's one exception to the debounce). A
+   * MutationObserver callback runs after the site's script wrote the DOM and before
+   * the browser paints it, so a unit hidden here is never drawn: its first paint is
+   * already the collapsed bar, and nothing on screen moves.
+   *
+   * Only units born in this batch (an added root, or inside one). A unit reached
+   * through `closest()` from a changed node may already be on screen; it takes the
+   * debounced pass and, if it is a late catch, a tag. The reads are
+   * `detectMarker`'s own (attributes and text, style only on a matched label node),
+   * so the lane cannot disagree with `decide()` about a marker; it decides only on a
+   * marker and the user's overrides, never on muted words or element rules. Capped
+   * at `LANE_BUDGET_MS` per batch: what does not fit waits for the debounced pass,
+   * which also confirms every lane hide and releases one it disagrees with.
+   */
+  private prepaint(records: MutationRecord[]): void {
+    const { adapter } = this.deps;
+    if (!adapter) return;
+    const t0 = this.now();
+    const over = () => this.now() - t0 > LANE_BUDGET_MS;
+    // The cap is asked before every further record and unit, never the first: one
+    // record and one unit always fit, whatever a slow frame does to the clock.
+    const { units: born, cut, next } = bornUnits(records, adapter.unitSelector, over);
+    if (born.length === 0 && !cut) return;
+    const read = this.laneRun(born, adapter, over);
+    const overBudget = cut || read < born.length;
+    if (overBudget) {
+      this.perf.laneOverBudget++;
+      this.carryLane(born.slice(read), records.slice(next));
+    }
+    this.laneTook(t0);
+  }
+
+  /**
+   * What the 1 ms cap cut from a batch gets one more 1 ms in the next animation
+   * frame. rAF callbacks run before that frame's style, layout and paint, so a unit
+   * hidden there is still never drawn. On LinkedIn the first read of a fresh batch
+   * pays its style recalc and the cap cuts the rest; a frame later those reads are
+   * cheap. What does not fit then waits for the debounced pass, as before.
+   */
+  private carryLane(units: Element[], records: MutationRecord[]): void {
+    for (const u of units) this.laneCarryUnits.push(u);
+    for (const r of records) this.laneCarry.push(r);
+    if (this.laneFrame) return;
+    this.laneFrame = true;
+    this.frame(() => this.laneContinue());
+  }
+
+  private laneContinue(): void {
+    this.laneFrame = false;
+    const carried = this.laneCarryUnits;
+    const records = this.laneCarry;
+    this.laneCarryUnits = [];
+    this.laneCarry = [];
+    const { adapter, trace } = this.deps;
+    if (!adapter || !this.lane || !this.active || !this.observer) return;
+    const t0 = this.now();
+    const over = () => this.now() - t0 > LANE_BUDGET_MS;
+    // Units already collected go first and cost no collect; the first of them is the
+    // one read that always fits. Without one, the first record is.
+    const todo = new Set(carried.filter((u) => u.isConnected && !this.laneLooked.has(u)));
+    const { units: fresh, cut, next } = bornUnits(records, adapter.unitSelector, over, todo.size > 0);
+    for (const u of fresh) if (!this.laneLooked.has(u)) todo.add(u);
+    const list = [...todo];
+    const hitsBefore = this.perf.laneHits;
+    const read = this.laneRun(list, adapter, over);
+    this.perf.laneFrameHits += this.perf.laneHits - hitsBefore;
+    const overBudget = cut || read < list.length;
+    if (overBudget) this.perf.laneFrameOverBudget++;
+    this.laneTook(t0);
+    if (!overBudget) return;
+    // After the lane's clock stopped: queue the units the budget cut, so the near
+    // tracker watches them and one coming near skips the debounce (`approach`). The
+    // records not yet collected get a collect of their own, also capped; what that
+    // cuts waits for the debounced pass's collect as before.
+    const t1 = this.now();
+    const rest = bornUnits(records.slice(next), adapter.unitSelector, () => this.now() - t1 > LANE_BUDGET_MS).units;
+    const now = this.now();
+    for (const u of new Set([...list.slice(read), ...rest])) {
+      if (this.laneLooked.has(u) || u.hasAttribute(PLACEHOLDER_ATTR)) continue;
+      trace?.laneSkipped(u, 'overflow');
+      if (this.queued.has(u)) continue;
+      this.enqueue(u);
+      trace?.queued(u, now, now, this.pending.length - 1);
+    }
+  }
+
+  /** Reads `born` in order until `over()` (never before the first), then hides the hits. Returns how many it read. */
+  private laneRun(born: Element[], adapter: Adapter, over: () => boolean): number {
+    const { baseUrl, trace } = this.deps;
+    const hasOverrides = Object.keys(this.ctx.overrides).length > 0;
+    const hits: LaneHit[] = [];
+    let readUpTo = born.length;
+    for (let i = 0; i < born.length; i++) {
+      const u = born[i]!;
+      if (i > 0 && over()) {
+        readUpTo = i;
+        break;
+      }
+      this.laneLooked.add(u);
+      if (this.hider.isHidden(u) || this.userShown.has(u) || this.seen.has(u)) continue;
+      this.perf.laneUnits++;
+      // A read that throws (a bad adapter selector) costs the lane this unit, never the
+      // site's own callback: the debounced pass meets the same unit and handles it there.
+      let hit: LaneHit | 'abstain' | null;
+      try {
+        hit = this.laneRead(u, adapter, baseUrl, hasOverrides);
+      } catch {
+        hit = 'abstain';
+      }
+      if (hit === 'abstain') {
+        this.perf.laneAbstain++;
+        trace?.laneSkipped(u, 'abstain');
+      } else if (hit) hits.push(hit);
+      // Trace builds only: an extra content check, to tell a shell filled later from a slow decide.
+      else if (trace && !hasContent(u)) trace.bornBare(u);
+    }
+    // Writes after every read, so no hide forces the next unit's read to restyle.
+    const now = this.now();
+    for (const h of hits) {
+      this.hider.hide(h.unit, h.category, h.hint, true);
+      this.laneHidden.add(h.unit);
+      trace?.hid(h.unit, now, h.why);
+      this.perf.laneHits++;
+    }
+    return readUpTo;
+  }
+
+  /** One born unit's lane verdict: a hide, 'abstain' (a marker, but decide() might not hide), or null (no marker). */
+  private laneRead(u: Element, adapter: Adapter, baseUrl: string, hasOverrides: boolean): LaneHit | 'abstain' | null {
+    const { categories } = this;
+    const marker = detectMarker(u, adapter, baseUrl, { suggested: categories.suggested, offRules: this.offRules });
+    if (!marker) return null;
+    // What decide() would skip (an empty shell, a label something else already hid)
+    // the lane leaves to it: never a hide decide() would not make.
+    if (!hasContent(u) || (!!marker.node && typeof marker.node.checkVisibility === 'function' && !marker.node.checkVisibility())) return 'abstain';
+    let text: string | undefined;
+    let override: OverrideAction | undefined;
+    if (hasOverrides) {
+      text = unitText(u, adapter);
+      override = this.ctx.overrides[fingerprint(this.ctx.siteKey, text || structuralKey(u))];
+    }
+    const decision = decideTier0({ override, marker, custom: null, categories });
+    if (decision.action !== 'hide') return 'abstain';
+    const hint = (decision.category === 'suggested' ? suggestedHint(adapter, marker.rule) : undefined) ?? firstHint(text ?? unitText(u, adapter));
+    const why: HideWhy = { category: decision.category, rule: marker.rule, kind: marker.kind, detail: safeDetail(marker.kind, marker.detail) };
+    return { unit: u, category: decision.category, hint, why };
+  }
+
+  private laneTook(t0: number): void {
+    const took = this.now() - t0;
+    this.perf.laneMs += took;
+    if (took > this.perf.laneMaxMs) this.perf.laneMaxMs = took;
   }
 
   /** DOM reads only. Returns null when nothing about the unit needs to change. */
@@ -987,13 +1223,22 @@ export class Scanner {
     }
     if (d.hide) {
       if (!this.hider.isHidden(d.unit)) this.deps.trace?.hid(d.unit, this.now(), d.why ?? { category: d.hide });
-      this.hider.hide(d.unit, d.hide, d.hint);
+      this.laneHidden.delete(d.unit);
+      // A tag already on the page stays one: the reader is looking at it, not at the switch.
+      this.hider.hide(d.unit, d.hide, d.hint, this.releasing && !this.hider.isTagged(d.unit));
       this.hiddenFps.set(d.fp, d.hide);
       if (d.block) this.blockHidden.set(d.unit, d.fp);
       else this.blockHidden.delete(d.unit);
     } else {
       if (!this.releasing && this.hider.isHidden(d.unit)) this.deps.trace?.released(d.unit, this.now(), d.empty ? 'emptied' : 'redecided', false);
-      this.hider.unhide(d.unit);
+      if (this.laneHidden.delete(d.unit)) {
+        // The lane hid it before paint and the full decision disagrees: a rule-6 near
+        // miss. Put it back without moving what the reader sees.
+        this.perf.laneReleases++;
+        this.inPlace(() => this.hider.unhide(d.unit));
+      } else {
+        this.hider.unhide(d.unit);
+      }
       this.hiddenFps.delete(d.fp);
       this.blockHidden.delete(d.unit);
     }
@@ -1139,6 +1384,54 @@ function dirtyUnits(selector: string, touched: Set<Node>, added: Set<Element>): 
     }
   }
   return out;
+}
+
+/**
+ * The innermost units born in this batch: an added element that is a unit, or a
+ * unit inside one. Never `closest()`: a unit around an added node existed before
+ * this batch and may already have been painted. `over()` is asked before every
+ * record but the first (before the first too, with `askFirst`): `cut` says it
+ * stopped there, with what it had found so far, and `next` is the first record it
+ * did not read.
+ */
+export function bornUnits(
+  records: MutationRecord[],
+  selector: string,
+  over: () => boolean,
+  askFirst = false,
+): { units: Element[]; cut: boolean; next: number } {
+  const found = new Set<Element>();
+  let cut = false;
+  let next = records.length;
+  try {
+    for (let k = 0; k < records.length; k++) {
+      if ((k > 0 || askFirst) && over()) {
+        cut = true;
+        next = k;
+        break;
+      }
+      const r = records[k]!;
+      if (r.type !== 'childList') continue;
+      const added = r.addedNodes;
+      for (let i = 0; i < added.length; i++) {
+        const n = added[i];
+        if (!n || n.nodeType !== 1) continue;
+        const el = n as Element;
+        if (el.hasAttribute(PLACEHOLDER_ATTR) || !el.isConnected) continue;
+        if (el.matches(selector)) found.add(el);
+        const inner = el.querySelectorAll(selector);
+        for (let j = 0; j < inner.length; j++) {
+          const m = inner[j]!;
+          if (!m.hasAttribute(PLACEHOLDER_ATTR)) found.add(m);
+        }
+      }
+    }
+  } catch {
+    return { units: [], cut: false, next: records.length };
+  }
+  const units: Element[] = [];
+  for (const u of found) if (!hasInnerUnit(u, selector)) units.push(u);
+  return { units, cut, next };
 }
 
 /** Elements a selector matches: the whole page when `full`, else around what changed. */

@@ -9,12 +9,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The feed no longer jumps or leaves blank gaps when Sifter hides something.
   On LinkedIn and Facebook, a sponsored post that arrives with its label is
   hidden before the browser ever draws it, so its first appearance is already
-  the slim Hidden bar and nothing moves. A post whose label only shows up after
-  it is on screen is not hidden under you: it keeps its place and gets a small
-  "Sponsored · Hide" tag over its top. One click hides it. A tagged post you
-  scroll a full screen past shrinks to its bar where you can no longer see it,
-  and Sifter never scrolls the page to make room. On a live LinkedIn feed every
-  visible move left was LinkedIn's own; Sifter caused none.
+  the slim Hidden bar and nothing moves. When LinkedIn inserts many posts at
+  once, the ones that don't fit that first moment are still checked before the
+  next frame is drawn, and any left over are checked as soon as they come near
+  the screen instead of after a fixed wait. A post whose label only shows up
+  after it is on screen is not collapsed under you: it keeps its place, blurred
+  so it can't be read, under a small "Sponsored · Hide · Show" tag. Show unblurs
+  it where it is. A tagged post that is off screen below shrinks to its bar
+  while you scroll, where you can't see it move. Sifter never scrolls the page
+  to make room.
 - Fewer style reads mid-scroll. Sifter now checks a label node's raw text before
   reading its computed style, and reads style only for a node whose text could
   carry a marker or a suggested-post phrase at all (a leaf is checked exactly;

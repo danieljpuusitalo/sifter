@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { browser } from 'wxt/browser';
 import { bg } from '../../src/bg';
-import { MAX_WORDS, parseRules, type RuleError } from '../../src/rules/filters';
+import { MAX_WORDS, mutedWordStem, parseRules, type RuleError } from '../../src/rules/filters';
 import { experimentalNote, LAUNCH_SITES, optInScriptMatches } from '../../src/sites';
 import {
   clearOverrides,
@@ -51,6 +51,9 @@ const HIDE_MODES: { value: HideMode; label: string; hint: string }[] = [
 /** A real backup is a few kilobytes; refuse anything that could stall the page. */
 const MAX_BACKUP_BYTES = 5 * 1024 * 1024;
 
+/** How long typing in "My filters" must pause before it saves. */
+const AUTOSAVE_MS = 800;
+
 function validCss(selector: string): boolean {
   try {
     document.createDocumentFragment().querySelector(selector);
@@ -74,7 +77,7 @@ export function parseWords(text: string): { words: string[]; errors: RuleError[]
     for (const raw of line.split(',')) {
       const t = raw.trim();
       if (!t) continue;
-      if (t.length < 2) {
+      if (mutedWordStem(t).length < 2) {
         errors.push({ line: i + 1, text: t, reason: `'${t}' is too short to be a muted word` });
         continue;
       }
@@ -286,26 +289,53 @@ function Filters(props: { settings: Settings; onSaved: (s: Settings) => void }) 
   );
   const storedWords = props.settings.mutedWords.join('\n');
   const storedRules = props.settings.rulesText;
-  const dirty = words !== storedWords || rules !== storedRules;
+  // Compared as parsed, so a trailing newline mid-typing is not an unsaved change.
+  const dirty = wordList.join('\n') !== storedWords || rules !== storedRules;
 
   // Stored filters changed underneath (an import, another options window): take
   // them, unless the user has unsaved edits here, which the dirty marker shows.
   const prevStored = useRef({ words: storedWords, rules: storedRules });
   useEffect(() => {
     const prev = prevStored.current;
-    if (words === prev.words && rules === prev.rules) {
+    if (wordList.join('\n') === prev.words && rules === prev.rules) {
       setWords(storedWords);
       setRules(storedRules);
     }
     prevStored.current = { words: storedWords, rules: storedRules };
   }, [storedWords, storedRules]);
 
-  const submit = async (e: Event) => {
-    e.preventDefault();
+  const save = async () => {
     const next = await bg<Settings>({ type: 'sifter:setFilters', mutedWords: wordList, rulesText: rules });
     props.onSaved(next);
-    setWords(wordList.join('\n'));
     setStatus(`Saved. ${wordList.length} muted word${wordList.length === 1 ? '' : 's'}, ${parsed.rules.length} rule${parsed.rules.length === 1 ? '' : 's'}.`);
+  };
+  const submit = async (e: Event) => {
+    e.preventDefault();
+    await save();
+    setWords(wordList.join('\n'));
+  };
+
+  // Live report, 2026-10-01: muted words typed and never saved looked like muted
+  // words that don't work. Save once the typing pauses, and on leaving the page.
+  const edited = useRef(false);
+  useEffect(() => {
+    if (!edited.current || !dirty) return;
+    const t = setTimeout(() => void save(), AUTOSAVE_MS);
+    return () => clearTimeout(t);
+  }, [words, rules]);
+  const pending = useRef<() => void>(() => undefined);
+  pending.current = () => {
+    if (edited.current && dirty) void bg({ type: 'sifter:setFilters', mutedWords: wordList, rulesText: rules }).catch(() => undefined);
+  };
+  useEffect(() => {
+    const flush = () => pending.current();
+    window.addEventListener('pagehide', flush);
+    return () => window.removeEventListener('pagehide', flush);
+  }, []);
+  const onEdit = (set: (v: string) => void) => (e: Event) => {
+    edited.current = true;
+    set((e.currentTarget as HTMLTextAreaElement).value);
+    setStatus(null);
   };
 
   return (
@@ -316,9 +346,10 @@ function Filters(props: { settings: Settings; onSaved: (s: Settings) => void }) 
           <strong>Muted words</strong>
           <span class="muted small">
             Hide any post that contains one of these words or phrases. One per line. Whole words only, so "cat" doesn't
-            hide "education".
+            hide "education"; end a word with * to match its longer forms (crypto* hides "cryptocurrency"). Changes
+            save as you type.
           </span>
-          <textarea rows={5} spellcheck={false} value={words} placeholder={'crypto\nweight loss\ngiveaway'} onInput={(e) => (setWords((e.currentTarget as HTMLTextAreaElement).value), setStatus(null))} />
+          <textarea rows={5} spellcheck={false} value={words} placeholder={'crypto\nweight loss\ngiveaway'} onInput={onEdit(setWords)} />
         </label>
         <label class="field">
           <strong>Element rules</strong>
@@ -332,7 +363,7 @@ function Filters(props: { settings: Settings; onSaved: (s: Settings) => void }) 
             class="mono"
             value={rules}
             placeholder={'! Example\nlinkedin.com##aside[aria-label="Add to your feed"]'}
-            onInput={(e) => (setRules((e.currentTarget as HTMLTextAreaElement).value), setStatus(null))}
+            onInput={onEdit(setRules)}
           />
         </label>
         {errors.length > 0 && (

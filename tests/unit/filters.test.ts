@@ -6,7 +6,7 @@ import { Scanner } from '../../src/content/scanner';
 import { detectMarker, mutedWordRendered, unitText } from '../../src/extract';
 import { fingerprint, stableText } from '../../src/fingerprint';
 import { defaultContext, type SiteContext } from '../../src/messages';
-import { MAX_RULES, mutedWordHit, mutedWordPattern, parseRules, selectorsFor, tooBroad } from '../../src/rules/filters';
+import { MAX_RULES, mutedWordHit, mutedWordPattern, mutedWordStem, parseRules, selectorsFor, tooBroad } from '../../src/rules/filters';
 import { decideTier0 } from '../../src/rules/tier0';
 import { siteKey } from '../../src/storage/settings';
 
@@ -40,6 +40,20 @@ describe('muted words', () => {
   });
 });
 
+describe('muted word prefixes', () => {
+  const p = mutedWordPattern(['crypto*', 'ai']);
+  it('a trailing * matches any word starting with the stem, and names the whole word', () => {
+    expect(mutedWordHit('All about Cryptocurrency now', p)).toBe('Cryptocurrency');
+    expect(mutedWordHit('crypto news', p)).toBe('crypto');
+  });
+  it('still starts on a word edge', () => expect(mutedWordHit('encrypton', p)).toBeNull());
+  it('a word without * stays whole-word', () => expect(mutedWordHit('said and aid', p)).toBeNull());
+  it('a stem under two characters is dropped, like a short word', () => {
+    expect(mutedWordPattern(['a*', '*'])).toBeNull();
+    expect(mutedWordStem(' crypto* ')).toBe('crypto');
+  });
+});
+
 describe('mutedWordRendered', () => {
   const p = mutedWordPattern(['layoffs']);
   it('positive control: a word in visible text is rendered', () => {
@@ -53,6 +67,21 @@ describe('mutedWordRendered', () => {
   it('a word under visibility:hidden is not rendered either', () => {
     document.body.innerHTML = '<div id="u"><span>Nothing to see</span><span style="visibility:hidden">layoffs</span></div>';
     expect(mutedWordRendered(document.getElementById('u')!, p!)).toBe(false);
+  });
+  // Live report, 2026-10-01: a muted phrase split across nodes matched `unitText`
+  // but never one node on its own, so the post was never hidden.
+  const phrase = mutedWordPattern(['mass layoffs']);
+  it('a phrase split across nodes is rendered', () => {
+    document.body.innerHTML = '<div id="u"><p>Another round of mass <a href="/t">layoffs</a> this week</p></div>';
+    const u = document.getElementById('u')!;
+    expect(mutedWordHit(unitText(u, null), phrase), 'positive control: the scanner sees the phrase').toBe('mass layoffs');
+    expect(mutedWordRendered(u, phrase!)).toBe(true);
+  });
+  it('a split phrase whose second half is hidden is not rendered', () => {
+    document.body.innerHTML = '<div id="u"><p>Another round of mass <span style="display:none">layoffs</span> hiring</p></div>';
+    const u = document.getElementById('u')!;
+    expect(mutedWordHit(unitText(u, null), phrase), 'positive control: the scanner sees the phrase').toBe('mass layoffs');
+    expect(mutedWordRendered(u, phrase!)).toBe(false);
   });
 });
 

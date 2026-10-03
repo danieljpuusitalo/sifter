@@ -38,6 +38,10 @@ describe('adapter suggested rules', () => {
       for (const b of a.blocks) if (b.rule) expect(ids, `${a.id}: ${b.selector}`).toContain(b.rule);
       for (const r of a.suggested?.rules ?? []) {
         for (const sel of r.selectors) expect(() => document.querySelectorAll(sel), `${a.id}/${r.id}: ${sel}`).not.toThrow();
+        for (const c of r.covers ?? []) {
+          expect(ids, `${a.id}/${r.id} covers ${c}`).toContain(c);
+          expect(c, `${a.id}/${r.id} covers itself`).not.toBe(r.id);
+        }
       }
     }
   });
@@ -111,7 +115,14 @@ describe('LinkedIn: "likes this" activity is its own switch', () => {
   const wrap = (inner: string) => `<div data-testid="mainFeed">${inner}</div>`;
   const card = (id: string, top: string, button = '') =>
     `<div id="${id}" role="listitem" componentkey="update-card-focus-${id}"><p componentkey="s"><span>${top}</span></p><button></button><button></button><p componentkey="n"><span>Timo Aalto</span></p>${button}<p componentkey="b"><span>Body.</span></p></div>`;
-  const page = wrap(card('liked', 'Ella Norr likes this') + card('stranger', 'Rune Dahl', '<button><span>Follow</span></button>'));
+  const follow = '<button><span>Follow</span></button>';
+  // Daniel's live report (2026-10-01): a connection liked a stranger's post, so the
+  // stranger's header carries a Follow button as well as the social line.
+  const page = wrap(
+    card('liked', 'Ella Norr likes this') +
+      card('stranger', 'Rune Dahl', follow) +
+      card('likedStranger', 'Ella Norr commented on this', follow),
+  );
   const run = (offRules: string[]) => {
     document.body.innerHTML = page;
     new Scanner({
@@ -125,20 +136,32 @@ describe('LinkedIn: "likes this" activity is its own switch', () => {
     }).scanNow();
   };
 
-  it('positive control: both hide with every rule on', () => {
+  it('positive control: all hide with every rule on', () => {
     run([]);
     expect(hidden('#liked')).toBe(true);
     expect(hidden('#stranger')).toBe(true);
+    expect(hidden('#likedStranger')).toBe(true);
   });
   it('"activity" off keeps the liked post, not the stranger', () => {
     run(['activity']);
     expect(hidden('#liked')).toBe(false);
     expect(hidden('#stranger')).toBe(true);
   });
+  it('"activity" off also keeps a liked stranger\'s post: its Follow button comes with the activity', () => {
+    run(['activity']);
+    expect(hidden('#likedStranger')).toBe(false);
+  });
   it('"follow" off keeps the stranger, not the liked post', () => {
     run(['follow']);
     expect(hidden('#liked')).toBe(true);
     expect(hidden('#stranger')).toBe(false);
+    expect(hidden('#likedStranger')).toBe(true);
+  });
+  it('both off keep all three', () => {
+    run(['activity', 'follow']);
+    expect(hidden('#liked')).toBe(false);
+    expect(hidden('#stranger')).toBe(false);
+    expect(hidden('#likedStranger')).toBe(false);
   });
 });
 

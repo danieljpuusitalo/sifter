@@ -13,12 +13,19 @@ import { STABILITY_PROBE, summariseStability, type StabRaw } from './stability';
 // JavaScript entry point lives in `chrome-extension://` to Sifter, including
 // the style and layout work nested inside those calls.
 //
-//   pnpm build && pnpm bench:live --site linkedin|facebook|reddit|x|instagram [--seconds 20] [--mode on|off|both] [--suggested] [--profile]
+//   SIFTER_TRACE=1 pnpm build && pnpm bench:live --site linkedin|facebook|reddit|x|instagram [--seconds 20] [--load-seconds 5] [--mode on|off|both] [--suggested] [--profile]
 //   pnpm bench:live analyse <trace.json>
 //
 // `--profile` adds the trace's v8.cpu_profiler samples (the CDP Profiler sees only the
 // main world) and prints self time per function; build with SIFTER_NOMINIFY=1 first
 // for readable names, and rebuild normally afterwards.
+//
+// Each run starts with a cold load: the trace begins before the navigation, so
+// Sifter's main-thread ms over the first `--load-seconds` and the moment the first
+// feed post appears compare on vs off. Built with SIFTER_TRACE=1, the scanner also
+// reports hide latency (content to hide, split by where the post was) and flips
+// (a hide let go by no choice of the user's), for the load and for the scroll.
+// A plain `pnpm build` leaves those out; rebuild normally afterwards either way.
 //
 // Local only: needs the logged-in `.dev-profile-edge` (gitignored) and closes any
 // window on it first. Writes a summary with counts and timings only, never page
@@ -38,6 +45,7 @@ const arg = (name: string, dflt: string) => {
 };
 const SITE = arg('site', 'linkedin');
 const SECONDS = Number(arg('seconds', '20'));
+const LOAD_SECONDS = Number(arg('load-seconds', '5'));
 const MODE = arg('mode', 'both');
 const SUGGESTED = process.argv.includes('--suggested');
 const PROFILE_MODE = process.argv.includes('--profile');
@@ -206,6 +214,37 @@ function profileSummary(p: Profile) {
   return { totalMs: +total.toFixed(1), samples: p.samples.length, urls: [...schemes.entries()].slice(0, 12), self: top(self, 25), inclusive: top(incl, 25) };
 }
 
+/** The adapter's own unit selector, so "first post" means what the scanner means by a post. */
+function unitSelector(): string | null {
+  try {
+    return (JSON.parse(readFileSync(join('src/adapters', `${SITE}.json`), 'utf8')) as { unitSelector?: string }).unitSelector ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Runs before the page's own scripts: the first frame after a feed post with text
+ * exists (about its first paint), and the largest contentful paint. One query per
+ * frame until the post shows up, in the main world, so on- and off-runs pay it alike.
+ */
+const FEED_PROBE = (selector: string | null) => `
+  window.__feed = { firstPost: null, lcp: null };
+  try {
+    new PerformanceObserver((l) => { const e = l.getEntries(); window.__feed.lcp = e[e.length - 1].startTime; })
+      .observe({ type: 'largest-contentful-paint', buffered: true });
+  } catch {}
+  const sel = ${JSON.stringify(selector)};
+  const look = () => {
+    if (!sel || window.__feed.firstPost !== null) return;
+    let found = false;
+    try { for (const el of document.querySelectorAll(sel)) if ((el.textContent || '').trim()) { found = true; break; } } catch {}
+    if (found) requestAnimationFrame((t) => { window.__feed.firstPost = t; });
+    else requestAnimationFrame(look);
+  };
+  requestAnimationFrame(look);
+`;
+
 const FRAME_PROBE = `
   window.__frames = [];
   (function tick(prev) { requestAnimationFrame((t) => { if (prev) window.__frames.push(t - prev); tick(t); }); })(0);
@@ -342,7 +381,10 @@ export function analyse(file: string) {
 
 /** The scanner's own counters, over the feed tab, via the service worker (page context can't message it). */
 type Perf = Record<string, number | null | Record<string, number>>;
-async function scannerPerf(context: BrowserContext, type: 'sifter:getPageState' | 'sifter:resetPerfPeaks'): Promise<Perf | null> {
+/** content/trace.ts's TraceStats; only in a SIFTER_TRACE=1 build. Counts and rule ids, never page text. */
+type Trace = { latency: Record<string, unknown>; flips: unknown[]; flipCount: number; hiddenLeft: number };
+type ScannerState = { perf: Perf; trace: Trace | null };
+async function scannerState(context: BrowserContext, type: 'sifter:getPageState' | 'sifter:resetPerfPeaks'): Promise<ScannerState | null> {
   const sw = context.serviceWorkers()[0];
   if (!sw) return null;
   try {
@@ -352,8 +394,8 @@ async function scannerPerf(context: BrowserContext, type: 'sifter:getPageState' 
         return chrome.tabs.sendMessage(tab!.id!, { type });
       },
       { url: `${new URL(URLS[SITE] ?? SITE).origin}/*`, type },
-    )) as { perf?: Perf } | null;
-    return state?.perf ?? null;
+    )) as { perf?: Perf; trace?: Trace } | null;
+    return state?.perf ? { perf: state.perf, trace: state.trace ?? null } : null;
   } catch {
     return null;
   }
@@ -364,22 +406,53 @@ async function runOnce(withExt: boolean) {
   try {
     if (withExt) await setSuggested(context, SUGGESTED);
     const page = await context.newPage();
-    await page.goto(URLS[SITE] ?? SITE, { waitUntil: 'domcontentloaded' });
     // First install opens the options page; any other tab would take focus from the feed.
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(1500);
     for (const p of context.pages()) if (p !== page) await p.close();
     await page.bringToFront();
-    await page.waitForTimeout(5000);
+    await page.addInitScript(FEED_PROBE(unitSelector()));
+    const cdp = await context.newCDPSession(page);
+    mkdirSync(TRACE_DIR, { recursive: true });
+    const stamp = `${SITE}-${withExt ? 'on' : 'off'}-${Date.now()}`;
+    // Cold load: the trace starts before the navigation, so Sifter's start-up scan is in it.
+    const loadFile = join(TRACE_DIR, `${stamp}-load.json`);
+    await recordTrace(cdp, loadFile, async () => {
+      await page.goto(URLS[SITE] ?? SITE, { waitUntil: 'commit' });
+      await page.waitForTimeout(LOAD_SECONDS * 1000);
+    });
+    const loadTrace = analyse(loadFile);
+    const feed = await page.evaluate(() => {
+      const f = (window as unknown as { __feed?: { firstPost: number | null; lcp: number | null } }).__feed;
+      const fcp = performance.getEntriesByType('paint').find((e) => e.name === 'first-contentful-paint')?.startTime ?? null;
+      return { firstPost: f?.firstPost ?? null, lcp: f?.lcp ?? null, fcp };
+    });
+    const ms = (x: number | null) => (x === null ? null : Math.round(x));
+    for (const p of context.pages()) if (p !== page) await p.close();
+    await page.bringToFront();
+    await page.waitForTimeout(3000);
     await page.evaluate(FRAME_PROBE);
     await page.evaluate(STABILITY_PROBE);
     const t0 = await page.evaluate(() => performance.now());
-    const cdp = await context.newCDPSession(page);
-    mkdirSync(TRACE_DIR, { recursive: true });
-    const file = join(TRACE_DIR, `${SITE}-${withExt ? 'on' : 'off'}-${Date.now()}.json`);
-    // Counters over the scroll only: peaks reset after the load-time scan.
-    const before = withExt ? await scannerPerf(context, 'sifter:resetPerfPeaks') : null;
+    const file = join(TRACE_DIR, `${stamp}.json`);
+    // The load's latency and flips, read before the reset starts the scroll window.
+    const atLoad = withExt ? await scannerState(context, 'sifter:getPageState') : null;
+    if (withExt && !atLoad?.trace) console.warn('[live] no hide trace: build with SIFTER_TRACE=1 for latency and flips');
+    const load = {
+      seconds: LOAD_SECONDS,
+      firstPostMs: ms(feed.firstPost),
+      fcpMs: ms(feed.fcp),
+      lcpMs: ms(feed.lcp),
+      mainThreadBusyMsPerSec: loadTrace.mainThreadBusyMsPerSec,
+      longTasks: loadTrace.longTasks,
+      ext: { totalMs: loadTrace.ext.totalMs, calls: loadTrace.ext.calls, perTaskMax: loadTrace.ext.perTaskMax, tasksOver4ms: loadTrace.ext.tasksOver4ms },
+      hidesAtLoad: atLoad ? (atLoad.perf.hidesAtLoad ?? null) : null,
+      trace: atLoad?.trace ?? null,
+    };
+    // Counters over the scroll only: peaks (and the trace) reset after the load-time scan.
+    const before = withExt ? ((await scannerState(context, 'sifter:resetPerfPeaks'))?.perf ?? null) : null;
     await recordTrace(cdp, file, () => humanScroll(page, SECONDS));
-    const after = withExt ? await scannerPerf(context, 'sifter:getPageState') : null;
+    const afterState = withExt ? await scannerState(context, 'sifter:getPageState') : null;
+    const after = afterState?.perf ?? null;
     const n = (k: string) => (before && after && typeof after[k] === 'number' && typeof before[k] === 'number' ? (after[k] as number) - (before[k] as number) : null);
     const scanner = after
       ? {
@@ -390,7 +463,8 @@ async function runOnce(withExt: boolean) {
           maxSliceMs: +(after.maxSliceMs as number).toFixed(1),
           maxDecideMs: +(after.maxDecideMs as number).toFixed(1),
           worstSlice: after.worstSlice ?? null,
-          veil: Object.fromEntries(['hidesInView', 'hidesAbove', 'hidesBelow', 'veilsSettled', 'anchorCorrections'].map((k) => [k, n(k)])),
+          veil: Object.fromEntries(['hidesInView', 'hidesAbove', 'hidesBelow', 'veilsSettled', 'anchorCorrections', 'correctionMisses', 'maxCorrectionMissPx', 'correctionsClamped', 'correctionRetries', 'retryMisses', 'veilsPinned', 'veilsUnderTop', 'belowDeferred', 'belowCameInView'].map((k) => [k, n(k)])),
+          trace: afterState?.trace ?? null,
         }
       : null;
     if (PROFILE_MODE) {
@@ -398,7 +472,7 @@ async function runOnce(withExt: boolean) {
       // The CDP Profiler domain only sees the main world; the trace's sampler sees the isolate.
       const raw = JSON.parse(readFileSync(file, 'utf8')) as { traceEvents?: Ev[] } | Ev[];
       const prof = traceProfile(Array.isArray(raw) ? raw : (raw.traceEvents ?? []));
-      return { mode: withExt ? 'on' : 'off', profile: prof ? profileSummary(prof) : null, traceFile: file };
+      return { mode: withExt ? 'on' : 'off', load, profile: prof ? profileSummary(prof) : null, traceFile: file };
     }
     const frames = (await page.evaluate(() => (window as unknown as { __frames: number[] }).__frames)).slice(10);
     if (frames.length < SECONDS * 20) console.warn(`[live] only ${frames.length} frames: the tab was throttled, discard this run`);
@@ -409,6 +483,7 @@ async function runOnce(withExt: boolean) {
       mode: withExt ? 'on' : 'off',
       visible,
       hidden,
+      load,
       stability,
       scanner,
       frames: {

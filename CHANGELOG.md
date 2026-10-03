@@ -31,6 +31,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A post hidden on LinkedIn while on screen could still show under its Hidden
+  bar, and overlap the next post. LinkedIn wraps each post in a box that has no
+  box of its own, which the hiding did not reach; it now reaches through it.
+- On Facebook, a hidden module in the right-hand column left a blank hole that
+  never went away, because that column never scrolls off screen. It now shrinks
+  to its bar as soon as it is hidden, as before; only that column moves, never
+  the feed.
+- A hidden post whose bar had scrolled up under a site's fixed header left
+  blank space with nothing to explain it. It now shrinks once you stop
+  scrolling, with the page scrolled back so nothing you are reading moves.
+- The scroll bench reported no hides or collapses at all: its probe watched the
+  page's root element before the page had one. It now attributes moves to them.
 - `pnpm bench:live --suggested` was sticky: it turned the suggested category on
   in the dev profile's storage and never turned it back off, so a later run
   without the flag still hid suggested posts and measured the wrong thing. The

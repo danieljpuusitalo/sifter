@@ -128,14 +128,16 @@ export function usesSharedSheet(doc: Document): boolean {
 // `renderedWithin`/`renderedText` (extract.ts) and `checkVisibility` read display,
 // visibility and opacity, so a veiled unit rescans exactly as the site built it.
 // Veiling with `visibility` or `opacity` would make a rescan read the unit as empty
-// and release it. While veiled (and always in blur mode) the placeholder is a
-// zero-height box whose row overflows on top of the content, so inserting it adds
-// no height either.
+// and release it. `clip-path` does nothing to a `display: contents` box, and
+// LinkedIn wraps each post in one, so the clip also reaches two levels further
+// down (a clip inside a clip is harmless). While veiled (and always in blur mode)
+// the placeholder is a zero-height box whose row overflows on top of the content,
+// so inserting it adds no height either.
 const UNIT_CSS = `
 .${HIDDEN_CLASS}.${COLLAPSE_CLASS} > :not([${PLACEHOLDER_ATTR}]) { display: none !important; }
 .${HIDDEN_CLASS}.${BLUR_CLASS} > :not([${PLACEHOLDER_ATTR}]) { filter: blur(12px) !important; pointer-events: none !important; }
 .${HIDDEN_CLASS}.${COLLAPSE_CLASS} { min-height: 0 !important; max-height: none !important; height: auto !important; }
-.${HIDDEN_CLASS}.${VEIL_CLASS} > :not([${PLACEHOLDER_ATTR}]) { clip-path: inset(0 0 100% 0) !important; pointer-events: none !important; }
+.${HIDDEN_CLASS}.${VEIL_CLASS} > :not([${PLACEHOLDER_ATTR}]), .${HIDDEN_CLASS}.${VEIL_CLASS} > :not([${PLACEHOLDER_ATTR}]) > *, .${HIDDEN_CLASS}.${VEIL_CLASS} > :not([${PLACEHOLDER_ATTR}]) > * > * { clip-path: inset(0 0 100% 0) !important; pointer-events: none !important; }
 .${HIDDEN_CLASS}.${VEIL_CLASS} > [${PLACEHOLDER_ATTR}], .${HIDDEN_CLASS}.${BLUR_CLASS} > [${PLACEHOLDER_ATTR}] { display: flow-root !important; height: 0 !important; position: relative !important; z-index: 1 !important; }
 `;
 
@@ -259,7 +261,8 @@ export class Hider {
     this.hidden.add(unit);
     this.tracked.add(unit);
     (unit as HTMLElement).classList.add(HIDDEN_CLASS);
-    this.applyMode(unit, rec, !!this.veil);
+    // While the page is still loading, nobody is reading yet: take the real mode at once.
+    this.applyMode(unit, rec, !!this.veil && !this.veil.loadHide?.());
   }
 
   /** Hard reset: removes the placeholder and the record entirely. Used for a full unhide, disabling, and "Not an ad". */

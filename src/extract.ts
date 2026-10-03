@@ -391,22 +391,28 @@ export function hasContent(unit: Element): boolean {
  * walks every text node (including hidden ones) because it also feeds the
  * fingerprint, so a decoy or collapsed-tail occurrence must not change what the
  * post fingerprints as. A custom hide is a different question: it must fire only
- * on a word the reader can see. Walks the unit's own text nodes (a TreeWalker,
- * never a layout) and stops at the first one the pattern matches and
- * `renderedWithin` confirms, so this only costs style reads when a word actually
- * matched (hard rule 7).
+ * on a word the reader can see. Joins the rendered text nodes the way `unitText`
+ * joins all of them and tests once, so a muted phrase split across nodes ("mass"
+ * plain, "layoffs" in a link) matches here exactly when it matched there (live
+ * report, 2026-10-01: testing node by node never saw such a phrase). A TreeWalker
+ * and computed style, never a layout, and the scanner only calls this once
+ * `unitText` already matched (hard rule 7).
  */
 export function mutedWordRendered(unit: Element, pattern: RegExp): boolean {
   const doc = unit.ownerDocument;
   const walker = doc.createTreeWalker(unit, 4 /* NodeFilter.SHOW_TEXT */);
   const cache: VisibilityCache = new Map();
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+  const parts: string[] = [];
+  let len = 0;
+  for (let n = walker.nextNode(); n && len < MAX_UNIT_TEXT; n = walker.nextNode()) {
     const parent = n.parentElement;
     if (!parent || SKIP_TEXT_IN.has(parent.localName.toUpperCase())) continue;
     const t = n.nodeValue ?? '';
-    if (t && pattern.test(t) && renderedWithin(parent, unit, cache)) return true;
+    if (!t.trim() || !renderedWithin(parent, unit, cache)) continue;
+    parts.push(t);
+    len += t.length;
   }
-  return false;
+  return pattern.test(normaliseText(parts.join(' ')));
 }
 
 export function buildPayload(
@@ -540,37 +546,57 @@ function textualMatchers(block: SuggestedBlock, off: ReadonlySet<string>): { m: 
 function detectSuggested(unit: Element, adapter: Adapter, adapterLabels: Label[], off: ReadonlySet<string>, cache: VisibilityCache): MarkerHit | null {
   const block = adapter.suggested!;
   const matchers = suggestedMatchers(block, off);
-  for (const { m, rule } of matchers) {
-    for (const sel of m.selectors) {
-      const node = safeQuery(unit, sel);
-      if (node) return { kind: 'structural', category: 'suggested', detail: sel, rule, node };
-    }
-  }
+  // Rules switched off here that bring another rule's signal with them (`covers`).
+  const covering = block.rules.filter((r) => off.has(r.id) && (r.covers?.length ?? 0) > 0);
   const textual = matchers.filter(({ m }) => wordSet(m).size > 0 || endingList(m).length > 0);
-  if (textual.length === 0) return null;
-  const w = wanted(false, textual.map(({ m }) => wordSet(m)), textual.map(({ m }) => endingList(m)));
-  const labels = block.labelSelectors
-    ? labelNodes(unit, adapter, block.labelSelectors, block.labelNodeLimit).map((n) => readLabel(n, unit, cache, w))
-    : adapterLabels;
+  // Read lazily (style reads), and only once: the covering rules' own words are
+  // wanted too, since a covered hit is released only when one of them is shown.
+  let labels: Label[] | null = null;
+  const labelsFor = (): Label[] => {
+    if (labels) return labels;
+    const reads: Matcher[] = [...textual.map(({ m }) => m), ...covering];
+    const w = wanted(false, reads.map((m) => wordSet(m)), reads.map((m) => endingList(m)));
+    labels = block.labelSelectors
+      ? labelNodes(unit, adapter, block.labelSelectors, block.labelNodeLimit).map((n) => readLabel(n, unit, cache, w))
+      : adapterLabels;
+    return labels;
+  };
   // A social line ("<Name> likes this") heads the card, so only the first label
   // counts for endings: a post body that says "everyone likes this" must not hide.
   // Resolved on demand: it costs style reads, and only a unit with such a line needs it.
   let first: string | undefined;
   let firstResolved = false;
-  for (const { text: t } of labels) {
+  const firstLine = (): string | undefined => {
+    if (!firstResolved) {
+      first = firstShown(labelsFor(), unit, cache);
+      firstResolved = true;
+    }
+    return first;
+  };
+  /** A hit from `rule` doesn't count while a rule switched off here covers it and matches the unit itself. */
+  const covered = (rule: string | undefined): boolean =>
+    !!rule &&
+    covering.some(
+      (r) =>
+        r.covers!.includes(rule) &&
+        (labelsFor().some(({ text: t }) => t.length <= MAX_SUGGESTED_LABEL && hasWordLine(t, wordSet(r))) ||
+          (endingList(r).length > 0 && hasLineEnding(firstLine() ?? '', endingList(r)))),
+    );
+  for (const { m, rule } of matchers) {
+    for (const sel of m.selectors) {
+      const node = safeQuery(unit, sel);
+      if (node && !covered(rule)) return { kind: 'structural', category: 'suggested', detail: sel, rule, node };
+    }
+  }
+  if (textual.length === 0) return null;
+  for (const { text: t } of labelsFor()) {
     // A label node this long is post text that a broad selector reached, not a
     // header: a line reading "Follow" inside it is the author's, not the site's.
     if (t.length > MAX_SUGGESTED_LABEL) continue;
     for (const { m, rule } of textual) {
       let hit = hasWordLine(t, wordSet(m));
-      if (!hit && hasLineEnding(t, endingList(m))) {
-        if (!firstResolved) {
-          first = firstShown(labels, unit, cache);
-          firstResolved = true;
-        }
-        hit = t === first;
-      }
-      if (hit) return { kind: 'label', category: 'suggested', detail: normaliseText(t).slice(0, MAX_LABEL_LEN), rule };
+      if (!hit && hasLineEnding(t, endingList(m))) hit = t === firstLine();
+      if (hit && !covered(rule)) return { kind: 'label', category: 'suggested', detail: normaliseText(t).slice(0, MAX_LABEL_LEN), rule };
     }
   }
   return null;

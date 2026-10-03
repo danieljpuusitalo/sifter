@@ -84,3 +84,8 @@ First e2e run on a new machine: `pnpm exec playwright install chromium`.
   `adSelectors`/`labelSelectors`/`words` fields for the sponsored case) rather
   than inventing a third mechanism. A new adapter should never need its own
   bespoke detection path.
+- **A rule's `covers` names the rules its signal brings with it.** While the
+  covering rule is switched off and matches a unit, the covered rules don't fire on
+  it. LinkedIn: `activity` covers `follow`, because a liked stranger's post carries
+  a Follow button too. Without it, a switch reads as broken: the post just hides
+  under another rule.

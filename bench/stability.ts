@@ -99,7 +99,9 @@ export const STABILITY_PROBE = `
         stab.releases.push({ t: performance.now(), zone: zone(el) });
       }
     }
-  }).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+    // The document, not its root element: as an init script this runs before the
+    // root exists, and observing null threw and left hides and collapses empty.
+  }).observe(document, { subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true });
 })();
 `;
 

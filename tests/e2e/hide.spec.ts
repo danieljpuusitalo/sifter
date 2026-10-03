@@ -244,9 +244,33 @@ test('options page: global category, per-site override and rule validation reach
   // A bad rule is reported and skipped; the good one still applies.
   await options.getByRole('textbox', { name: /Element rules/ }).fill('linkedin.com##[componentkey^="update-card-focus1005"]\nlinkedin.com##div[[');
   await expect(options.getByText('Line 2:')).toBeVisible();
-  await options.getByRole('button', { name: 'Save filters' }).click();
+  // No click: the filters save themselves once the typing pauses.
   await expect(options.getByRole('status')).toContainText('1 rule');
   await expectHidden(page, '1005');
+});
+
+// Live report, 2026-10-01: muted words typed and never saved read as "muted words
+// don't work". Typing alone must reach the open tab, and so must leaving the page
+// before the pause is over.
+test('options page: muted words save as you type, and on leaving the page', async ({ context, page }) => {
+  await page.goto('https://www.linkedin.com/');
+  await expectShown(page, '1001');
+  const id = new URL(context.serviceWorkers()[0]!.url()).host;
+  const options = await context.newPage();
+  await options.goto(`chrome-extension://${id}/options.html`);
+  const words = options.getByRole('textbox', { name: /Muted words/ });
+
+  await words.pressSequentially('copywriting');
+  await expect(options.getByRole('status')).toContainText('1 muted word');
+  await expectHidden(page, '1001');
+
+  // Leaving at once, before the pause, still saves.
+  await words.fill('');
+  await words.pressSequentially('sourdough');
+  await options.close();
+  await expectShown(page, '1001');
+  const stored = await context.serviceWorkers()[0]!.evaluate(() => chrome.storage.local.get('settings'));
+  expect((stored as { settings: { mutedWords: string[] } }).settings.mutedWords).toEqual(['sourdough']);
 });
 
 test('sifter:setOverride rejects a malformed fingerprint or action instead of storing it', async ({ context, page }) => {

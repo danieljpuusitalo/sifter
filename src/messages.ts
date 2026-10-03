@@ -1,4 +1,5 @@
 import { DEFAULT_CATEGORIES, type BlockCategory, type CategoryToggles, type HideCategory, type HideMode, type OverrideAction } from './types';
+import type { TraceStats } from './content/trace';
 import type { VeilStats } from './content/viewport';
 
 // Message contract between contexts. Content scripts never touch storage; they
@@ -62,6 +63,8 @@ export type PageState = {
   noUnitsMatched: boolean;
   /** Scanner self-cost on this page (hard rule 7), for the popup and the scroll bench. */
   perf: ScanPerf;
+  /** Dev and bench builds only: hide latency and flips (content/trace.ts). */
+  trace?: TraceStats;
 };
 
 export type SliceProfile = {
@@ -91,6 +94,8 @@ export type ScanPerf = {
   emptySkipped: number;
   /** Times `decide` or `apply` threw for a unit: caught, skipped, counted, warned once. */
   decideErrors: number;
+  /** Release passes (pause, a switch turned off, Show all) that scrolled back to keep the reader's post in place. */
+  releaseCorrections: number;
   slices: number;
   totalMs: number;
   /** Longest slice, including the collect step it started with. `resetPerfPeaks` zeroes it. */

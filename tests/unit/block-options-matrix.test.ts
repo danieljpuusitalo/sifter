@@ -257,6 +257,22 @@ describe('linkedin: custom filters (muted words and element rules)', () => {
     expect(isHidden(unit), 'muted-word unit did not re-hide when custom went back on').toBe(true);
   });
 
+  // Live report, 2026-10-01: a muted phrase whose words sit in different nodes (a
+  // hashtag or mention is its own link) never hid anything.
+  it('a muted phrase split across a link in the post body hides the unit, naming the phrase', () => {
+    const phrase = 'careful copywriting';
+    const s = scan(fixture, host);
+    const unit = document.querySelector(wordUnitSelector)!;
+    const span = unit.querySelector('p[componentkey="c-3"] > span')!;
+    span.innerHTML = span.innerHTML.replace('copywriting', '<a href="/feed/hashtag/copywriting">copywriting</a>');
+    expect(unit.querySelector('a[href*="hashtag"]'), 'positive control: the phrase now spans two nodes').not.toBeNull();
+    expect(isHidden(unit)).toBe(false);
+
+    apply(s, host, { mutedWords: [phrase] });
+    expect(isHidden(unit), 'split muted phrase did not hide its unit').toBe(true);
+    expect(placeholderText(unit)).toContain(`muted word “${phrase}”`);
+  });
+
   it('an element rule hides only the matched unit, with a placeholder naming the rule, and toggles live', () => {
     const s = scan(fixture, host, { customSelectors: [selectorUnitSelector] });
     const unit = document.querySelector(selectorUnitSelector)!;

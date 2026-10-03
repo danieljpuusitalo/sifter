@@ -2,6 +2,8 @@ import { browser } from 'wxt/browser';
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { adapterFor } from '../src/adapters';
 import { Scanner } from '../src/content/scanner';
+import { nearTracker } from '../src/content/near';
+import { hideTrace } from '../src/content/trace';
 import { viewportTracker } from '../src/content/viewport';
 import { defaultContext, type BgRequest, type SiteContext, type TabRequest } from '../src/messages';
 import { LAUNCH_MATCHES } from '../src/sites';
@@ -38,9 +40,25 @@ type Probe = { alive: boolean };
 /** How long a refresh waits for the re-decide to finish before answering the popup. */
 const SETTLE_CAP_MS = 1000;
 
+/** At document_start there is no <body> yet, and the scanner scans and observes from it. */
+function bodyReady(): Promise<void> {
+  if (document.body) return Promise.resolve();
+  return new Promise((resolve) => {
+    const mo = new MutationObserver(() => {
+      if (!document.body) return;
+      mo.disconnect();
+      resolve();
+    });
+    mo.observe(document.documentElement, { childList: true });
+  });
+}
+
 export default defineContentScript({
   matches: LAUNCH_MATCHES,
-  runAt: 'document_idle',
+  // Not document_idle: that waits for DOMContentLoaded, and on Facebook the Stories
+  // bar was on screen 2.3-2.9 s before it (live, 2026-10-01). Starting here also
+  // overlaps the settings round-trip with the page's own load.
+  runAt: 'document_start',
   async main() {
     // The popup can inject this script into a tab that already has it.
     const probe: Probe = { alive: false };
@@ -66,12 +84,13 @@ export default defineContentScript({
 
     const hostname = location.hostname;
     const send = <T>(msg: BgRequest) => browser.runtime.sendMessage(msg) as Promise<T>;
-    const context = await withRetry(() => send<SiteContext>({ type: 'sifter:getContext', hostname }), CONTEXT_RETRY_DELAYS_MS).catch(
-      (e: unknown) => {
+    const [context] = await Promise.all([
+      withRetry(() => send<SiteContext>({ type: 'sifter:getContext', hostname }), CONTEXT_RETRY_DELAYS_MS).catch((e: unknown) => {
         console.warn('[sifter] could not load settings', e);
         return defaultContext(hostname);
-      },
-    );
+      }),
+      bodyReady(),
+    ]);
 
     const live = new Scanner({
       doc: document,
@@ -84,14 +103,26 @@ export default defineContentScript({
         void send({ type: 'sifter:setOverride', hostname, fp, action }).catch(() => undefined),
       dev: import.meta.env.DEV,
       viewport: viewportTracker(window),
+      near: nearTracker(window),
+      trace: import.meta.env.DEV || import.meta.env.SIFTER_TRACE ? hideTrace(window) : undefined,
     });
     scanner = live;
     live.start();
 
     let resumeTimer: ReturnType<typeof setTimeout> | undefined;
+    // A context plus whether it is paused right now: the same pausedUntil means
+    // something else once that moment has passed.
+    const keyOf = (ctx: SiteContext) => `${ctx.pausedUntil !== null && ctx.pausedUntil > Date.now()}${JSON.stringify(ctx)}`;
+    let applied = keyOf(context);
     const refresh = async () => {
       const ctx = await withRetry(() => send<SiteContext>({ type: 'sifter:getContext', hostname }), CONTEXT_RETRY_DELAYS_MS);
-      live.applyContext(ctx);
+      // The popup refreshes its tab at once and the settings broadcast follows it: the
+      // second brings nothing new and must not re-decide the whole page again.
+      const key = keyOf(ctx);
+      if (key !== applied) {
+        applied = key;
+        live.applyContext(ctx);
+      }
       // Answer with the re-decided page, not a half-done one; but never hang the popup.
       await Promise.race([live.settled(), new Promise((r) => setTimeout(r, SETTLE_CAP_MS))]);
       clearTimeout(resumeTimer);
@@ -101,7 +132,7 @@ export default defineContentScript({
     };
     if (context.pausedUntil !== null && context.pausedUntil > Date.now()) void refresh().catch(() => undefined);
 
-    // bfcache restores the page (and this script) without a fresh document_idle
+    // bfcache restores the page (and this script) without a fresh document_start
     // run, so settings could have drifted while it was frozen. Re-sync on the way
     // back in.
     window.addEventListener('pageshow', (e) => {

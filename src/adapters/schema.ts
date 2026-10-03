@@ -15,6 +15,14 @@ export const SuggestRuleSchema = z
     selectors: z.array(z.string()).default([]),
     words: z.array(z.string()).default([]),
     lineEndings: z.array(z.string()).optional(),
+    /**
+     * Other rules whose signal this rule's own signal brings with it. LinkedIn shows
+     * a stranger's post because a connection liked it, and the stranger's header
+     * then carries a Follow button: switching "liked or commented on" off must not
+     * leave "you don't follow" to hide the post anyway. While this rule is off and
+     * matches a unit, the covered rules don't fire on it.
+     */
+    covers: z.array(z.string()).optional(),
   })
   .strict();
 export type SuggestRule = z.infer<typeof SuggestRuleSchema>;

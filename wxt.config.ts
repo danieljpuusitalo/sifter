@@ -10,6 +10,8 @@ export default defineConfig({
     plugins: [preact()],
     // Readable function names in a live trace (bench/live.ts); never for a release.
     ...(process.env.SIFTER_NOMINIFY ? { build: { minify: false } } : {}),
+    // Hide latency and flips (src/content/trace.ts) for bench:live; a release build compiles them out.
+    define: { 'import.meta.env.SIFTER_TRACE': JSON.stringify(process.env.SIFTER_TRACE === '1') },
   }),
   manifest: {
     name: 'Sifter',

@@ -6,8 +6,11 @@ import type { PageState, ScanPerf, SiteContext } from '../messages';
 import { mutedWordHit, mutedWordPattern, tooBroad } from '../rules/filters';
 import { decideTier0 } from '../rules/tier0';
 import type { BlockCategory, HideCategory, OverrideAction } from '../types';
+import { keepInPlace } from './anchor';
 import { Hider, PLACEHOLDER_ATTR } from './hider';
+import type { NearTracker } from './near';
 import { EMPTY_VEIL_STATS, type VeilStats, type VeilTracker, type VeilTrackerFactory } from './viewport';
+import { safeDetail, type HideTrace, type HideWhy } from './trace';
 
 // Content-script pipeline: extract -> fingerprint -> tier 0 -> apply
 // (BRIEF.md §5). Tier 1 (model) plugs in at the "unknown" branch in M2.
@@ -40,6 +43,15 @@ const SLICE_BUDGET_MS = 4;
 /** An idle callback that fired on its timeout got no idle time: take a small bite. */
 const STARVED_BUDGET_MS = 2;
 const IDLE_TIMEOUT_MS = 200;
+/**
+ * The idle timeout while the reader may be about to see the result: the collect
+ * after a debounce (its units are unplaced yet), and a queue whose head is near the
+ * viewport. Live LinkedIn (2026-10-01) is busy 500-800 ms of every second, so a
+ * slice there almost always starts on its timeout and decides one unit: at 200 ms
+ * that wait was most of a hide landing on screen (idle p50 201 ms, p90 575 ms; the
+ * queue after the collect up to 750 ms). The work is the same, only sooner.
+ */
+const PROMPT_IDLE_TIMEOUT_MS = 50;
 /**
  * The decide-cost estimate before any unit has been measured. Starting at zero let
  * the first slice after page load (cold code, a page whose styles are all dirty)
@@ -76,12 +88,26 @@ export type ScannerDeps = {
    * feed never moves under the reader. Without it, hides apply at once.
    */
   viewport?: VeilTrackerFactory;
+  /** Dev and bench builds: hide latency and flips (trace.ts). Absent in a release. */
+  trace?: HideTrace;
+  /** Which queued units are near the viewport (near.ts): those are decided first. Without it, document order. */
+  near?: NearTracker;
 };
 
 type Seen = { sig: string; fp: string };
 /** A whole page module hidden by rule: an adapter block, or one of the user's element rules. */
 type Block = { selector: string; category: BlockCategory; innermost?: boolean; anchor?: string; rule?: string };
-type Decision = { unit: Element; fp: string; hide: HideCategory | null; block?: boolean; hint?: string };
+type Decision = {
+  unit: Element;
+  fp: string;
+  hide: HideCategory | null;
+  block?: boolean;
+  hint?: string;
+  /** For the trace: what made it a hide, without page text. */
+  why?: HideWhy;
+  /** A release because the unit emptied. */
+  empty?: boolean;
+};
 
 /** Past this many characters a placeholder's hint is post body, not a label. */
 const MAX_HINT = 60;
@@ -123,6 +149,7 @@ const EMPTY_PERF: Omit<ScanPerf, 'pending' | keyof VeilStats> = {
   foreignHidden: 0,
   emptySkipped: 0,
   decideErrors: 0,
+  releaseCorrections: 0,
   slices: 0,
   totalMs: 0,
   maxSliceMs: 0,
@@ -143,7 +170,12 @@ export class Scanner {
   private debounceTimer: unknown = null;
   private pending: Element[] = [];
   private queued = new Set<Element>();
+  /** The near tracker's version the queue was last ordered by. */
+  private orderedAt = -1;
   private running = false;
+  /** The idle callback the next slice waits on, and whether it waits the prompt timeout. */
+  private sliceHandle: number | null = null;
+  private slicePrompt = false;
   /** A scan was requested: the next slice starts by collecting units. */
   private needCollect = false;
   /** Hides a slice decided but ran out of budget to write; applied first thing next slice. */
@@ -186,6 +218,12 @@ export class Scanner {
   /** A selector decide() reads inside a unit counts siblings, so the placeholder must be out of the way (see decide). */
   private readonly positional: boolean;
   private readonly veil: VeilTracker | null;
+  /**
+   * A pass the user started (pause, a switch, "Not an ad") is releasing posts:
+   * its writes keep the reader's post in place. Cleared when the queue drains, so
+   * the scroll-time path never pays the forced layout that costs (hard rule 7).
+   */
+  private releasing = false;
 
   constructor(private deps: ScannerDeps) {
     this.ctx = deps.context;
@@ -260,7 +298,8 @@ export class Scanner {
   stop(): void {
     this.observer?.disconnect();
     this.observer = null;
-    this.hider.unhideAll();
+    this.deps.near?.disconnect();
+    this.inPlace(() => this.hider.unhideAll());
     this.hider.dispose();
   }
 
@@ -274,13 +313,14 @@ export class Scanner {
       // Drop queued work too: a slice already scheduled must not hide anything now.
       this.dropQueue();
       this.hiddenFps.clear();
-      this.hider.unhideAll();
+      this.inPlace(() => this.hider.unhideAll());
       this.markFull();
       this.noUnitsMatched = false;
       return;
     }
     // Hidden elements a full scan may no longer collect (a block whose category or
     // rule was just switched off) still need a fresh decision, to be shown again.
+    this.releasing = true;
     for (const u of this.hider.hiddenUnits()) this.enqueue(u);
     this.scanNow();
   }
@@ -297,15 +337,30 @@ export class Scanner {
     this.perf.maxCollectMs = 0;
     this.perf.maxDecideMs = 0;
     this.perf.worstSlice = null;
+    this.deps.trace?.reset();
   }
 
   private enqueue(u: Element): void {
     if (this.queued.has(u)) return;
     this.queued.add(u);
     this.pending.push(u);
+    this.deps.near?.watch(u);
+  }
+
+  /** Units near the viewport first, each group in document order. Only when nearness changed. */
+  private nearFirst(): void {
+    const { near } = this.deps;
+    if (!near || near.version === this.orderedAt || this.pending.length < 2) return;
+    this.orderedAt = near.version;
+    const close: Element[] = [];
+    const rest: Element[] = [];
+    for (const u of this.pending) (near.isNear(u) ? close : rest).push(u);
+    if (close.length && rest.length) this.pending = close.concat(rest);
   }
 
   private dropQueue(): void {
+    const { near } = this.deps;
+    if (near) for (const u of this.pending) near.unwatch(u);
     this.pending = [];
     this.queued.clear();
     this.carried = [];
@@ -315,6 +370,7 @@ export class Scanner {
   /** A user override changed: re-decide the whole page, so copies of the same post follow it. */
   private redecideAll(): void {
     this.seen = new WeakMap();
+    this.releasing = true;
     for (const u of this.hider.hiddenUnits()) this.enqueue(u);
     this.scanNow();
   }
@@ -340,8 +396,19 @@ export class Scanner {
   }
 
   showAll(): void {
-    for (const u of this.hider.hiddenUnits()) this.userShow(u);
+    this.inPlace(() => {
+      for (const u of this.hider.hiddenUnits()) this.userShow(u);
+    });
   }
+
+  /** Runs writes that change heights across the page, then scrolls back so the reader's post has not moved. */
+  private inPlace(writes: () => void): void {
+    if (keepInPlace(this.deps.doc, this.anchorable, writes, this.deps.adapter?.feedRootSelector) !== 0) this.perf.releaseCorrections++;
+  }
+
+  /** A post the reader may be looking at: what `inPlace` anchors to. */
+  private readonly anchorable = (el: Element): boolean =>
+    this.hider.isHidden(el) || this.userShown.has(el) || (!!this.deps.adapter && this.isUnit(el));
 
   state(): PageState {
     const counts: PageState['counts'] = {};
@@ -360,6 +427,7 @@ export class Scanner {
       settled: !this.running && this.debounceTimer === null,
       noUnitsMatched: this.noUnitsMatched,
       perf: { ...this.perf, ...(this.veil?.stats() ?? EMPTY_VEIL_STATS), pending: this.pending.length + this.carried.length },
+      ...(this.deps.trace ? { trace: this.deps.trace.stats() } : {}),
     };
   }
 
@@ -385,7 +453,10 @@ export class Scanner {
       }
       if (this.touched.size + this.added.size > MAX_DIRTY) this.markFull();
     }
-    if (relevant) this.requestScan();
+    if (relevant) {
+      this.deps.trace?.dirty(this.now());
+      this.requestScan();
+    }
   }
 
   private markFull(): void {
@@ -399,6 +470,7 @@ export class Scanner {
     this.debounceTimer = this.schedule(
       () => {
         this.debounceTimer = null;
+        this.deps.trace?.due(this.now());
         this.scanNow(false);
       },
       this.deps.adapter ? DEBOUNCE_MS : GENERIC_DEBOUNCE_MS,
@@ -418,11 +490,14 @@ export class Scanner {
       return;
     }
     this.perf.scans++;
+    this.deps.trace?.dirty(this.now());
     if (full) this.markFull();
     this.needCollect = true;
     if (!this.running) {
       this.running = true;
-      this.idle((budget) => this.runSlice(budget));
+      this.nextSlice(true);
+    } else if (this.sliceHandle !== null) {
+      this.nextSlice(true);
     }
   }
 
@@ -572,21 +647,40 @@ export class Scanner {
     return [...dirty];
   }
 
-  /** Runs `fn` in idle time, after the current frame is painted, so it never delays one. */
-  private idle(fn: (budget: number) => void): void {
+  /**
+   * Runs the next slice in idle time, after the current frame is painted, so it never
+   * delays one. `prompt` waits for idle time only `PROMPT_IDLE_TIMEOUT_MS`, and
+   * promotes a slice already waiting the long timeout (one slice chain, never two).
+   */
+  private nextSlice(prompt: boolean): void {
     if (this.deps.schedule) {
-      this.deps.schedule(() => fn(SLICE_BUDGET_MS), 0);
+      this.deps.schedule(() => this.runSlice(SLICE_BUDGET_MS), 0);
       return;
     }
     const view = this.deps.doc.defaultView;
-    if (view && typeof view.requestIdleCallback === 'function') {
-      view.requestIdleCallback(
-        (d) => fn(d.didTimeout ? STARVED_BUDGET_MS : Math.min(SLICE_BUDGET_MS, Math.max(1, d.timeRemaining()))),
-        { timeout: IDLE_TIMEOUT_MS },
-      );
-    } else {
-      setTimeout(() => fn(SLICE_BUDGET_MS), 0);
+    if (!view || typeof view.requestIdleCallback !== 'function') {
+      setTimeout(() => this.runSlice(SLICE_BUDGET_MS), 0);
+      return;
     }
+    if (this.sliceHandle !== null) {
+      if (!prompt || this.slicePrompt) return;
+      view.cancelIdleCallback(this.sliceHandle);
+    }
+    this.slicePrompt = prompt;
+    this.sliceHandle = view.requestIdleCallback(
+      (d) => {
+        this.sliceHandle = null;
+        this.runSlice(d.didTimeout ? STARVED_BUDGET_MS : Math.min(SLICE_BUDGET_MS, Math.max(1, d.timeRemaining())));
+      },
+      { timeout: prompt ? PROMPT_IDLE_TIMEOUT_MS : IDLE_TIMEOUT_MS },
+    );
+  }
+
+  /** The reader may see the next slice's result: a collect is due, or the queue's head is near the viewport. */
+  private promptNext(): boolean {
+    if (this.needCollect) return true;
+    const head = this.pending[0];
+    return !!head && !!this.deps.near?.isNear(head);
   }
 
   /**
@@ -600,13 +694,14 @@ export class Scanner {
     if (!this.active) {
       this.dropQueue();
       this.running = false;
+      this.releasing = false;
       this.settle();
       return;
     }
     const start = this.now();
     const carried = this.carried;
     this.carried = [];
-    for (const d of carried) this.applySafely(d);
+    this.applyAll(carried);
     const carriedMs = this.now() - start;
     let collected = false;
     let collectMs = 0;
@@ -615,9 +710,14 @@ export class Scanner {
       collected = true;
       const t0 = this.now();
       this.hider.prune();
+      const { trace } = this.deps;
+      trace?.sweep(t0);
+      const since = trace?.takeDirty(t0) ?? t0;
       for (const u of this.collectUnits()) {
         // Our own placeholder can match a unit selector (X's cells are bare divs).
-        if (!u.hasAttribute(PLACEHOLDER_ATTR)) this.enqueue(u);
+        if (u.hasAttribute(PLACEHOLDER_ATTR)) continue;
+        this.enqueue(u);
+        trace?.queued(u, since, t0, this.pending.length - 1);
       }
       collectMs = this.now() - t0;
       this.perf.collectMs += collectMs;
@@ -626,6 +726,7 @@ export class Scanner {
     const decisions: Decision[] = [];
     const decideStart = this.now();
     const decidedAtStart = this.perf.unitsDecided;
+    this.nearFirst();
     let i = 0;
     while (i < this.pending.length) {
       const elapsed = this.now() - start;
@@ -638,6 +739,7 @@ export class Scanner {
       }
       const unit = this.pending[i++] as Element;
       this.queued.delete(unit);
+      this.deps.near?.unwatch(unit);
       const decidedBefore = this.perf.unitsDecided;
       const t0 = this.now();
       const d = this.decideSafely(unit);
@@ -652,10 +754,14 @@ export class Scanner {
     const decideMs = this.now() - decideStart;
     // Writes: count against the budget too, and carry what does not fit.
     let applied = 0;
-    while (applied < decisions.length) {
-      this.applySafely(decisions[applied++] as Decision);
-      if (applied < decisions.length && this.now() - start >= budget) break;
-    }
+    const writes = () => {
+      while (applied < decisions.length) {
+        this.applySafely(decisions[applied++] as Decision);
+        if (applied < decisions.length && this.now() - start >= budget) break;
+      }
+    };
+    if (this.releasing && decisions.some((d) => !d.hide)) this.inPlace(writes);
+    else writes();
     if (applied < decisions.length) this.carried = decisions.slice(applied);
     const took = this.now() - start;
     this.perf.slices++;
@@ -678,11 +784,20 @@ export class Scanner {
       console.warn(`[sifter] slice took ${took.toFixed(1)} ms for ${i} units${collected ? ' (with collect)' : ''}`);
     }
     if (this.pending.length > 0 || this.carried.length > 0 || this.needCollect) {
-      this.idle((b) => this.runSlice(b));
+      this.nextSlice(this.promptNext() || (collected && this.pending.length > 0));
     } else {
       this.running = false;
+      this.releasing = false;
       this.settle();
     }
+  }
+
+  private applyAll(ds: Decision[]): void {
+    const writes = () => {
+      for (const d of ds) this.applySafely(d);
+    };
+    if (this.releasing && ds.some((d) => !d.hide)) this.inPlace(writes);
+    else writes();
   }
 
   /**
@@ -740,9 +855,10 @@ export class Scanner {
     if (!hasContent(unit)) {
       this.seen.delete(unit);
       this.perf.emptySkipped++;
+      this.deps.trace?.empty(unit);
       // It emptied after a hide (or a Show): release it, placeholder and all.
       if (!this.hider.isHidden(unit) && !this.userShown.has(unit)) return null;
-      return { unit, fp: prev?.fp ?? fingerprint(site, structuralKey(unit)), hide: null };
+      return { unit, fp: prev?.fp ?? fingerprint(site, structuralKey(unit)), hide: null, empty: true };
     }
 
     this.perf.unitsDecided++;
@@ -770,7 +886,8 @@ export class Scanner {
       });
       if (decision.action === 'hide') {
         const hint = cat === 'custom' ? ruleHint(block.selector) : suggestedHint(adapter, block.rule);
-        return { unit, fp, hide: decision.category, block: true, hint };
+        const why: HideWhy = { category: decision.category, rule: block.rule, kind: 'block', detail: block.selector };
+        return { unit, fp, hide: decision.category, block: true, hint, why };
       }
       return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;
     }
@@ -847,7 +964,9 @@ export class Scanner {
         decision.category === 'custom' && custom
           ? wordHint(custom)
           : (decision.category === 'suggested' ? suggestedHint(adapter, marker?.rule) : undefined) ?? firstHint(text);
-      return { unit, fp, hide: decision.category, hint };
+      const kind = decision.category === 'custom' && custom ? 'muted' : marker?.kind;
+      const why: HideWhy = { category: decision.category, rule: marker?.rule, kind, detail: safeDetail(kind, marker?.detail) };
+      return { unit, fp, hide: decision.category, hint, why };
     }
     return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;
   }
@@ -859,6 +978,7 @@ export class Scanner {
       if (d.hide) return; // stays shown (with its "Hide" bar) until the user hides it again
       // The user showed it, and this decision no longer hides it at all (its
       // category or rule went off): drop the "Showing…" bar and the record.
+      if (!this.releasing) this.deps.trace?.released(d.unit, this.now(), d.empty ? 'emptied' : 'redecided', true);
       this.userShown.delete(d.unit);
       this.hider.unhide(d.unit);
       this.hiddenFps.delete(d.fp);
@@ -866,11 +986,13 @@ export class Scanner {
       return;
     }
     if (d.hide) {
+      if (!this.hider.isHidden(d.unit)) this.deps.trace?.hid(d.unit, this.now(), d.why ?? { category: d.hide });
       this.hider.hide(d.unit, d.hide, d.hint);
       this.hiddenFps.set(d.fp, d.hide);
       if (d.block) this.blockHidden.set(d.unit, d.fp);
       else this.blockHidden.delete(d.unit);
     } else {
+      if (!this.releasing && this.hider.isHidden(d.unit)) this.deps.trace?.released(d.unit, this.now(), d.empty ? 'emptied' : 'redecided', false);
       this.hider.unhide(d.unit);
       this.hiddenFps.delete(d.fp);
       this.blockHidden.delete(d.unit);
@@ -886,6 +1008,7 @@ export class Scanner {
 
   private userShow(unit: Element): void {
     this.userShown.add(unit);
+    this.deps.trace?.shown(unit);
     const fp = this.seen.get(unit)?.fp;
     if (fp) this.hiddenFps.delete(fp);
     this.hider.show(unit);
@@ -894,6 +1017,7 @@ export class Scanner {
   /** "Hide" on a placeholder the user showed: puts the unit back into the count and the hidden state. */
   private userRehide(unit: Element): void {
     this.userShown.delete(unit);
+    this.deps.trace?.unshown(unit);
     const fp = this.seen.get(unit)?.fp;
     const category = this.hider.categoryOf(unit);
     if (fp && category) this.hiddenFps.set(fp, category);

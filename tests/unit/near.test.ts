@@ -184,6 +184,55 @@ describe('Scanner queue order', () => {
     }
   });
 
+  it('a queued unit coming near promotes a slice waiting the long timeout', () => {
+    document.head.innerHTML = `<style>${style}</style>`;
+    document.body.innerHTML = body;
+    const view = document.defaultView as Window & typeof globalThis;
+    const saved = { ric: view.requestIdleCallback, cic: view.cancelIdleCallback };
+    const waiting = new Map<number, { cb: IdleRequestCallback; timeout: number }>();
+    let id = 0;
+    view.requestIdleCallback = ((cb: IdleRequestCallback, o?: IdleRequestOptions) => {
+      waiting.set(++id, { cb, timeout: o?.timeout ?? 0 });
+      return id;
+    }) as typeof view.requestIdleCallback;
+    view.cancelIdleCallback = ((h: number) => void waiting.delete(h)) as typeof view.cancelIdleCallback;
+    try {
+      let t = 0;
+      const scanner = new Scanner({
+        doc: document,
+        hostname: 'www.linkedin.com',
+        baseUrl: 'https://www.linkedin.com/',
+        adapter: adapterFor('www.linkedin.com'),
+        context: defaultContext('linkedin.com'),
+        persistOverride: () => {},
+        now: () => (t += 5),
+        near: near(),
+      });
+      const timeouts = () => [...waiting.values()].map((w) => w.timeout);
+      const step = () => {
+        const [h, w] = [...waiting.entries()][0] as [number, { cb: IdleRequestCallback }];
+        waiting.delete(h);
+        w.cb({ didTimeout: true, timeRemaining: () => 0 });
+      };
+      scanner.scanNow();
+      step(); // collect
+      FakeIO.last.answer(() => false);
+      step();
+      expect(timeouts(), 'slices run, nothing near: the long timeout').toEqual([200]);
+      expect(FakeIO.last.observed.has(byKey('1006')), 'positive control: 1006 is still queued').toBe(true);
+      FakeIO.last.answer(() => false);
+      expect(timeouts(), 'control: nothing came near').toEqual([200]);
+      FakeIO.last.answer((el) => el === byKey('1006'));
+      expect(timeouts()).toEqual([50]);
+      expect(scanner.state().perf.approachPromotes).toBe(1);
+      step();
+      expect(byKey('1006').classList.contains(HIDDEN_CLASS), 'the near unit went first').toBe(true);
+    } finally {
+      view.requestIdleCallback = saved.ric;
+      view.cancelIdleCallback = saved.cic;
+    }
+  });
+
   it('still hides everything, near or not, once the queue drains', () => {
     const { step, tasks } = setup(true);
     step();

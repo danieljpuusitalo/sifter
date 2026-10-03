@@ -125,6 +125,8 @@ export type ScanPerf = {
   laneFrameOverBudget: number;
   /** Debounces cut short because a queued unit came within a screen of the reader. */
   approachScans: number;
+  /** Idle slices, waiting the long timeout, promoted because a queued unit came within a screen while slices ran. */
+  approachPromotes: number;
   /** Lane hides the full decision then disagreed with, released in place. Target 0: each is a rule-6 near miss. */
   laneReleases: number;
   laneMs: number;

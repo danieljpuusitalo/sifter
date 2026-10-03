@@ -89,7 +89,19 @@ off screen below mid-scroll, P2 decide before the screen, P3 widen the lane, P4 
     - `laneReleases` 0 in every run.
     - Visible moves follow the off-run's own pattern, the site's 250 px pairs about every 11 s: 4 on vs 10 off, then 10 on vs 14 off. The 2-3 blamed on `collapse:below` are blamed by time and coincide with those pairs.
   - **Facebook:** exposure 0 % of 14 (P4) and 0 % of 28 (P2); laneReleases 0.
-  - **`bench:scroll --cpu 1 --strict --browser <Edge>`, final build:** LinkedIn and Facebook both exit 0, with 0 shifts and 0 visible moves. A P4 run earlier the same day failed Facebook on `laneMaxMs` 2.1-2.3 against 2 ms; this run passed.
+  - **`bench:scroll --cpu 1 --strict --browser <Edge>`:**
+    - A first "exit 0 on both" was **vacuous**. At 30 fps (battery saver) the scripted scroll never reached the append threshold, so `cards` stayed at `--start` 150 and nothing new was added: no lane, no tag, no approach scan ran. **Check `cards` > `--start` before reading a pass.**
+    - Rerun with `--start 10`, so cards arrive during the scroll:
+      - LinkedIn: 10 of 10 hidden (9 below, the lane and frame continuation).
+      - Facebook: 11 of 11, rail included.
+      - Both: 0 shifts, 0 visible moves, frame p99 on equal to off.
+    - **Strict fails on both:** `laneMaxMs` 2.5 (LinkedIn run 1) and 2.9 (Facebook run 2) against 2 ms, on battery-throttled CPU. The limit was not moved.
+- **Audit (same day):**
+  - `approach()` acted only while the debounce was pending. Once slices ran, a queued unit coming near still waited the 200 ms idle timeout. It now promotes that slice (`approachPromotes`, test in `near.test.ts`, mutation-checked).
+  - **Live LinkedIn after the fix:** exposure 7.2 % (9 of 125). All 9 were overflow, queued off screen and on screen at the hide, with queue to hide p50 291 ms and max 794 ms (promotes: 1).
+  - **The floor is the idle slice.** Starved slices get 2 ms (`STARVED_BUDGET_MS`) while one decision costs up to 19.7 ms on LinkedIn, so a collect and a decision take separate slices, each at least 50 ms behind the site's long tasks.
+  - Going below about 300 ms needs near units decided in `requestAnimationFrame`, chained per frame while any are near. That amends hard rule 7, so it is **Daniel's call**.
+  - `exposure` counts an ad as readable if it was on screen at the hide. The readable time is at most `queueMs`; `waitMs` 0 is correct for units the lane queued.
 - **Open:**
   - **Frame p99 on vs off on live LinkedIn is unresolved.**
     - Runs: 233 vs 100 (P4), 600 vs 99 (P2), 383 vs 167 (P2 rerun).

@@ -478,7 +478,7 @@ async function runOnce(withExt: boolean) {
           maxDecideMs: +(after.maxDecideMs as number).toFixed(1),
           laneMaxMs: typeof after.laneMaxMs === 'number' ? +after.laneMaxMs.toFixed(2) : null,
           worstSlice: after.worstSlice ?? null,
-          late: Object.fromEntries(['hidesAtLoad', 'lateInView', 'lateFarBelow', 'tagsCollapsed', 'railCollapsed', 'belowCameNear', 'collapsedMidScroll', 'tagsScrolledIn', 'laneUnits', 'laneHits', 'laneAbstain', 'laneOverBudget', 'laneFrameHits', 'laneFrameOverBudget', 'approachScans', 'laneReleases', 'laneMs'].map((k) => [k, n(k)])),
+          late: Object.fromEntries(['hidesAtLoad', 'lateInView', 'lateFarBelow', 'tagsCollapsed', 'railCollapsed', 'belowCameNear', 'collapsedMidScroll', 'tagsScrolledIn', 'laneUnits', 'laneHits', 'laneAbstain', 'laneOverBudget', 'laneFrameHits', 'laneFrameOverBudget', 'approachScans', 'approachPromotes', 'laneReleases', 'laneMs'].map((k) => [k, n(k)])),
           exposure: exposure(n('laneHits'), n('tagsScrolledIn'), afterState?.trace ?? null),
           trace: afterState?.trace ?? null,
         }

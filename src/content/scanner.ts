@@ -173,6 +173,7 @@ const EMPTY_PERF: Omit<ScanPerf, 'pending' | keyof LateStats> = {
   laneFrameHits: 0,
   laneFrameOverBudget: 0,
   approachScans: 0,
+  approachPromotes: 0,
   laneReleases: 0,
   laneMs: 0,
   laneMaxMs: 0,
@@ -390,16 +391,26 @@ export class Scanner {
   }
 
   /**
-   * A queued unit came within a screen of the reader while the debounce still runs:
-   * scan now instead. The lane queues the units its budget cut (`laneContinue`), and a
-   * unit on screen at mutation time waited the whole debounce in the open: live
-   * LinkedIn, 2026-10-03, 6 of 108 hides were readable first, all lane overflow, for
-   * 375 ms p50 and 1.8 s at worst. Units far away keep the debounce.
+   * A queued unit came within a screen of the reader: decide it promptly. While the
+   * debounce still runs, scan now instead. The lane queues the units its budget cut
+   * (`laneContinue`), and a unit on screen at mutation time waited the whole debounce
+   * in the open: live LinkedIn, 2026-10-03, 6 of 108 hides were readable first, all
+   * lane overflow, for 375 ms p50 and 1.8 s at worst. Units far away keep the debounce.
+   * While slices already run, promote a slice waiting the long idle timeout: the queue
+   * puts the near unit first, but on a starved page each slice then waited 200 ms.
    */
   private approach(): void {
     const { near } = this.deps;
-    if (this.debounceTimer === null || !this.active || !near) return;
+    if (!this.active || !near) return;
+    if (this.debounceTimer === null && !this.running) return;
     if (!this.pending.some((u) => near.isNear(u))) return;
+    if (this.debounceTimer === null) {
+      if (this.sliceHandle !== null && !this.slicePrompt) {
+        this.perf.approachPromotes++;
+        this.nextSlice(true);
+      }
+      return;
+    }
     this.debounceTimer = null;
     this.perf.approachScans++;
     this.deps.trace?.due(this.now());

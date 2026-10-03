@@ -300,6 +300,7 @@ async function run(withExt: boolean) {
     laneFrameHits: d('laneFrameHits'),
     laneFrameOverBudget: d('laneFrameOverBudget'),
     approachScans: d('approachScans'),
+    approachPromotes: d('approachPromotes'),
     laneReleases: d('laneReleases'),
     laneMaxMs: after ? +after.perf.laneMaxMs.toFixed(2) : null,
     lateInView: d('lateInView'),

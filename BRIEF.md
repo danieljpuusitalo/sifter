@@ -42,7 +42,7 @@ In M0, copy this section verbatim into `CLAUDE.md` together with the dev command
 4. API keys live in `chrome.storage.local` and are read only in the service worker. Content scripts, popup and options never receive a stored key back after saving it. Never log keys.
 5. Never remove nodes from the page. Hide by adding a class and inline style to the unit root, so infinite scroll and site JS keep working. Every hide is reversible in one click.
 6. Precision over recall. Hiding a real post costs more trust than missing an ad. When the model is unsure, don't hide.
-7. Content script main-thread work stays under about 8 ms per mutation batch (measure with `performance.now()` in dev builds). Debounce mutation handling by 250 ms. Only send units to the model that are in or near the viewport.
+7. Content script main-thread work stays under about 8 ms per mutation batch (measure with `performance.now()` in dev builds). Debounce mutation handling by 250 ms, except the pre-paint lane: in the MutationObserver callback, before the browser paints, it looks only at units added whole in that batch, reads attributes and `textContent`, reads style only on a candidate label node (`checkVisibility`, plus a computed-style walk for a split or hidden word), and never reads layout. It is capped at 1 ms per batch (the first unit always fits) and leaves the rest to the debounced pass, which confirms or releases every lane hide. Only send units to the model that are in or near the viewport.
 8. All provider calls go through one interface and respect the daily budget.
 9. TypeScript strict. No `any` in `src/` outside typed boundary shims.
 10. `pnpm test` and `pnpm eval:mock` pass before a milestone is called done.

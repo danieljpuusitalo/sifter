@@ -462,8 +462,9 @@ async function runOnce(withExt: boolean) {
           scanMs: n('totalMs') === null ? null : +(n('totalMs') as number).toFixed(1),
           maxSliceMs: +(after.maxSliceMs as number).toFixed(1),
           maxDecideMs: +(after.maxDecideMs as number).toFixed(1),
+          laneMaxMs: typeof after.laneMaxMs === 'number' ? +after.laneMaxMs.toFixed(2) : null,
           worstSlice: after.worstSlice ?? null,
-          veil: Object.fromEntries(['hidesInView', 'hidesAbove', 'hidesBelow', 'veilsSettled', 'anchorCorrections', 'correctionMisses', 'maxCorrectionMissPx', 'correctionsClamped', 'correctionRetries', 'retryMisses', 'veilsPinned', 'veilsUnderTop', 'belowDeferred', 'belowCameInView'].map((k) => [k, n(k)])),
+          late: Object.fromEntries(['hidesAtLoad', 'lateInView', 'lateFarBelow', 'tagsCollapsed', 'railCollapsed', 'belowCameNear', 'laneUnits', 'laneHits', 'laneAbstain', 'laneOverBudget', 'laneReleases', 'laneMs'].map((k) => [k, n(k)])),
           trace: afterState?.trace ?? null,
         }
       : null;

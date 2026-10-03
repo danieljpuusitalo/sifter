@@ -137,7 +137,7 @@ export function summariseStability(raw: StabRaw | null, since = 0) {
   const events = [
     ...hides.map((h) => ({ ...h, kind: 'hide' })),
     ...releases.map((h) => ({ ...h, kind: 'release' })),
-    // A veiled hide changes height only when it collapses, off screen and later than the hide.
+    // A late catch is tagged and changes no height; it collapses only far off screen, later than the hide.
     ...collapses.map((h) => ({ ...h, kind: 'collapse' })),
   ].sort((a, b) => a.t - b.t);
   const blame: Record<string, { n: number; px: number }> = {};

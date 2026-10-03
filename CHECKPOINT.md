@@ -1,5 +1,52 @@
 # Sifter checkpoint
 
+**Session 18 (2026-10-03, branch `feat/prepaint`): hide before paint, never move what
+the reader can see.** Daniel on the merged #23-#28 build in Chrome: "still very jumpy
+... posts occasionally get hidden but create an empty space between posts that
+disappears when i scroll past ... no one will want to use this solution if it makes
+their scrolling buggy." Sessions 15-17 had patched the veil and the scroll corrections;
+this session removes both. Plan: `~/.claude/plans/memoized-tumbling-beacon.md`.
+
+- **Pre-paint lane** (`Scanner.prepaint`, adapter field `prepaint: true` on LinkedIn and
+  Facebook): a unit born whole in a mutation batch with its marker already in it is hidden
+  in the MutationObserver callback, before the first paint. The debounced `decide()`
+  confirms every lane hide or releases it in place (`laneReleases`, target 0).
+  Hard rule 7 is amended to allow it (CLAUDE.md and BRIEF.md §3).
+- **Tag instead of veil** (Daniel's choice, 2026-10-03): a hide decided after the post
+  painted leaves it in place with a zero-height "Sponsored · Hide" bar. It is not counted
+  as hidden. `viewport.ts` keeps three rules only: the load grace, far below (two screens,
+  fresh rect, still frame), and the pinned side rail. The veil, every above-screen
+  collapse and every `scrollBy` correction for a hide are gone. A pause, Show all or a
+  switch turned off still releases anchored.
+- **A hide made by a user-started pass** (switch, re-decide, in-app navigation) applies at
+  once under `keepInPlace`; an existing tag stays a tag.
+- **Receipts:**
+  - `pnpm verify`: 413 passed, 5 skipped; tp=62 fp=0 fn=0.
+  - `pnpm test:e2e`: 41 passed, 1 skipped. Includes the never-painted oracle
+    (`tests/e2e/prepaint.spec.ts`: 0 bare frames over 6 mid-scroll insertions) and its
+    negative control (cards filled a frame after mounting: the oracle sees them drawn, the
+    lane hits 0, the late path tags every one).
+  - `bench:scroll --cpu 1 --strict` in emulated Chromium: fails on `laneMaxMs` (3.7-14 ms,
+    noisy). In native Edge (`--browser`, new this session), 3 runs per site: 0 shifts and
+    0 visible moves on both; frame p99 on equal to off. LinkedIn exit 0 (`laneMaxMs`
+    1.3-1.6). **Facebook exit 1: run 2 of 3 had `laneMaxMs` 2.7 ms against the 2 ms limit.**
+    The limit was not moved.
+  - `bench:live` native Edge, real feeds, `--mode both`. **LinkedIn:** 9 hides; lane 4,
+    tagged in view 2, collapsed far below 3. Visible moves: 4 on, all blamed on the site
+    (250 px each, same as the off-run's 8); Sifter-caused 0. `laneOverBudget` 7,
+    `laneMaxMs` 1.7, releases 0. **Facebook:** 1 hide only in the window, lane 0 hits:
+    too thin to judge the lane there. 0 moves on.
+- **Open:**
+  - **Live acceptance in Daniel's Chrome.** The P0 recorder was not run before the change,
+    so there is no before number from his browser. The build is in `~/sifter-v1.0.0` and
+    needs his reload and his scroll.
+  - **The lane often goes over 1 ms on its first unit** (LinkedIn live: 7 over-budget
+    batches against 4 hits). The likely cost is the style recalc that `checkVisibility`
+    forces on a freshly inserted subtree; the browser would pay that before paint anyway,
+    but it is billed to the lane. Not profiled yet.
+  - **Facebook's lane share is unknown.** One live hide is not a sample; run longer with
+    `--suggested`.
+
 **Session 17 (2026-10-01): Daniel's live report on the PR #23 build, nine issues.
 Three stacked PRs, all open, none merged: #24 (`fix/live-report`, on #23), #25
 (`fix/live-measure`, on #24), #26 (`fix/fb-stories-in-feed`, on #25).** Merge in that
@@ -649,13 +696,15 @@ path is still unverified live (no sponsored feed post appeared this session eith
 
 ## Do not undo
 
-- **A below report never collapses a unit by itself:** every one waits for `lookBelow`'s fresh rect in the flush. A long site task holds scroll events back, so "not scrolling" can be false while the compositor scrolls (881 px, 2026-10-01; `belowCameInView` counts the jumps this prevents).
+- **The pre-paint lane looks only at units born in the batch** (session 18, `bornUnits`): an added root or a unit inside one. A unit reached by `closest()` from a changed node was already painted, and hiding it there is the old jump. It reads no layout, honours overrides, off rules, `covers` and `suggestedPaths`, and every hit is confirmed by `decide()`. `tests/unit/prepaint.test.ts` (with a parity run over every public fixture).
+- **The lane's first record and first unit always fit the 1 ms cap** (session 18): the cap is asked before every further one. Asking first let one slow clock read skip whole batches (51 bare frames in the e2e oracle).
+- **A hide from a user-started pass applies at once, an existing tag stays a tag** (session 18, `changesHeight` in `scanner.ts`): the reader asked for the change, and `keepInPlace` holds the screen.
+- **A below report never collapses a unit by itself:** every one waits for a fresh rect in the tracker's still-frame flush, and collapses only at two screens or more below. A long site task holds scroll events back, so "not scrolling" can be false while the compositor scrolls (881 px, 2026-10-01; `belowCameInView` counts the jumps this prevents).
 - **One slice chain, prompt only when the reader may see the result:** `nextSlice(prompt)` in `scanner.ts`. Two chains would double the per-frame cost. A 50 ms timeout for everything would bill idle-less slices to LinkedIn's scroll.
 
-- **Veil clip reaches depth 3:** `clip-path` does nothing to a `display: contents` box (LinkedIn wraps every post in one). The e2e paint probe guards it.
 - **Pinned means a fixed or sticky side column, at the first look:** never "it stayed put through a scroll" (a correction scroll leaves every feed card put), never "its box fits the window" (a full-width fixed feed box fits). `sideColumnOf()` in `viewport.ts`.
 - **The tracker flush waits two frames after `scrollend`:** one frame paints the collapse with the scroll, as a layout shift.
-- **The tracker pinned-box style walk** is the one `getComputedStyle` outside `decide()`: idle flush only, once per on-screen veil, never mid-scroll.
+- **The tracker pinned-box style walk** is a `getComputedStyle` outside `decide()`: idle flush only, once per tag at its first look on screen, never mid-scroll. (The lane's label reads are the other, under amended rule 7.)
 - **`renderedWithin` in `src/extract.ts`:** innerText returns the full text of an element that is itself `display:none`.
 - **`renderedText`, not innerText, for labels:** innerText forces whole-page layout mid-scroll.
 - **`hasContent` guard at the top of `decide()`:** a unit with no text, media or link is never hidden, whatever marks it, and is released if it empties after a hide. Google serves `#tads`/`#atvcap`/`#bottomads` empty on no-ads pages; without the guard each one got a "Hidden" row over nothing (live report, 2026-09-27). It keeps no `seen` record, so an image-only fill is still decided. `tests/unit/empty-shell.test.ts` + the e2e case in `google-late.spec.ts`.
@@ -680,17 +729,14 @@ path is still unverified live (no sponsored feed post appeared this session eith
 - **`changeSignature` must equal hashing `stableText`** (session 11): it is a one-pass rewrite, pinned by `tests/unit/change-signature.test.ts` (5000 seeded random strings plus hand cases).
 - **Slice budget is 4 ms, not 8** (session 11): `HARD_RULE_MS` stays 8 for the over-budget counter. `DECIDE_COST_PRIOR_MS` (1) keeps the first slice after load from running cold code to an overrun.
 - **`decide()` and `apply()` run through `decideSafely`/`applySafely`**: a throw inside one unit must not leave `running` true with no scan scheduled.
-- **A hide in view is a veil, not a collapse** (session 15): the veil is `clip-path` on the unit's children because `renderedWithin`/`renderedText`/`checkVisibility` ignore clip-path, so a rescan reads a veiled unit as the site built it. Never "simplify" it to `visibility` or `opacity`. While veiled (and always in blur mode) the placeholder host is `display:flow-root; height:0`, so the bar adds no height. `tests/unit/hider-veil.test.ts`, `tests/e2e/stability.spec.ts`.
+- **A hide decided after paint is a tag, not a collapse and not a veil** (session 18): the post keeps its place under a zero-height "Sponsored · Hide" bar. The veil (sessions 15-17) left the blank gaps Daniel reported; every collapse above or on screen moved the feed, however it was timed. Never bring back an automatic collapse on or above the screen, or a `scrollBy` to hide one. `tests/unit/hider-tag.test.ts`, `tests/e2e/stability.spec.ts`.
 - **Zones must allow for the scroller's clipping** (session 15, `zoneOf` in `src/content/viewport.ts`): not intersecting is not outside the window. A feed that scrolls inside an element clips cards behind its header while their boxes still reach into the window; place them by the window's middle. `tests/unit/viewport-zone.test.ts` and the clipped-element e2e variant.
-- **Above-screen collapses wait for `scrollend` and correct with `scrollBy` in the same task** (session 15): never mid-gesture, and never left to Chrome's anchoring, which lands later and is off in element scrollers that set `overflow-anchor: none` or move their own slots.
 - **A rule's `covers`** (session 17): an off rule that matches a unit silences the rules its signal brings along (LinkedIn `activity` covers `follow`). Without it, switching "network liked" off just re-hides the post as "don't follow".
-- **Load grace before veils** (session 17, `LOAD_GRACE_MS`): until the first gesture, a hide collapses at once. Nothing anchors the reader yet, and a veil at load is a hole at the top (Google `#tads`).
+- **Load grace before tags** (session 17, `LOAD_GRACE_MS`): until the first gesture or scroll, a hide collapses at once. Nothing anchors the reader yet (Google `#tads`, `google-late.spec.ts`).
 - **Anchored releases** (session 17, `Scanner.anchored`): pause, Show all and a switch turned off correct the scroll on the first visible unit that is not changing. Unanchored, every hidden post above the screen expands under the reader.
 - **Popup broadcast debounce 500 ms** (session 17): rapid toggling becomes one re-decide.
 - **Muted words autosave** (session 17): a typed word lost on navigation read as "muted words don't work".
 - **Tracing is gated** (session 17, `src/content/trace.ts`): only dev and `SIFTER_TRACE=1` builds record latency and flips. A release build must not contain it (grep `enteredWhileQueued` in the built `content.js`: 0).
 - **Near-first decide queue** (session 17, `src/content/near.ts`): units within a screen of the viewport are decided first. Most mid-scroll in-view hides had entered the screen while queued.
-- **An under-top veil settles only when ≤ 48 px of it is still below the top edge** (session 17, `UNDER_TOP_VISIBLE_PX`): the correction is on the unit's bottom edge, so collapsing a mostly visible tall veil slides the post above it down by its whole height (the 855/869 px live jumps). Never "simplify" it back to "top went under the edge".
-- **Below-deferral and the correction retry** (session 17): a unit reported below mid-scroll is re-checked after `scrollend` (IntersectionObserver reports go stale on a busy page). A missed correction is retried once, but never when the scroller was clamped.
 - **The Facebook `stories` selector needs the `role=region`:** a bare `/stories/` link matches every post whose author has a story (19 of 19 posts in the capture).
 - **`release.yml` matches the CHANGELOG heading with `index()`, not a regex.** `## [x.y.z]` as an awk regex is a character class and never matches; this failed the first `v1.0.0` run after every test had passed.

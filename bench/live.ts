@@ -607,6 +607,9 @@ async function runOnce(withExt: boolean) {
           maxSliceMs: +(after.maxSliceMs as number).toFixed(1),
           maxDecideMs: +(after.maxDecideMs as number).toFixed(1),
           laneMaxMs: typeof after.laneMaxMs === 'number' ? +after.laneMaxMs.toFixed(2) : null,
+          // Label nodes that paid a style read vs settled on raw text (src/extract.ts readLabel).
+          labelStyleReads: n('labelStyleReads'),
+          labelReadsSkipped: n('labelReadsSkipped'),
           worstSlice: after.worstSlice ?? null,
           late: Object.fromEntries(['hidesAtLoad', 'lateInView', 'lateFarBelow', 'tagsCollapsed', 'railCollapsed', 'belowCameNear', 'collapsedMidScroll', 'tagsScrolledIn', 'laneUnits', 'laneHits', 'laneAbstain', 'laneOverBudget', 'laneFrameHits', 'laneFrameOverBudget', 'approachScans', 'approachPromotes', 'laneReleases', 'laneMs'].map((k) => [k, n(k)])),
           exposure: exposure(n('laneHits'), n('tagsScrolledIn'), afterState?.trace ?? null),

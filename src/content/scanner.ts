@@ -1,6 +1,6 @@
 import { findGenericUnits, innermost } from '../adapters/generic';
 import type { Adapter } from '../adapters/schema';
-import { detectMarker, hasContent, mutedWordRendered, unitText } from '../extract';
+import { detectMarker, hasContent, labelReadCounts, mutedWordRendered, unitText } from '../extract';
 import { changeSignature, fingerprint } from '../fingerprint';
 import type { PageState, ScanPerf, SiteContext } from '../messages';
 import { mutedWordHit, mutedWordPattern, tooBroad } from '../rules/filters';
@@ -151,7 +151,10 @@ function suggestedHint(adapter: Adapter | null, rule: string | undefined): strin
   return label ? label.slice(0, MAX_HINT) : undefined;
 }
 
-const EMPTY_PERF: Omit<ScanPerf, 'pending' | keyof LateStats> = {
+/** The counters a scanner keeps itself; the rest of ScanPerf is read at snapshot time. */
+type OwnPerf = Omit<ScanPerf, 'pending' | 'labelStyleReads' | 'labelReadsSkipped' | keyof LateStats>;
+
+const EMPTY_PERF: OwnPerf = {
   scans: 0,
   fullScans: 0,
   unitsExamined: 0,
@@ -213,7 +216,7 @@ export class Scanner {
   private touched = new Set<Node>();
   private added = new Set<Element>();
   private needFull = true;
-  private perf: Omit<ScanPerf, 'pending' | keyof LateStats> = { ...EMPTY_PERF };
+  private perf: OwnPerf = { ...EMPTY_PERF };
   private ctx: SiteContext;
   /** Blocks in force for the current context. */
   private blocks: Block[] = [];
@@ -522,7 +525,13 @@ export class Scanner {
       hiddenNow: this.hider.hiddenUnits().length,
       settled: !this.running && this.debounceTimer === null,
       noUnitsMatched: this.noUnitsMatched,
-      perf: { ...this.perf, ...(this.late?.stats() ?? EMPTY_LATE_STATS), pending: this.pending.length + this.carried.length },
+      perf: {
+        ...this.perf,
+        ...(this.late?.stats() ?? EMPTY_LATE_STATS),
+        pending: this.pending.length + this.carried.length,
+        labelStyleReads: labelReadCounts.styled,
+        labelReadsSkipped: labelReadCounts.skipped,
+      },
       ...(this.deps.trace ? { trace: this.deps.trace.stats() } : {}),
     };
   }

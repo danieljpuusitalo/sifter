@@ -132,6 +132,10 @@ export type ScanPerf = {
   laneMs: number;
   /** The lane's longest single batch. `resetPerfPeaks` zeroes it. */
   laneMaxMs: number;
+  /** Label nodes that paid a style read (checkVisibility, or the computed-style walk): each can force the page's pending style recalc. Page-wide, cumulative. */
+  labelStyleReads: number;
+  /** Label nodes settled on raw text, with no style read. Page-wide, cumulative. */
+  labelReadsSkipped: number;
 } & LateStats;
 
 export function isBgRequest(m: unknown): m is BgRequest {

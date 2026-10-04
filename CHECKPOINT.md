@@ -33,16 +33,41 @@ up "something loads, things disappear, more loads", with lag.
     run still fails. Phase 1 deletes that line.
   - The assertion counts both blame buckets. Time-window blame mis-filed a second Sifter
     jump as "site" at 900 px height.
-- **Live runs: NOT done.** The laptop was on battery (`PowerLineStatus Offline`). Edge and
-  `.dev-profile-edge` are present, and the session cookie name is in the profile; the
-  login itself is not confirmed. The wheel paths were smoke-tested on the synthetic
-  fixture only.
-- **Open, before Phase 1:** plugged in, run
-  `SIFTER_TRACE=1 pnpm build && pnpm bench:live --site linkedin --probe --pattern <down|up|reverse>`
-  (both modes), then `pnpm build`.
-  - It must reproduce the symptoms live. The plan says not to proceed on inference.
-  - It must answer: is `componentkey` stable across a live re-mount (it's stable on the
-    fixture by construction, so that proves nothing), and are appends only ever at the end?
+- **Live runs (2026-10-04, plugged in, native Edge, logged in: every run landed on
+  `/feed/` with a first post, scrolled 33 120 px; `SIFTER_TRACE` build, rebuilt plain
+  after).** Probe runs, off and on: down x2, up x2, reverse x2, plus one 60 s up (98 400 px).
+  Timing runs without the probe: 3 per pattern, off and on.
+  - **The symptoms did not reproduce.** 0 on-screen residual jumps, on or off, in every
+    probe run. The probe is live-controlled: on every moving frame, Δtop cancels ΔscrollTop
+    exactly (|R| > 1 px: 0 of 276-820 moving frames per run).
+  - **LinkedIn did not virtualise.** Zero re-mounts (probe and tracer), 0 reattached, and
+    units only accumulate (up to 152 on the 60 s run). The fixture's mechanism (re-mount at
+    another height) never had a chance to run. `test.fail` in `virtual.spec.ts` guards a
+    mechanism not yet seen live.
+  - `componentkey`: present on every born unit (tracer `unkeyed` 0). Stable across a
+    re-mount: **unmeasured**, since none happened. Appends: always last in DOM order
+    (`newNotAtEnd` 0 of 42-60 per down run, 20-30 per reverse run).
+  - Sifter's height writes: every one landed **below** the screen (lane 4-16 and farBelow
+    0-2 per run). `keepInPlace` 0, `classesVanished` 0, releases 0.
+  - **Collapse-below adds feed loads.** Same distance, more loads with Sifter on: down 12/12
+    vs 9/9, reverse 6/5 vs 4/4. Inferred mechanism: collapsed heights shorten the feed, so
+    the end is reached sooner.
+  - **Timing (trace build, so Sifter's ms include the tracer):**
+    - **Down, frame p99:** 108 / 117 / 133 ms on vs 83 / 84 / 83 off, with over 50 ms
+      frames 63-79 vs 35-55.
+    - **Reverse and up, frame p99:** about 50 ms on vs 33-50 off.
+    - **Sifter's own cost:** 7.1-7.8 ms/s down, 4.3-6.8 reverse, 2.8-3.6 up.
+    - **Outliers:**
+      - `markContents` 11.6-28.5 ms in 1-2 calls (one per late tag);
+      - single `onMutations` calls of 20-23 ms;
+      - forced style inside Sifter 20-47 ms per down run;
+      - `laneMaxMs` 2.1-6.2.
+- **Open, before Phase 1:** reproduce Daniel's conditions, not the bench's. Use Chrome, a
+  release build, his window size, a real trackpad, longer sessions, and back-navigation
+  into the feed. Mount memory fixes a mechanism LinkedIn did not show here. The measured
+  costs are real candidates: `markContents`, `onMutations` outliers, extra loads, and the
+  lane running over 1 ms.
+  - Unexplained: the 60 s up on-run ended with 0 hidden units (20 s runs: 15-19).
 
 **Session 18c (2026-10-04, branch `feat/prepaint`): blur through `display: contents`,
 menu error.** Daniel in Chrome on the 18b build: "some posts are not hidden, while their

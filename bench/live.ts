@@ -136,7 +136,13 @@ async function setSuggested(context: BrowserContext, value: boolean): Promise<vo
   if (context.serviceWorkers().length === 0) await context.waitForEvent('serviceworker', { timeout: 10000 });
   const id = new URL(context.serviceWorkers()[0]!.url()).host;
   const opt = await context.newPage();
-  await opt.goto(`chrome-extension://${id}/options.html`);
+  // The first-install options tab can navigate to the same URL at the same moment, and
+  // Playwright then rejects this goto as "interrupted" (2 of 15 runs, 2026-10-04): the
+  // page still lands on options.html, so wait for that instead of failing the run.
+  await opt.goto(`chrome-extension://${id}/options.html`).catch(async (e: Error) => {
+    if (!/interrupted by another navigation/.test(e.message)) throw e;
+    await opt.waitForLoadState('load');
+  });
   await opt.evaluate(async (v) => {
     const rt = (globalThis as unknown as { chrome: { runtime: { sendMessage(m: unknown): Promise<unknown> } } }).chrome.runtime;
     await rt.sendMessage({ type: 'sifter:setCategory', category: 'suggested', value: v });
@@ -484,6 +490,13 @@ async function runOnce(withExt: boolean) {
       return { firstPost: f?.firstPost ?? null, lcp: f?.lcp ?? null, fcp };
     });
     const ms = (x: number | null) => (x === null ? null : Math.round(x));
+    // Logged out, the feed URL redirects (LinkedIn: /login, /authwall) and no post ever appears.
+    // The path only: a query string can carry identifiers.
+    const landed = new URL(page.url()).pathname;
+    if (new URL(URLS[SITE] ?? SITE).pathname !== landed || feed.firstPost === null) {
+      console.error(`[live] feed did not load logged-in (landed on ${landed}, firstPost ${feed.firstPost}): this run measures nothing`);
+      process.exitCode = 1;
+    }
     for (const p of context.pages()) if (p !== page) await p.close();
     await page.bringToFront();
     await page.waitForTimeout(3000);
@@ -512,6 +525,7 @@ async function runOnce(withExt: boolean) {
     const t0 = await page.evaluate(() => performance.now());
     const load = {
       seconds: LOAD_SECONDS,
+      landed,
       firstPostMs: ms(feed.firstPost),
       fcpMs: ms(feed.fcp),
       lcpMs: ms(feed.lcp),

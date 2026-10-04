@@ -869,7 +869,12 @@ export class Scanner {
       if (this.perf.unitsDecided > decidedBefore) {
         const cost = this.now() - t0;
         this.perf.maxDecideMs = Math.max(this.perf.maxDecideMs, cost);
-        this.decideCostMs = this.decideCostMs * 0.7 + cost * 0.3;
+        // One sample counts for at most a whole slice: on a live feed a decision
+        // that collection lands in (a 25 ms MajorGC, 2026-10-04) says nothing about
+        // the next unit, and unclamped it held the estimate past the budget for
+        // several slices, one unit each. A steady cost at or past the budget still
+        // reads as a full slice per unit, as before.
+        this.decideCostMs = this.decideCostMs * 0.7 + Math.min(cost, SLICE_BUDGET_MS) * 0.3;
       }
       if (d) decisions.push(d);
     }

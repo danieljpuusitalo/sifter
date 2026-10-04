@@ -1,5 +1,49 @@
 # Sifter checkpoint
 
+**Scroll stability, Phase 0 (2026-10-04, branch `perf/scroll-stability`, from
+`feat/prepaint` 9446f6a): measure, no behaviour change.** Plan:
+`~/.claude/plans/toasty-spinning-sketch.md`. Daniel: posts bounce scrolling down; scrolling
+up "something loads, things disappear, more loads", with lag.
+
+- **Built:**
+  - `bench/probe.ts`: a main-world rAF probe. Per frame it reads the scroller's
+    scrollTop and scrollHeight and each unit's top, then reports:
+    - residual R and visible V (exact, when the probe drives the scroll), by blame;
+    - re-mounts and height flips;
+    - `componentkey` survival;
+    - appends and feed loads.
+
+    It reads layout every frame: bench only.
+  - `fixtures/public/linkedin-virtual.html`: inner scroller, unmount and re-create, slots
+    at their last height, shell ads whose label fills 2 frames late, posts that grow, and
+    a sentinel loader.
+  - `bench:scroll --virtual [--pattern all|down|up|reverse]`.
+  - `bench:live --pattern down|up|reverse|fling --probe`: fails a run whose distance is 0.
+  - `SIFTER_TRACE` attribution: height writes by path and zone, `keepInPlace` scrolls,
+    re-mounts and flips, `classesVanished`, cost counters.
+  - The `Tracer.pending` leak fix.
+  - Release bundle: 0 hits for the trace strings.
+- **Negative control:** `tests/e2e/virtual.spec.ts`. The off-run holds still (0 visible
+  jumps over 900 measured frames). On current code, the on-run fails every run (9 so
+  far), the same way each time its numbers were printed: one frame, +405 px, scrolling up,
+  `remountJump=1`.
+  - Mechanism: an ad collapsed far below was unmounted with a collapsed-height slot. It
+    came back whole as a shell the lane can't read yet, so at full height.
+  - The test is landed as `test.fail()`, called *after* the positive controls so a vacuous
+    run still fails. Phase 1 deletes that line.
+  - The assertion counts both blame buckets. Time-window blame mis-filed a second Sifter
+    jump as "site" at 900 px height.
+- **Live runs: NOT done.** The laptop was on battery (`PowerLineStatus Offline`). Edge and
+  `.dev-profile-edge` are present, and the session cookie name is in the profile; the
+  login itself is not confirmed. The wheel paths were smoke-tested on the synthetic
+  fixture only.
+- **Open, before Phase 1:** plugged in, run
+  `SIFTER_TRACE=1 pnpm build && pnpm bench:live --site linkedin --probe --pattern <down|up|reverse>`
+  (both modes), then `pnpm build`.
+  - It must reproduce the symptoms live. The plan says not to proceed on inference.
+  - It must answer: is `componentkey` stable across a live re-mount (it's stable on the
+    fixture by construction, so that proves nothing), and are appends only ever at the end?
+
 **Session 18c (2026-10-04, branch `feat/prepaint`): blur through `display: contents`,
 menu error.** Daniel in Chrome on the 18b build: "some posts are not hidden, while their
 comment sections are sensored", and an error on the extensions page.

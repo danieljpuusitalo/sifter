@@ -1,6 +1,7 @@
 import { createWriteStream, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { chromium, type BrowserContext, type CDPSession, type Page } from '@playwright/test';
+import { PROBE_SCRIPT, summariseProbe, wheelPlan, type Pattern, type ProbeRaw } from './probe';
 import { STABILITY_PROBE, summariseStability, type StabRaw } from './stability';
 
 // Live-site cost trace (hard rule 7, measured where it matters).
@@ -26,6 +27,17 @@ import { STABILITY_PROBE, summariseStability, type StabRaw } from './stability';
 // reports hide latency (content to hide, split by where the post was) and flips
 // (a hide let go by no choice of the user's), for the load and for the scroll.
 // A plain `pnpm build` leaves those out; rebuild normally afterwards either way.
+//
+// `--pattern down|up|reverse|fling` (default down) picks the wheel plan (bench/probe.ts
+// `wheelPlan`). `up` scrolls down for the same time first, outside the measured window,
+// then measures the way back. Every run reports the distance the feed actually scrolled,
+// and a run that did not move fails (exit 1): a scroll that never landed measures nothing.
+// `--probe` adds the scroll-stability probe (bench/probe.ts) on the site's scroller
+// (`<main>` on LinkedIn, else the document): residual jumps by blame, re-mounts, whether
+// `componentkey` survives one, and appends. Its raw rows (hashes and counts) go to TEMP
+// with the traces; the summary is counts only. With SIFTER_TRACE=1 the scanner's own
+// attribution (height writes by path and zone, keepInPlace scrolls) is reported too, and
+// its scroll corrections let the probe tell a corrected residual from a visible one.
 //
 // Local only: needs the logged-in `.dev-profile-edge` (gitignored) and closes any
 // window on it first. Writes a summary with counts and timings only, never page
@@ -53,6 +65,15 @@ const PROFILE = resolve(arg('user-data', '.dev-profile-edge'));
 const EDGE = arg('browser', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe');
 const EXT = resolve(arg('ext', '.output/chrome-mv3'));
 const TRACE_DIR = arg('trace-dir', join(process.env.TEMP ?? '.', 'sifter-traces'));
+const PATTERNS: readonly Pattern[] = ['down', 'up', 'reverse', 'fling'];
+const PATTERN = arg('pattern', 'down') as Pattern;
+if (!PATTERNS.includes(PATTERN)) {
+  console.error(`unknown --pattern ${PATTERN}; one of ${PATTERNS.join(', ')}`);
+  process.exit(2);
+}
+const PROBE = process.argv.includes('--probe');
+/** The feed's own scroller, where the site has one; the probe falls back to the document. */
+const SCROLLERS: Record<string, string> = { linkedin: 'main' };
 
 const URLS: Record<string, string> = {
   linkedin: 'https://www.linkedin.com/feed/',
@@ -140,17 +161,39 @@ async function recordTrace(cdp: CDPSession, file: string, run: () => Promise<voi
   await new Promise<void>((r) => out.end(r));
 }
 
-/** A person flicking through a feed: wheel ticks in bursts, short pauses to read. */
-async function humanScroll(page: Page, seconds: number): Promise<void> {
+/** A person flicking through a feed: wheel ticks in bursts, short pauses to read (see `wheelPlan`). */
+async function humanScroll(page: Page, pattern: Pattern, seconds: number): Promise<void> {
   await page.mouse.move(700, 500);
-  const end = Date.now() + seconds * 1000;
-  let burst = 0;
-  while (Date.now() < end) {
-    await page.mouse.wheel(0, 120);
-    await page.waitForTimeout(40);
-    if (++burst % 12 === 0) await page.waitForTimeout(400);
+  for (const [dy, wait] of wheelPlan(pattern, seconds)) {
+    if (dy) await page.mouse.wheel(0, dy);
+    await page.waitForTimeout(wait);
   }
 }
+
+/**
+ * How far the page actually scrolled, any scroller: |Δ scrollTop| summed per element from
+ * scroll events (they don't bubble, but a capturing listener on the window sees them).
+ */
+const DISTANCE_PROBE = `
+  window.__dist = { down: 0, up: 0 };
+  (() => {
+    const last = new WeakMap();
+    const seed = (el) => { if (el && !last.has(el)) last.set(el, el.scrollTop); };
+    seed(document.scrollingElement);
+    for (const el of document.querySelectorAll('main')) seed(el);
+    addEventListener('scroll', (e) => {
+      const el = e.target === document ? document.scrollingElement : e.target;
+      if (!(el instanceof Element)) return;
+      const before = last.has(el) ? last.get(el) : el.scrollTop;
+      const d = el.scrollTop - before;
+      last.set(el, el.scrollTop);
+      if (d > 0) window.__dist.down += d; else window.__dist.up -= d;
+    }, { capture: true, passive: true });
+  })();
+`;
+/** Only inside `page.evaluate`: the probe that PROBE_SCRIPT installed. */
+declare const __sifterProbe: { start(c: unknown): void; reset(): void; stop(): ProbeRaw };
+declare const __dist: { down: number; up: number };
 
 type ProfNode = { id: number; parent?: number; callFrame: { functionName: string; url: string; lineNumber: number }; children?: number[] };
 type Profile = { nodes: ProfNode[]; samples: number[]; timeDeltas: number[] };
@@ -446,11 +489,27 @@ async function runOnce(withExt: boolean) {
     await page.waitForTimeout(3000);
     await page.evaluate(FRAME_PROBE);
     await page.evaluate(STABILITY_PROBE);
-    const t0 = await page.evaluate(() => performance.now());
+    await page.evaluate(DISTANCE_PROBE);
+    if (PROBE) {
+      await page.evaluate(PROBE_SCRIPT);
+      await page.evaluate((c) => __sifterProbe.start(c), { unitSelector: unitSelector(), scrollerSelector: SCROLLERS[SITE] ?? null });
+    }
     const file = join(TRACE_DIR, `${stamp}.json`);
     // The load's latency and flips, read before the reset starts the scroll window.
     const atLoad = withExt ? await scannerState(context, 'sifter:getPageState') : null;
     if (withExt && !atLoad?.trace) console.warn('[live] no hide trace: build with SIFTER_TRACE=1 for latency and flips');
+    if (PATTERN === 'up') {
+      // Something above to come back to: the same time scrolling down, outside the window.
+      await humanScroll(page, 'down', SECONDS);
+      await page.waitForTimeout(1500);
+      await page.evaluate(() => {
+        __dist.down = 0;
+        __dist.up = 0;
+        (window as unknown as { __frames: number[] }).__frames.length = 0;
+      });
+      if (PROBE) await page.evaluate(() => __sifterProbe.reset());
+    }
+    const t0 = await page.evaluate(() => performance.now());
     const load = {
       seconds: LOAD_SECONDS,
       firstPostMs: ms(feed.firstPost),
@@ -464,9 +523,24 @@ async function runOnce(withExt: boolean) {
     };
     // Counters over the scroll only: peaks (and the trace) reset after the load-time scan.
     const before = withExt ? ((await scannerState(context, 'sifter:resetPerfPeaks'))?.perf ?? null) : null;
-    await recordTrace(cdp, file, () => humanScroll(page, SECONDS));
+    await recordTrace(cdp, file, () => humanScroll(page, PATTERN, SECONDS));
     const afterState = withExt ? await scannerState(context, 'sifter:getPageState') : null;
     const after = afterState?.perf ?? null;
+    const dist = await page.evaluate(() => ({ down: Math.round(__dist.down), up: Math.round(__dist.up) }));
+    const distance = { total: dist.down + dist.up, ...dist };
+    if (distance.total === 0) {
+      console.error(`[live] ${withExt ? 'on' : 'off'}-run did not scroll (distance 0): the wheel never reached the feed, this run measures nothing`);
+      process.exitCode = 1;
+    }
+    // The scanner's attribution, counts only: its per-event log stays out of the summary.
+    const attr = (afterState?.trace as { attribution?: { events?: Array<{ at: number; kind: string }> } & Record<string, unknown> } | null)?.attribution;
+    const attribution = attr ? Object.fromEntries(Object.entries(attr).filter(([k]) => k !== 'events')) : null;
+    let probe: ReturnType<typeof summariseProbe> = null;
+    if (PROBE) {
+      const raw = await page.evaluate(() => __sifterProbe.stop());
+      writeFileSync(join(TRACE_DIR, `${stamp}-probe.json`), JSON.stringify(raw));
+      probe = summariseProbe(raw, (attr?.events ?? []).filter((e) => e.kind === 'scroll').map((e) => e.at));
+    }
     const n = (k: string) => (before && after && typeof after[k] === 'number' && typeof before[k] === 'number' ? (after[k] as number) - (before[k] as number) : null);
     const scanner = after
       ? {
@@ -480,7 +554,8 @@ async function runOnce(withExt: boolean) {
           worstSlice: after.worstSlice ?? null,
           late: Object.fromEntries(['hidesAtLoad', 'lateInView', 'lateFarBelow', 'tagsCollapsed', 'railCollapsed', 'belowCameNear', 'collapsedMidScroll', 'tagsScrolledIn', 'laneUnits', 'laneHits', 'laneAbstain', 'laneOverBudget', 'laneFrameHits', 'laneFrameOverBudget', 'approachScans', 'approachPromotes', 'laneReleases', 'laneMs'].map((k) => [k, n(k)])),
           exposure: exposure(n('laneHits'), n('tagsScrolledIn'), afterState?.trace ?? null),
-          trace: afterState?.trace ?? null,
+          // `attribution` is reported on its own, without the per-event log.
+          trace: afterState?.trace ? { ...afterState.trace, attribution: undefined } : null,
         }
       : null;
     if (PROFILE_MODE) {
@@ -488,7 +563,7 @@ async function runOnce(withExt: boolean) {
       // The CDP Profiler domain only sees the main world; the trace's sampler sees the isolate.
       const raw = JSON.parse(readFileSync(file, 'utf8')) as { traceEvents?: Ev[] } | Ev[];
       const prof = traceProfile(Array.isArray(raw) ? raw : (raw.traceEvents ?? []));
-      return { mode: withExt ? 'on' : 'off', load, profile: prof ? profileSummary(prof) : null, traceFile: file };
+      return { mode: withExt ? 'on' : 'off', pattern: PATTERN, distance, load, profile: prof ? profileSummary(prof) : null, traceFile: file };
     }
     const frames = (await page.evaluate(() => (window as unknown as { __frames: number[] }).__frames)).slice(10);
     if (frames.length < SECONDS * 20) console.warn(`[live] only ${frames.length} frames: the tab was throttled, discard this run`);
@@ -497,10 +572,14 @@ async function runOnce(withExt: boolean) {
     const stability = summariseStability(await page.evaluate(() => (window as unknown as { __stab?: StabRaw }).__stab ?? null), t0);
     return {
       mode: withExt ? 'on' : 'off',
+      pattern: PATTERN,
+      distance,
       visible,
       hidden,
       load,
       stability,
+      probe,
+      attribution,
       scanner,
       frames: {
         n: frames.length,
@@ -532,8 +611,8 @@ async function main() {
   }
   mkdirSync('bench/results', { recursive: true });
   writeFileSync(
-    join('bench/results', `live-${SITE}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`),
-    JSON.stringify({ site: SITE, seconds: SECONDS, suggested: SUGGESTED, results }, null, 2),
+    join('bench/results', `live-${SITE}-${PATTERN}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`),
+    JSON.stringify({ site: SITE, seconds: SECONDS, pattern: PATTERN, probe: PROBE, suggested: SUGGESTED, results }, null, 2),
   );
 }
 

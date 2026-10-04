@@ -1,7 +1,8 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { chromium, type BrowserContext } from '@playwright/test';
 import type { PageState } from '../src/messages';
+import { driveSteps, PROBE_SCRIPT, summariseProbe, type ProbeRaw } from './probe';
 import { STABILITY_PROBE, summariseStability, type StabRaw } from './stability';
 
 // Scroll benchmark (hard rule 7: the extension must not cost frames).
@@ -21,6 +22,13 @@ import { STABILITY_PROBE, summariseStability, type StabRaw } from './stability';
 // verdict is printed and the exit code stays 0, because headless frame timings
 // are noisy. Compare off vs on in the same run, and trust the scanner's self-time
 // (scanMs, maxSliceScroll) over small fps gaps.
+//
+// `--virtual` serves fixtures/public/linkedin-virtual.html instead: a feed that unmounts
+// far posts and re-creates them whole, scrolled inside its own `<main>` the way LinkedIn
+// does. The probe (bench/probe.ts) drives that scroll one step a frame (`--pattern
+// down|up|reverse|all`, default all = down, back up, then reversing) and reports which
+// posts on screen moved, blamed on Sifter or the site. `--strict` fails on any jump
+// blamed on Sifter. `--start` does not apply (the fixture sets its own feed).
 //
 // Needs a build (.output/chrome-mv3); the package script runs `wxt build` first.
 
@@ -48,6 +56,8 @@ const SITE = strArg('site', 'linkedin');
 const STRICT = process.argv.includes('--strict');
 /** A native browser to run instead of Playwright's Chromium (x64, emulated on this ARM laptop): its ms are real. */
 const BROWSER = strArg('browser', '');
+const VIRTUAL = process.argv.includes('--virtual');
+const PATTERN = strArg('pattern', 'all');
 const EXT = resolve('.output/chrome-mv3');
 
 /**
@@ -175,7 +185,12 @@ const SITES: Record<string, Site> = {
   linkedin: { host: 'www.linkedin.com', url: 'https://www.linkedin.com/feed/', html: linkedinPage },
   facebook: { host: 'www.facebook.com', url: 'https://www.facebook.com/', html: facebookPage },
 };
-const site: Site = SITES[SITE] ?? ((): never => {
+const VIRTUAL_SITE: Site = {
+  host: 'www.linkedin.com',
+  url: 'https://www.linkedin.com/',
+  html: () => readFileSync(join('fixtures', 'public', 'linkedin-virtual.html'), 'utf8'),
+};
+const site: Site = VIRTUAL ? VIRTUAL_SITE : SITES[SITE] ?? ((): never => {
   console.error(`unknown --site ${SITE}; one of ${Object.keys(SITES).join(', ')}`);
   return process.exit(2);
 })();
@@ -325,6 +340,123 @@ async function pageState(context: BrowserContext, type: 'sifter:getPageState' | 
 }
 
 type Result = Awaited<ReturnType<typeof run>>;
+
+/** The probe's scroll plan for `--virtual`: frames per leg from `--seconds`, 60 px a frame. */
+function virtualLegs(): number[][] {
+  const frames = Math.max(60, Math.round((SECONDS * 60) / (PATTERN === 'all' ? 3 : 1)));
+  const leg = (p: 'down' | 'up' | 'reverse') => driveSteps(p, frames, 60);
+  if (PATTERN === 'all') return [leg('down'), leg('up'), leg('reverse')];
+  // `up` alone starts from the top, so it goes down first and measures only the way back.
+  if (PATTERN === 'up') return [leg('down'), leg('up')];
+  if (PATTERN === 'down' || PATTERN === 'reverse') return [leg(PATTERN)];
+  console.error(`unknown --pattern ${PATTERN}; one of all, down, up, reverse`);
+  return process.exit(2);
+}
+
+/** `--virtual`: one probe-driven run on the virtualised feed. Counts only. */
+async function runVirtual(withExt: boolean) {
+  const context: BrowserContext = await chromium.launchPersistentContext('', {
+    ...(BROWSER ? { executablePath: BROWSER } : { channel: 'chromium' }),
+    headless: true,
+    viewport: { width: 1280, height: 900 },
+    args: withExt ? [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`] : [],
+  });
+  const html = site.html();
+  await context.route('**/*', (route) => {
+    const url = new URL(route.request().url());
+    if (url.protocol === 'chrome-extension:') return route.continue();
+    if (url.hostname === site.host && route.request().resourceType() === 'document') return route.fulfill({ contentType: 'text/html', body: html });
+    return route.abort();
+  });
+  if (withExt && context.serviceWorkers().length === 0) await context.waitForEvent('serviceworker');
+  if (withExt && !context.pages().some((pg) => pg.url().startsWith('chrome-extension:'))) {
+    await context.waitForEvent('page', { timeout: 5000 }).catch(() => null);
+  }
+  const p = await context.newPage();
+  for (const other of context.pages()) if (other !== p) await other.close();
+  await p.goto(site.url);
+  await p.bringToFront();
+  const cdp = await context.newCDPSession(p);
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU });
+  await p.waitForTimeout(1500);
+  const unitSelector = (JSON.parse(readFileSync(join('src', 'adapters', 'linkedin.json'), 'utf8')) as { unitSelector: string }).unitSelector;
+  type ProbeApi = { start(c: unknown): void; drive(s: number[]): Promise<void>; stop(): ProbeRaw };
+  await p.evaluate(PROBE_SCRIPT);
+  await p.evaluate((u) => (window as unknown as { __sifterProbe: ProbeApi }).__sifterProbe.start({ unitSelector: u, scrollerSelector: '#workspace' }), unitSelector);
+  const before = withExt ? await pageState(context, 'sifter:resetPerfPeaks') : null;
+  for (const steps of virtualLegs()) {
+    await p.evaluate((s) => (window as unknown as { __sifterProbe: ProbeApi }).__sifterProbe.drive(s), steps);
+    await p.waitForTimeout(600);
+  }
+  const raw = await p.evaluate(() => (window as unknown as { __sifterProbe: ProbeApi }).__sifterProbe.stop());
+  const after = withExt ? await pageState(context, 'sifter:getPageState') : null;
+  const site_ = await p.evaluate(() => (window as unknown as { __virtual: Record<string, number> }).__virtual);
+  const hiddenOrTagged = await p.evaluate(() => document.querySelectorAll('.sifter-hidden, .sifter-tag').length);
+  await context.close();
+  const s = summariseProbe(raw)!;
+  const f = raw.rows.slice(1).map((r, i) => r.t - raw.rows[i]!.t);
+  const d = (k: 'laneHits' | 'lateInView' | 'lateFarBelow' | 'collapsedMidScroll' | 'tagsScrolledIn') => (after && before ? after.perf[k] - before.perf[k] : null);
+  return {
+    ext: withExt,
+    hiddenOrTagged,
+    frames: s.frames,
+    p50: +pct(f, 50).toFixed(1),
+    p95: +pct(f, 95).toFixed(1),
+    worstFrame: +Math.max(0, ...f).toFixed(1),
+    distance: s.distance.total,
+    measured: s.visible.measured,
+    visibleSifter: s.visible.sifter.frames,
+    visibleSifterPx: s.visible.sifter.px,
+    visibleSifterMax: s.visible.sifter.max,
+    visibleSite: s.visible.site.frames,
+    visibleSitePx: s.visible.site.px,
+    relativeSifter: s.relative.sifter.frames,
+    clamps: s.clamps,
+    remounts: s.remounts.n,
+    remountFlips: JSON.stringify(s.remounts.flips),
+    remountHeightAfterSifter: s.remounts.heightChangedAfterSifter,
+    sifterChanges: JSON.stringify(s.sifterChanges.byZone),
+    siteRemounts: site_.remounts ?? null,
+    siteLoads: site_.loads ?? null,
+    laneHits: d('laneHits'),
+    lateInView: d('lateInView'),
+    lateFarBelow: d('lateFarBelow'),
+    collapsedMidScroll: d('collapsedMidScroll'),
+    tagsScrolledIn: d('tagsScrolledIn'),
+    maxSliceScroll: after ? +after.perf.maxSliceMs.toFixed(1) : null,
+  };
+}
+
+if (VIRTUAL) {
+  const vr: Array<Awaited<ReturnType<typeof runVirtual>>> = [];
+  for (let r = 0; r < RUNS; r++) {
+    vr.push(await runVirtual(false));
+    vr.push(await runVirtual(true));
+  }
+  console.table(vr);
+  mkdirSync(join('bench', 'results'), { recursive: true });
+  const vout = join('bench', 'results', `scroll-virtual-${PATTERN}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+  writeFileSync(vout, JSON.stringify({ site: 'linkedin-virtual', pattern: PATTERN, seconds: SECONDS, cpu: CPU, results: vr }, null, 2));
+  console.log(`wrote ${vout}`);
+  let vfailed = false;
+  for (let r = 0; r < RUNS; r++) {
+    const off = vr[r * 2]!, on = vr[r * 2 + 1]!;
+    const problems: string[] = [];
+    // The off-run holds still on the same steps, so every on-run jump is Sifter's whatever
+    // the probe's blame says: blame is a time window and misses a change made frames before.
+    const onJumps = on.visibleSifter + on.visibleSite;
+    if (onJumps > 0) problems.push(`${onJumps} frame(s) where a post on screen moved with Sifter on (blamed sifter ${on.visibleSifter}, site ${on.visibleSite}; max ${on.visibleSifterMax} px blamed on Sifter)`);
+    if (off.visibleSite > 0) problems.push(`off-run moved ${off.visibleSite} frame(s): the fixture is not holding still, the on-run means nothing`);
+    if (on.hiddenOrTagged === 0) problems.push('nothing hidden or tagged: the bench is not exercising the scanner');
+    if (on.distance === 0 || on.remounts === 0) problems.push('no scroll or no re-mounts: vacuous run');
+    if (problems.length === 0) console.log(`run ${r + 1}: OK`);
+    else {
+      vfailed = true;
+      console.log(`run ${r + 1}: ${problems.join('; ')}`);
+    }
+  }
+  process.exit(STRICT && vfailed ? 1 : 0);
+}
 
 /** One line per on-run: what broke the budget, if anything. */
 function verdict(off: Result, on: Result): string[] {

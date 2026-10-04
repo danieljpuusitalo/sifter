@@ -1,5 +1,87 @@
 # Sifter checkpoint
 
+**Scroll stability, Phase 2 (2026-10-04, branch `perf/scroll-stability`): the costs
+Phase 0 measured live.** Commits e296c6f, d3c21ab, 591af3b, 8caad31. Phase 1 (mount memory,
+append rule) is still parked: its mechanism was not seen live.
+
+- **Target not met.** Down pattern, plain release build, plugged in, native Edge, on and
+  off interleaved, 3 runs:
+
+  | run | p99 off | p99 on | >50 ms off | >50 ms on | hidden | page style ms off / on | Sifter ms (ms/s) |
+  |---|---|---|---|---|---|---|---|
+  | 1 | 82.0 | 116.7 | 49 | 102 | 18 | 2337 / 3414 | 304 (8.2) |
+  | 2 | 108.4 | 116.7 | 45 | 74 | 18 | 1136 / 2728 | 283 (8.0) |
+  | 3 | 66.8 | 84.6 | 45 | 83 | 21 | 1341 / 3544 | 312 (8.6) |
+
+  The page's extra style time with Sifter on (1100-2200 ms per run) is several times
+  Sifter's whole script cost (about 300 ms). Item 5c explains it: with ads collapsed,
+  the same 33 120 px covers about 15 more posts and 3 more feed loads.
+
+  The "before" release baseline (the same day, before items 4a/4b) had two runs with 0
+  hidden, and both of those met the target: on p99 66.6 and 66.7 against off 83.4. The
+  frame excess tracks how many ads a run collapses.
+- **Item 1, `markContents` (e296c6f):** the tag path read a `display: contents` box's
+  style straight after its own class and placeholder writes, which forced a recalc.
+  - It now reads the boxes in the decide phase.
+  - `markContents` max: 24.6 ms (4 calls, 71.5 ms) before, 0.1 ms after.
+  - The e2e blur-through-contents probes stay green.
+- **Item 2, ~20 ms `onMutations` outliers (d3c21ab):** they are garbage collection. The V8
+  heap is shared with the page, and its GC lands inside our calls.
+  - Examples: 19.9 ms of MinorGC in the 21.5 ms call; 14.1 of 15.3 ms; a 25.1 ms
+    MajorGC in a 37.7 ms slice.
+  - `bornUnits` querySelectorAll is 3 ms self over a whole run.
+  - Bench now reports `gcInside`. No product change.
+- **Item 3, lane at 2-6 ms against its 1 ms cap: diagnosed, not changed.** The overrun is
+  one forced UpdateLayoutTree, 3.9-5.5 ms, from `checkVisibility` on the batch's first
+  candidate label.
+  - The page's next recalc then costs 0.1 ms, so this is the page's pending recalc paid
+    early: moved work, not added work.
+  - Forced vs next-recalc totals per run: 61.6 vs 33.5, 65 vs 1, 80 vs 15.1 ms.
+  - Hard rule 7 and "first record and first unit always fit" are untouched. Options are
+    listed below for Daniel.
+- **Item 4a, word-boundary candidates (591af3b):** `piecesMayHit` needs the wanted word at
+  a word boundary in the written text, still spanning text nodes.
+  - Label style reads per decided unit, live: 1.17-1.39 before, 0.38-0.51 after.
+  - Forced style inside Sifter per run: 18-37 ms before, 7.5-20 ms after.
+  - Eval fp=0 fn=0. A seeded property test guards the superset invariant.
+- **Item 4b, decide-cost clamp (8caad31):** one sample counts for at most
+  `SLICE_BUDGET_MS`.
+  - Unit test, one 30 ms decision: 6 slices unclamped, 4 clamped (4 without the spike).
+- **Item 4, not done:**
+  - Lane marker result reused by `decide()`: the lane has no cheap signature that proves
+    the unit unchanged, and LinkedIn fills shells after birth.
+  - `labelNodes` early stop: querySelectorAll builds the full list anyway, so it is
+    negligible.
+  - Label reuse for suggested rules: suggested is off by default, so it does not show in
+    these runs.
+- **Item 5, measured only (release builds, on mode, interleaved x3; variants never
+  committed):**
+  - **(a) The `[contents] > *` blur rule in `UNIT_CSS`:** no measurable effect.
+    - Page style, with the rule vs without: 2402 / 3516 / 3225 vs 2387 / 3826 / 3347 ms.
+  - **(b) Blur raster cost:** none above noise.
+    - Raster with blur vs `filter: none`: 395 / 317 / 401 vs 378 / 462 / 420 ms.
+    - GPU main: 4822 / 3634 / 3304 vs 4439 / 4666 / 4831 ms.
+  - **(c) Extra feed loads:**
+
+    | | loads | posts revealed (collapsed) | loads per post |
+    |---|---|---|---|
+    | off | 9 / 9 / 10 | 49 / 47 / 47 | 0.184 / 0.191 / 0.213 |
+    | on | 12 / 12 / 12 | 62 / 62 / 67 (16 each) | 0.194 / 0.194 / 0.179 |
+
+    The rate is equal: the extra loads are what collapsed ads cost in distance, not a
+    feedback loop.
+- **For Daniel:**
+  1. **Lane overrun (item 3).** Options:
+     - (a) Leave it. Recommended: the time is the page's own pending recalc, paid early.
+     - (b) The lane skips style reads. This is a rule-7 change and loses split or hidden
+       label words before paint.
+     - (c) Move the lane into rAF. This is a rule change with no gain: the recalc is due
+       there anyway.
+  2. **What the frame target should be judged against.** With ads collapsed, the same
+     scroll distance renders about 30% more posts. Per post revealed, on and off load
+     alike. Meeting the off-run p99 per px would mean not collapsing below the screen,
+     which is a design choice.
+
 **Scroll stability, Phase 0 (2026-10-04, branch `perf/scroll-stability`, from
 `feat/prepaint` 9446f6a): measure, no behaviour change.** Plan:
 `~/.claude/plans/toasty-spinning-sketch.md`. Daniel: posts bounce scrolling down; scrolling
@@ -909,4 +991,14 @@ path is still unverified live (no sponsored feed post appeared this session eith
 - **Tracing is gated** (session 17, `src/content/trace.ts`): only dev and `SIFTER_TRACE=1` builds record latency and flips. A release build must not contain it (grep `enteredWhileQueued` in the built `content.js`: 0).
 - **Near-first decide queue** (session 17, `src/content/near.ts`): units within a screen of the viewport are decided first. Most mid-scroll in-view hides had entered the screen while queued.
 - **The Facebook `stories` selector needs the `role=region`:** a bare `/stories/` link matches every post whose author has a story (19 of 19 posts in the capture).
+- **A tag's `display: contents` boxes are read in the decide phase, before any write**
+  (Phase 2, e296c6f): reading them after the tag's class and placeholder writes forced a
+  12-25 ms style recalc per late tag on live LinkedIn.
+- **A label candidate needs the wanted word at a word boundary** (Phase 2, 591af3b,
+  `piecesMayHit`): letters and digits only count as joining, matching `labelKey`. The
+  check must stay a superset of rendered hits, because an unconfirmed label keeps its raw
+  text. Seeded property test in `tests/unit/extract.test.ts`.
+- **One decide-cost sample counts for at most a slice** (Phase 2, 8caad31): a GC inside one
+  decision otherwise starves the next slices to one unit each.
+  `tests/unit/slice-estimate.test.ts`.
 - **`release.yml` matches the CHANGELOG heading with `index()`, not a regex.** `## [x.y.z]` as an awk regex is a character class and never matches; this failed the first `v1.0.0` run after every test had passed.

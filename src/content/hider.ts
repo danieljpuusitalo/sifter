@@ -226,12 +226,14 @@ export class Hider {
    *   (the post stays put) unless the tracker says it is far below the reader.
    *   Without it (tests, evals, a page with no IntersectionObserver) hides apply at
    *   once, as before.
+   * @param cost Trace builds only: times the tag path's `markContents` (a style read per child).
    */
   constructor(
     private doc: Document,
     private mode: HideMode,
     private cb: HiderCallbacks,
     private late?: LateTracker,
+    private cost?: (kind: 'markContents', ms: number) => void,
   ) {}
 
   /** Sifter tracks this unit: hidden, tagged or shown. */
@@ -460,7 +462,11 @@ export class Hider {
     if (tag) {
       el.classList.add(TAG_CLASS);
       // A tag comes from the debounced pass, where style reads are allowed: mark now.
-      this.markContents(unit, rec);
+      if (this.cost) {
+        const t0 = performance.now();
+        this.markContents(unit, rec);
+        this.cost('markContents', performance.now() - t0);
+      } else this.markContents(unit, rec);
       this.late?.watch(unit);
       return;
     }

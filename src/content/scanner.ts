@@ -267,7 +267,15 @@ export class Scanner {
     this.schedule = deps.schedule ?? ((fn, ms) => setTimeout(fn, ms));
     const win = deps.doc.defaultView;
     this.frame = deps.frame ?? (win ? (fn) => win.requestAnimationFrame(() => fn()) : (fn) => setTimeout(fn, 0));
-    this.late = deps.viewport?.((unit) => this.hider.settle(unit)) ?? null;
+    const trace = deps.trace;
+    this.late =
+      deps.viewport?.(
+        (unit, why) => {
+          this.hider.settle(unit);
+          trace?.wrote(unit, why ?? 'farBelow', this.now());
+        },
+        trace ? { cost: (k, ms) => trace.cost(k, ms) } : undefined,
+      ) ?? null;
     // A unit inside an ad-only container is hidden as the container, which the lane never sees born.
     this.lane = deps.prepaint !== false && !!deps.adapter?.prepaint && !deps.adapter.adContainerSelector;
     this.hider = new Hider(
@@ -281,9 +289,11 @@ export class Scanner {
           // Hide on a tag the reader opened with Show: back in the count, then collapsed like any tag.
           if (this.userShown.has(unit)) this.userRehide(unit);
           this.inPlace(() => this.hider.settle(unit));
+          trace?.wrote(unit, 'click', this.now());
         },
       },
       this.late ?? undefined,
+      trace ? (k, ms) => trace.cost(k, ms) : undefined,
     );
     deps.near?.listen?.(() => this.approach());
     this.compileContext();
@@ -341,21 +351,30 @@ export class Scanner {
     this.observer?.disconnect();
     this.observer = null;
     this.deps.near?.disconnect();
-    this.inPlace(() => this.hider.unhideAll());
+    this.unhideAllInPlace();
     this.hider.dispose();
+  }
+
+  /** Every hide released, the reader's post kept in place. In a trace build, each write is attributed. */
+  private unhideAllInPlace(): void {
+    const traced = this.deps.trace ? this.hider.trackedHides() : null;
+    this.inPlace(() => this.hider.unhideAll());
+    if (traced) for (const u of traced) this.deps.trace?.wrote(u, 'user', this.now());
   }
 
   /** New settings from the popup or options: re-decide everything on the page. */
   applyContext(ctx: SiteContext): void {
     this.ctx = ctx;
     this.compileContext();
+    const traced = this.deps.trace ? this.hider.trackedHides() : null;
     this.hider.setMode(ctx.hideMode);
+    if (traced) for (const u of traced) this.deps.trace?.wrote(u, 'mode', this.now());
     this.seen = new WeakMap();
     if (!this.active) {
       // Drop queued work too: a slice already scheduled must not hide anything now.
       this.dropQueue();
       this.hiddenFps.clear();
-      this.inPlace(() => this.hider.unhideAll());
+      this.unhideAllInPlace();
       this.markFull();
       this.noUnitsMatched = false;
       return;
@@ -460,6 +479,7 @@ export class Scanner {
       this.hiddenFps.set(seen.fp, 'manual');
       // The reader asked for it: collapse now, not as a tag, and keep their place.
       this.inPlace(() => this.hider.hide(el, 'manual', undefined, true));
+      this.deps.trace?.wrote(el, 'click', this.now());
       this.redecideAll();
       return true;
     }
@@ -474,7 +494,10 @@ export class Scanner {
 
   /** Runs writes that change heights across the page, then scrolls back so the reader's post has not moved. */
   private inPlace(writes: () => void): void {
-    if (keepInPlace(this.deps.doc, this.anchorable, writes, this.deps.adapter?.feedRootSelector) !== 0) this.perf.releaseCorrections++;
+    const delta = keepInPlace(this.deps.doc, this.anchorable, writes, this.deps.adapter?.feedRootSelector);
+    if (delta === 0) return;
+    this.perf.releaseCorrections++;
+    this.deps.trace?.scrolled(delta, this.now());
   }
 
   /** A post the reader may be looking at: what `inPlace` anchors to. */
@@ -504,6 +527,16 @@ export class Scanner {
 
   /** Runs on every mutation batch, often mid-scroll: bookkeeping only, no DOM reads. */
   private onMutations(records: MutationRecord[]): void {
+    const { trace } = this.deps;
+    if (!trace) return this.onMutationsUntimed(records);
+    // Trace builds only: the callback's cost outside the lane (the lane times itself).
+    const t0 = this.now();
+    const lane0 = this.perf.laneMs;
+    this.onMutationsUntimed(records);
+    trace.cost('mutations', Math.max(0, this.now() - t0 - (this.perf.laneMs - lane0)));
+  }
+
+  private onMutationsUntimed(records: MutationRecord[]): void {
     // An in-app navigation (LinkedIn feed -> company page) swaps the page without a
     // reload, and always mutates the DOM: re-decide everything under the new path.
     // Reading the location is a string, not a DOM read, so this costs nothing per batch.
@@ -788,6 +821,7 @@ export class Scanner {
       this.hider.prune();
       const { trace } = this.deps;
       trace?.sweep(t0);
+      if (trace) trace.classesKept(this.hider.trackedHides());
       const since = trace?.takeDirty(t0) ?? t0;
       for (const u of this.collectUnits()) {
         // Our own placeholder can match a unit selector (X's cells are bare divs).
@@ -946,6 +980,9 @@ export class Scanner {
       this.carryLane(born.slice(read), records.slice(next));
     }
     this.laneTook(t0);
+    // Trace builds only, after the lane's clock stopped: re-mount bookkeeping.
+    const { trace } = this.deps;
+    if (trace) for (const u of born) trace.born(u);
   }
 
   /**
@@ -985,6 +1022,7 @@ export class Scanner {
     const overBudget = cut || read < list.length;
     if (overBudget) this.perf.laneFrameOverBudget++;
     this.laneTook(t0);
+    if (trace) for (const u of fresh) trace.born(u);
     if (!overBudget) return;
     // After the lane's clock stopped: queue the units the budget cut, so the near
     // tracker watches them and one coming near skips the debounce (`approach`). The
@@ -992,6 +1030,7 @@ export class Scanner {
     // cuts waits for the debounced pass's collect as before.
     const t1 = this.now();
     const rest = bornUnits(records.slice(next), adapter.unitSelector, () => this.now() - t1 > LANE_BUDGET_MS).units;
+    if (trace) for (const u of rest) trace.born(u);
     const now = this.now();
     for (const u of new Set([...list.slice(read), ...rest])) {
       if (this.laneLooked.has(u) || u.hasAttribute(PLACEHOLDER_ATTR)) continue;
@@ -1038,6 +1077,7 @@ export class Scanner {
       this.hider.hide(h.unit, h.category, h.hint, true);
       this.laneHidden.add(h.unit);
       trace?.hid(h.unit, now, h.why);
+      trace?.wrote(h.unit, 'lane', now);
       this.perf.laneHits++;
     }
     return readUpTo;
@@ -1217,6 +1257,7 @@ export class Scanner {
       if (!this.releasing) this.deps.trace?.released(d.unit, this.now(), d.empty ? 'emptied' : 'redecided', true);
       this.userShown.delete(d.unit);
       this.hider.unhide(d.unit);
+      this.deps.trace?.wrote(d.unit, 'release', this.now());
       this.hiddenFps.delete(d.fp);
       this.blockHidden.delete(d.unit);
       return;
@@ -1225,7 +1266,9 @@ export class Scanner {
       if (!this.hider.isHidden(d.unit)) this.deps.trace?.hid(d.unit, this.now(), d.why ?? { category: d.hide });
       this.laneHidden.delete(d.unit);
       // A tag already on the page stays one: the reader is looking at it, not at the switch.
-      this.hider.hide(d.unit, d.hide, d.hint, this.releasing && !this.hider.isTagged(d.unit));
+      const atOnce = this.releasing && !this.hider.isTagged(d.unit);
+      this.hider.hide(d.unit, d.hide, d.hint, atOnce);
+      this.deps.trace?.wrote(d.unit, atOnce ? 'user' : 'decide', this.now());
       this.hiddenFps.set(d.fp, d.hide);
       if (d.block) this.blockHidden.set(d.unit, d.fp);
       else this.blockHidden.delete(d.unit);
@@ -1236,8 +1279,10 @@ export class Scanner {
         // miss. Put it back without moving what the reader sees.
         this.perf.laneReleases++;
         this.inPlace(() => this.hider.unhide(d.unit));
+        this.deps.trace?.wrote(d.unit, 'laneRelease', this.now());
       } else {
         this.hider.unhide(d.unit);
+        this.deps.trace?.wrote(d.unit, 'release', this.now());
       }
       this.hiddenFps.delete(d.fp);
       this.blockHidden.delete(d.unit);
@@ -1257,6 +1302,7 @@ export class Scanner {
     const fp = this.seen.get(unit)?.fp;
     if (fp) this.hiddenFps.delete(fp);
     this.hider.show(unit);
+    this.deps.trace?.wrote(unit, 'click', this.now());
   }
 
   /** "Hide" on a placeholder the user showed: puts the unit back into the count and the hidden state. */
@@ -1267,6 +1313,7 @@ export class Scanner {
     const category = this.hider.categoryOf(unit);
     if (fp && category) this.hiddenFps.set(fp, category);
     this.hider.rehide(unit);
+    this.deps.trace?.wrote(unit, 'click', this.now());
   }
 
   private userNotAd(unit: Element): void {
@@ -1281,6 +1328,7 @@ export class Scanner {
     this.userShown.delete(unit);
     this.blockHidden.delete(unit);
     this.hider.unhide(unit);
+    this.deps.trace?.wrote(unit, 'click', this.now());
     if (fp) this.redecideAll();
   }
 }

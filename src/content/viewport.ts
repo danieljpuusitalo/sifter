@@ -79,7 +79,13 @@ export interface LateTracker {
   loadHide?(): boolean;
 }
 
-export type LateTrackerFactory = (settle: (unit: Element) => void) => LateTracker;
+/** Why a tag was settled: far below at its first look, below later, or in a pinned rail. */
+export type SettleWhy = 'farBelow' | 'tagCollapsed' | 'rail';
+
+/** Trace builds only: the tracker's own main-thread time, which the scanner's counters do not see. */
+export type LateTrackerHooks = { cost?(kind: 'flush' | 'io', ms: number): void };
+
+export type LateTrackerFactory = (settle: (unit: Element, why?: SettleWhy) => void, hooks?: LateTrackerHooks) => LateTracker;
 
 /** A unit this close above the viewport still counts as on screen. */
 const MARGIN_PX = 64;
@@ -103,7 +109,7 @@ type Zone = 'in' | 'above' | 'below';
 /** The real tracker, or undefined where the page has no IntersectionObserver (then hides apply at once). */
 export function viewportTracker(win: Window & typeof globalThis): LateTrackerFactory | undefined {
   if (typeof win.IntersectionObserver !== 'function' || typeof win.requestAnimationFrame !== 'function') return undefined;
-  return (settle) => new ViewportTracker(win, settle);
+  return (settle, hooks) => new ViewportTracker(win, settle, hooks?.cost);
 }
 
 /**
@@ -162,11 +168,12 @@ class ViewportTracker implements LateTracker {
 
   constructor(
     private readonly win: Window & typeof globalThis,
-    private readonly settle: (unit: Element) => void,
+    private readonly settle: (unit: Element, why?: SettleWhy) => void,
+    private readonly cost?: (kind: 'flush' | 'io', ms: number) => void,
   ) {
     // No margin below: anything past the screen's bottom edge is "below".
-    this.io = new win.IntersectionObserver((entries) => this.onEntries(entries), { rootMargin: `${MARGIN_PX}px 0px 0px 0px` });
-    this.screen = new win.IntersectionObserver((entries) => this.onScreenEntries(entries));
+    this.io = new win.IntersectionObserver((entries) => this.timed('io', () => this.onEntries(entries)), { rootMargin: `${MARGIN_PX}px 0px 0px 0px` });
+    this.screen = new win.IntersectionObserver((entries) => this.timed('io', () => this.onScreenEntries(entries)));
     const doc = win.document;
     // Capture: element scroll events do not bubble, but they do pass through the document.
     doc.addEventListener('scroll', this.onScroll, { capture: true, passive: true });
@@ -301,13 +308,21 @@ class ViewportTracker implements LateTracker {
     if (this.farPending.size === 0 && (this.scrolling || this.firstInView.size === 0)) return;
     this.frame = this.win.requestAnimationFrame((t) => {
       this.frame = undefined;
-      this.flush(t);
+      this.timed('flush', () => this.flush(t));
     });
+  }
+
+  /** Runs `fn`, timing it only in a trace build (no hook, no clock read). */
+  private timed(kind: 'flush' | 'io', fn: () => void): void {
+    if (!this.cost) return fn();
+    const t0 = performance.now();
+    fn();
+    this.cost(kind, performance.now() - t0);
   }
 
   /** Reads first, then writes: every collapse lands in one frame, after every rect was read. */
   private flush(now: number): void {
-    const collapse: Element[] = [];
+    const collapse: [Element, SettleWhy][] = [];
     const bottom = this.win.innerHeight;
     let heldBySpeed = false;
     for (const u of this.farPending) {
@@ -323,7 +338,7 @@ class ViewportTracker implements LateTracker {
         if (first) this.s.lateFarBelow++;
         else this.s.tagsCollapsed++;
         if (this.scrolling) this.s.collapsedMidScroll++;
-        collapse.push(u);
+        collapse.push([u, first ? 'farBelow' : 'tagCollapsed']);
         continue;
       }
       // Within the lead: it stays tagged, and is looked at again next frame the page
@@ -338,14 +353,14 @@ class ViewportTracker implements LateTracker {
       for (const u of this.firstInView) {
         if (u.isConnected && this.sideColumnOf(u)) {
           this.s.railCollapsed++;
-          collapse.push(u);
+          collapse.push([u, 'rail']);
         }
       }
       this.firstInView.clear();
     }
-    for (const u of collapse) {
+    for (const [u, why] of collapse) {
       this.unwatch(u);
-      this.settle(u);
+      this.settle(u, why);
     }
     if (heldBySpeed) this.schedule();
   }

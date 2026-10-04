@@ -273,6 +273,7 @@ describe('pre-paint lane', () => {
     const trace: HideTrace = {
       dirty: noop, due: noop, takeDirty: () => 0, queued: noop, empty: noop, hid: noop, released: noop,
       shown: noop, unshown: noop, sweep: noop, reset: noop,
+      born: noop, wrote: noop, scrolled: noop, classesKept: noop, cost: noop,
       stats: () => ({}) as ReturnType<HideTrace['stats']>,
       bornBare: (u) => calls.push(`bare ${key(u)}`),
       laneSkipped: (u, why) => calls.push(`${why} ${key(u)}`),

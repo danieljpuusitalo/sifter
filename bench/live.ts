@@ -14,7 +14,7 @@ import { STABILITY_PROBE, summariseStability, type StabRaw } from './stability';
 // JavaScript entry point lives in `chrome-extension://` to Sifter, including
 // the style and layout work nested inside those calls.
 //
-//   SIFTER_TRACE=1 pnpm build && pnpm bench:live --site linkedin|facebook|reddit|x|instagram [--seconds 20] [--load-seconds 5] [--mode on|off|both] [--suggested] [--profile]
+//   SIFTER_TRACE=1 pnpm build && pnpm bench:live --site linkedin|facebook|reddit|x|instagram [--seconds 20] [--load-seconds 5] [--mode on|off|both] [--suggested] [--hide-mode collapse|blur|hide] [--profile]
 //   pnpm bench:live analyse <trace.json>
 //
 // `--profile` adds the trace's v8.cpu_profiler samples (the CDP Profiler sees only the
@@ -60,6 +60,13 @@ const SECONDS = Number(arg('seconds', '20'));
 const LOAD_SECONDS = Number(arg('load-seconds', '5'));
 const MODE = arg('mode', 'both');
 const SUGGESTED = process.argv.includes('--suggested');
+/** The hide mode for every on-run (default collapse, the shipped default). Set each run: the profile keeps storage. */
+const HIDE_MODES = ['collapse', 'blur', 'hide'] as const;
+const HIDE_MODE = arg('hide-mode', 'collapse') as (typeof HIDE_MODES)[number];
+if (!HIDE_MODES.includes(HIDE_MODE)) {
+  console.error(`unknown --hide-mode ${HIDE_MODE}; one of ${HIDE_MODES.join(', ')}`);
+  process.exit(2);
+}
 const PROFILE_MODE = process.argv.includes('--profile');
 const PROFILE = resolve(arg('user-data', '.dev-profile-edge'));
 const EDGE = arg('browser', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe');
@@ -129,12 +136,12 @@ async function launch(withExt: boolean): Promise<BrowserContext> {
 }
 
 /**
- * Sets the suggested category to the flag's value on every on-run. The dev profile
- * keeps extension storage between runs, so a `--suggested` run used to leave the
- * category on for every later run without the flag: a "baseline" measured with 44
- * hidden posts instead of 9 (2026-09-28).
+ * Sets the suggested category and the hide mode to the flags' values on every on-run.
+ * The dev profile keeps extension storage between runs, so a `--suggested` run used to
+ * leave the category on for every later run without the flag: a "baseline" measured
+ * with 44 hidden posts instead of 9 (2026-09-28).
  */
-async function setSuggested(context: BrowserContext, value: boolean): Promise<void> {
+async function setSettings(context: BrowserContext, value: boolean, mode: string): Promise<void> {
   if (context.serviceWorkers().length === 0) await context.waitForEvent('serviceworker', { timeout: 10000 });
   const id = new URL(context.serviceWorkers()[0]!.url()).host;
   const opt = await context.newPage();
@@ -145,10 +152,11 @@ async function setSuggested(context: BrowserContext, value: boolean): Promise<vo
     if (!/interrupted by another navigation/.test(e.message)) throw e;
     await opt.waitForLoadState('load');
   });
-  await opt.evaluate(async (v) => {
+  await opt.evaluate(async ({ v, m }) => {
     const rt = (globalThis as unknown as { chrome: { runtime: { sendMessage(m: unknown): Promise<unknown> } } }).chrome.runtime;
     await rt.sendMessage({ type: 'sifter:setCategory', category: 'suggested', value: v });
-  }, value);
+    await rt.sendMessage({ type: 'sifter:setHideMode', mode: m });
+  }, { v: value, m: mode });
   await opt.close();
 }
 
@@ -403,6 +411,9 @@ export function analyse(file: string) {
   const last = mt.length ? mt[mt.length - 1]!.ts : 0;
   const seconds = (last - first) / 1e6 || 1;
   const sumName = (n: string[]) => mt.filter((e) => n.includes(e.name)).reduce((a, e) => a + e.dur! / 1000, 0);
+  const styleEls = mt
+    .filter((e) => e.name === 'UpdateLayoutTree')
+    .reduce((a, e) => a + (typeof e.args?.elementCount === 'number' ? e.args.elementCount : 0), 0);
   const longTasks = tasks.filter((t) => t.dur! > 50000).length;
   const busyMs = tasks.reduce((a, t) => a + t.dur! / 1000, 0);
   return {
@@ -434,6 +445,10 @@ export function analyse(file: string) {
     },
     page: {
       styleMs: +sumName(['UpdateLayoutTree', 'RecalculateStyles']).toFixed(1),
+      // Elements restyled, and the cost per element: more posts restyle more elements,
+      // a costlier style per element (selectors, invalidation) shows in the ratio.
+      styleElements: styleEls,
+      styleUsPerElement: styleEls ? +((sumName(['UpdateLayoutTree', 'RecalculateStyles']) * 1000) / styleEls).toFixed(1) : null,
       layoutMs: +sumName(['Layout']).toFixed(1),
       gcMs: +sumName(['MinorGC', 'MajorGC', 'V8.GC_SCAVENGER', 'BlinkGC.AtomicPhase']).toFixed(1),
       paintMs: +sumName(['PrePaint', 'Paint', 'Layerize']).toFixed(1),
@@ -509,7 +524,7 @@ async function scannerState(context: BrowserContext, type: 'sifter:getPageState'
 async function runOnce(withExt: boolean) {
   const context = await launch(withExt);
   try {
-    if (withExt) await setSuggested(context, SUGGESTED);
+    if (withExt) await setSettings(context, SUGGESTED, HIDE_MODE);
     const page = await context.newPage();
     // First install opens the options page; any other tab would take focus from the feed.
     await page.waitForTimeout(1500);
@@ -671,7 +686,7 @@ async function main() {
   mkdirSync('bench/results', { recursive: true });
   writeFileSync(
     join('bench/results', `live-${SITE}-${PATTERN}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`),
-    JSON.stringify({ site: SITE, seconds: SECONDS, pattern: PATTERN, probe: PROBE, suggested: SUGGESTED, results }, null, 2),
+    JSON.stringify({ site: SITE, seconds: SECONDS, pattern: PATTERN, probe: PROBE, suggested: SUGGESTED, hideMode: HIDE_MODE, results }, null, 2),
   );
 }
 

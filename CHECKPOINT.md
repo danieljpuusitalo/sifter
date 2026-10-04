@@ -14,12 +14,70 @@ append rule) is still parked: its mechanism was not seen live.
   | 3 | 66.8 | 84.6 | 45 | 83 | 21 | 1341 / 3544 | 312 (8.6) |
 
   The page's extra style time with Sifter on (1100-2200 ms per run) is several times
-  Sifter's whole script cost (about 300 ms). Item 5c explains it: with ads collapsed,
-  the same 33 120 px covers about 15 more posts and 3 more feed loads.
+  Sifter's whole script cost (about 300 ms). With ads collapsed, the same 33 120 px
+  covers about 15 more posts and 3 more feed loads (item 5c). **But that is not proven to
+  be the cause, and element counts argue against it:** see "Follow-up A/B/C" below.
 
   The "before" release baseline (the same day, before items 4a/4b) had two runs with 0
   hidden, and both of those met the target: on p99 66.6 and 66.7 against off 83.4. The
-  frame excess tracks how many ads a run collapses.
+  frame excess appears only when a run hides ads.
+- **Follow-up A/B/C (open: LinkedIn served no ads).** The question: is the style excess
+  the extra posts (a consequence of collapsing), or Sifter's presence and writes? The
+  arms: (A) off, (B) on in collapse mode, (C) on in blur mode, where heights never change,
+  so the same distance covers the same posts as off.
+  - **Setup:**
+    - `bench:live --hide-mode collapse|blur|hide` sets the mode on every on-run, since the
+      profile keeps storage.
+    - The trace summary now reports `page.styleElements` and `page.styleUsPerElement`.
+    - Control: these match a separate read of the raw trace exactly (73 278 elements,
+      29.3 µs).
+  - **Not answered.** From 17:05 to 18:14 UTC, LinkedIn served 0 ads in 22 consecutive
+    on-runs. The last runs before that window (16:51-16:57) hid 18, 18 and 21. The 22 runs
+    were:
+    - 6 interleaved timing runs
+    - 6 probe runs
+    - 1 run on the bench as committed before the flag (so the flag is not the cause)
+    - 8 gate tries spaced 5 minutes apart
+    - 1 control
+
+    B and C are only the same arm when nothing is hidden.
+  - **What the ad-free batch does show (release build, 3 each, interleaved):**
+
+    | arm | p99 | >50 ms | style ms | layout ms | posts revealed | feed loads | style ms / post |
+    |---|---|---|---|---|---|---|---|
+    | A off | 100 / 83.4 / 83.4 | 44 / 59 / 45 | 1652 / 2217 / 2197 | 398 / 652 / 480 | 54 / 46 / 49 | 10 / 9 / 10 | 40.7 |
+    | B collapse | 50.5 / 83.4 / 83.1 | 33 / 45 / 52 | 1484 / 2551 / 2322 | 520 / 547 / 568 | 47 / 52 / 47 | 9 / 10 / 10 | 43.5 |
+    | C blur | 66.6 / 83.3 / 66.6 | 48 / 36 / 43 | 1890 / 1824 / 2527 | 643 / 493 / 525 | 50 / 46 / 54 | 9 / 9 / 11 | 41.6 |
+
+    Ads hidden: 0 in every run. Posts and loads come from the probe runs, and style per
+    post is the arm's mean style over its mean posts. Sifter present, with nothing to
+    hide, costs no page style time.
+  - **What the earlier runs with ads already show (raw traces reread, counts only):**
+    - On-runs restyle about as many elements as off-runs. Final runs: off 51.3k / 23.1k /
+      25.0k, on 28.8k / 30.2k / 32.6k.
+    - Each element costs more with ads hidden: on 119 / 90 / 109 µs, against off 46 / 49 /
+      54.
+    - Across the item-5 on-runs with ads: 73-135 µs. Ad-free on-runs: 56-88, against off
+      51-82.
+    - The largest single recalc is 230-268 elements with ads hidden, against at most 177
+      otherwise.
+
+    So "30% more posts" does not account for it: the element counts are not higher, and
+    the per-element cost is. The trace does not say what makes those elements costlier,
+    because invalidation tracking is not recorded. The `[contents] > *` blur rule alone
+    showed no effect (item 5a). Per-element cost also varies run to run (one ad-free
+    control: 29 µs over 73k elements), so this is a lead, not a finding.
+  - **To finish, when ads return:**
+    1. Confirm one `pnpm bench:live --site linkedin --pattern down --mode on` hides at
+       least 1.
+    2. Then interleave, 3 each, release build, plugged in:
+       - `--mode off`
+       - `--mode on`
+       - `--mode on --hide-mode blur`
+    3. Then `--probe --mode both` and `--probe --mode on --hide-mode blur`, 3 each.
+    4. Positive control for C: `probe.revealed.collapsed` is 0 with `hidden` > 0.
+    5. If C's `styleUsPerElement` matches B's, add the invalidation-tracking trace
+       category to name the selector.
 - **Item 1, `markContents` (e296c6f):** the tag path read a `display: contents` box's
   style straight after its own class and placeholder writes, which forced a recalc.
   - It now reads the boxes in the decide phase.
@@ -77,10 +135,9 @@ append rule) is still parked: its mechanism was not seen live.
        label words before paint.
      - (c) Move the lane into rAF. This is a rule change with no gain: the recalc is due
        there anyway.
-  2. **What the frame target should be judged against.** With ads collapsed, the same
-     scroll distance renders about 30% more posts. Per post revealed, on and off load
-     alike. Meeting the off-run p99 per px would mean not collapsing below the screen,
-     which is a design choice.
+  2. **Wait for the A/B/C answer.** Whether the frame target needs a design change (not
+     collapsing below the screen) depends on it. If the excess is per-element style cost
+     with hides present, it is a CSS or write fix, not a design choice.
 
 **Scroll stability, Phase 0 (2026-10-04, branch `perf/scroll-stability`, from
 `feat/prepaint` 9446f6a): measure, no behaviour change.** Plan:

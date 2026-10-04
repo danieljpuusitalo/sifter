@@ -7,6 +7,7 @@ import { adapterFor } from '../../src/adapters/index';
 import {
   BLUR_CLASS,
   COLLAPSE_CLASS,
+  CONTENTS_ATTR,
   HIDDEN_CLASS,
   Hider,
   type HiderCallbacks,
@@ -171,20 +172,46 @@ describe('Hider tag', () => {
     expect(t.watched.size).toBe(0);
   });
 
+  it('a tag marks display: contents wrappers (nested too), and only those; a full unhide unmarks them', () => {
+    document.body.innerHTML =
+      '<ul><li id="u"><span class="label">Promoted</span><div id="w" style="display: contents"><div id="n" style="display: contents"><p id="p">Body</p></div></div></li></ul>';
+    const { h } = lateHider();
+    h.hide(unit(), 'sponsored');
+    expect(h.isTagged(unit()), 'positive control: tagged').toBe(true);
+    const marked = [...document.querySelectorAll(`[${CONTENTS_ATTR}]`)].map((e) => e.id);
+    expect(marked).toEqual(['w', 'n']);
+    h.unhide(unit());
+    expect(document.querySelectorAll(`[${CONTENTS_ATTR}]`).length).toBe(0);
+  });
+
+  it('blur mode marks display: contents wrappers in the next frame, never inside hide() (the pre-paint lane reads no style)', async () => {
+    document.body.innerHTML = '<ul><li id="u"><span class="label">Promoted</span><div id="w" style="display: contents"><p>Body</p></div></li></ul>';
+    const { h } = lateHider('blur');
+    h.hide(unit(), 'sponsored', undefined, true);
+    expect(unit().classList.contains(BLUR_CLASS), 'positive control: blurred').toBe(true);
+    expect(document.getElementById('w')!.hasAttribute(CONTENTS_ATTR), 'marked synchronously').toBe(false);
+    await new Promise<void>((done) => requestAnimationFrame(() => done()));
+    expect(document.getElementById('w')!.hasAttribute(CONTENTS_ATTR)).toBe(true);
+  });
+
   it('the tag CSS places the placeholder at zero height and blurs the content, changing no layout', () => {
     const { h } = lateHider();
     h.hide(unit(), 'sponsored');
     const css = unitStylesheetText(document);
     const tagRules = css.split('\n').filter((l) => l.includes(TAG_CLASS));
-    expect(tagRules.length, 'positive control: tag rules exist').toBe(2);
+    expect(tagRules.length, 'positive control: tag rules exist').toBe(3);
     const place = tagRules.find((r) => r.includes(`.${TAG_CLASS} > [${PLACEHOLDER_ATTR}]`));
     expect(place).toMatch(/height: 0(px)? !important/);
-    const blur = tagRules.find((r) => r !== place) as string;
-    expect(blur).toContain(`.${TAG_CLASS}:not(.${TAG_OPEN_CLASS}) > :not([${PLACEHOLDER_ATTR}])`);
+    const blurs = tagRules.filter((r) => r !== place);
+    expect(blurs.some((r) => r.includes(`.${TAG_CLASS}:not(.${TAG_OPEN_CLASS}) > :not([${PLACEHOLDER_ATTR}])`))).toBe(true);
+    // Through a display: contents wrapper, which paints nothing of its own.
+    expect(blurs.some((r) => r.includes(`.${TAG_CLASS}:not(.${TAG_OPEN_CLASS}) [${CONTENTS_ATTR}] > *`))).toBe(true);
     // Paint-only properties: no display, height, margin, padding or position.
-    const decl = /\{([^}]*)\}/.exec(blur)?.[1] ?? '';
-    const props = decl.split(';').map((d) => d.split(':')[0]!.trim()).filter(Boolean).sort();
-    expect(props).toEqual(['filter', 'pointer-events']);
+    for (const blur of blurs) {
+      const decl = /\{([^}]*)\}/.exec(blur)?.[1] ?? '';
+      const props = decl.split(';').map((d) => d.split(':')[0]!.trim()).filter(Boolean).sort();
+      expect(props).toEqual(['filter', 'pointer-events']);
+    }
     // The pill overflows its zero-height host instead of pushing the post down.
     const shadowCss = Array.from(placeholderRoot(host(unit()))?.adoptedStyleSheets ?? [])
       .flatMap((s) => Array.from(s.cssRules).map((r) => r.cssText))

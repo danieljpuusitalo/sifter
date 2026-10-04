@@ -19,6 +19,12 @@ export const TAG_CLASS = 'sifter-tag';
 /** A tag the reader chose to see: unblurred in place, pill kept so it can be hidden again. */
 export const TAG_OPEN_CLASS = 'sifter-tag-open';
 export const PLACEHOLDER_ATTR = 'data-sifter-placeholder';
+/**
+ * Marks a `display: contents` box inside a blurred unit. It has no box of its own, so
+ * a filter on it paints nothing: the blur reaches through it to its children instead.
+ * LinkedIn wraps a post's whole body in one.
+ */
+export const CONTENTS_ATTR = 'data-sifter-contents';
 /** Marks the fallback `<style>` element when the document's realm has no constructable sheets. */
 const UNIT_STYLE_ATTR = 'data-sifter';
 
@@ -61,6 +67,8 @@ type Record_ = {
   tagged: boolean;
   /** Only "hide" mode touches the unit's own inline style; collapse/blur hide via the shared stylesheet instead. */
   prev: { display: string; displayPriority: string } | null;
+  /** The `display: contents` boxes marked with CONTENTS_ATTR for this unit's blur, so a reset can unmark them. */
+  contents: Element[];
 };
 
 export type HiderCallbacks = {
@@ -153,9 +161,13 @@ export function usesSharedSheet(doc: Document): boolean {
 // zero-height box whose row overflows on top of the content, so inserting it adds
 // nothing to layout. A tag blurs the unit's content the way blur mode does: a filter
 // is paint only, so a rescan still reads the unit exactly as the site built it.
+// A `display: contents` child paints nothing of its own, so its filter is a no-op: the
+// second blur rule reaches its children (through nested wrappers too) and never
+// compounds, because each wrapper it passes through paints nothing.
 const UNIT_CSS = `
 .${HIDDEN_CLASS}.${COLLAPSE_CLASS} > :not([${PLACEHOLDER_ATTR}]) { display: none !important; }
 .${HIDDEN_CLASS}.${BLUR_CLASS} > :not([${PLACEHOLDER_ATTR}]), .${TAG_CLASS}:not(.${TAG_OPEN_CLASS}) > :not([${PLACEHOLDER_ATTR}]) { filter: blur(12px) !important; pointer-events: none !important; }
+.${HIDDEN_CLASS}.${BLUR_CLASS} [${CONTENTS_ATTR}] > *, .${TAG_CLASS}:not(.${TAG_OPEN_CLASS}) [${CONTENTS_ATTR}] > * { filter: blur(12px) !important; pointer-events: none !important; }
 .${HIDDEN_CLASS}.${COLLAPSE_CLASS} { min-height: 0 !important; max-height: none !important; height: auto !important; }
 .${TAG_CLASS} > [${PLACEHOLDER_ATTR}], .${HIDDEN_CLASS}.${BLUR_CLASS} > [${PLACEHOLDER_ATTR}] { display: flow-root !important; height: 0 !important; position: relative !important; z-index: 1 !important; }
 `;
@@ -206,6 +218,8 @@ export class Hider {
   private hidden = new Set<Element>();
   /** Every unit with a live record, hidden, tagged or shown: what a hard reset (`unhide`/`prune`/`setMode`) must reach. */
   private tracked = new Set<Element>();
+  /** Blurred units waiting for `markContents` in the next animation frame. */
+  private pendingMarks = new Set<Element>();
 
   /**
    * @param late When given, a hide decided after the page settled lands as a tag
@@ -293,6 +307,7 @@ export class Hider {
       shown: false,
       tagged: false,
       prev: null,
+      contents: [],
     };
     this.records.set(unit, rec);
     this.tracked.add(unit);
@@ -316,6 +331,7 @@ export class Hider {
     const modeClass = this.classFor(rec.mode);
     if (modeClass) el.classList.remove(modeClass);
     this.restoreStyle(el, rec);
+    this.unmarkContents(rec);
     rec.placeholder?.remove();
   }
 
@@ -443,10 +459,59 @@ export class Hider {
     }
     if (tag) {
       el.classList.add(TAG_CLASS);
+      // A tag comes from the debounced pass, where style reads are allowed: mark now.
+      this.markContents(unit, rec);
       this.late?.watch(unit);
       return;
     }
     this.present(el, rec);
+  }
+
+  /**
+   * Marks the unit's `display: contents` children (and any nested inside them) so the
+   * blur reaches the content they wrap. One computed-style read per child, no layout.
+   */
+  private markContents(unit: Element, rec: Record_): void {
+    const view = this.doc.defaultView;
+    if (!view) return;
+    const visit = (parent: Element, depth: number): void => {
+      for (const child of Array.from(parent.children)) {
+        if (child === rec.placeholder || child.hasAttribute(PLACEHOLDER_ATTR)) continue;
+        if (view.getComputedStyle(child).display !== 'contents') continue;
+        if (!child.hasAttribute(CONTENTS_ATTR)) {
+          child.setAttribute(CONTENTS_ATTR, '');
+          rec.contents.push(child);
+        }
+        if (depth < 3) visit(child, depth + 1);
+      }
+    };
+    visit(unit, 0);
+  }
+
+  private unmarkContents(rec: Record_): void {
+    for (const c of rec.contents) c.removeAttribute(CONTENTS_ATTR);
+    rec.contents = [];
+  }
+
+  /** Blur mode can be applied by the pre-paint lane, which must not read style (hard rule 7): mark in the next frame. */
+  private markSoon(unit: Element): void {
+    const raf = this.doc.defaultView?.requestAnimationFrame;
+    if (!raf) {
+      const rec = this.records.get(unit);
+      if (rec) this.markContents(unit, rec);
+      return;
+    }
+    if (this.pendingMarks.size === 0) raf.call(this.doc.defaultView, () => this.flushMarks());
+    this.pendingMarks.add(unit);
+  }
+
+  private flushMarks(): void {
+    const units = [...this.pendingMarks];
+    this.pendingMarks.clear();
+    for (const u of units) {
+      const rec = this.records.get(u);
+      if (rec && !rec.shown && rec.mode === 'blur' && u.isConnected) this.markContents(u, rec);
+    }
   }
 
   /** Lifts the tag: the unit is untouched again, its placeholder (if the mode keeps one) a normal bar. */
@@ -473,6 +538,7 @@ export class Hider {
       return;
     }
     el.classList.add(this.classFor(rec.mode) as string);
+    if (rec.mode === 'blur') this.markSoon(el);
   }
 
   private restoreStyle(el: HTMLElement, rec: Record_): void {

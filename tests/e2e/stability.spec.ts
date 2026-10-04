@@ -45,6 +45,58 @@ test('a sponsored card caught on screen is blurred in place: nothing moves, Show
   await expect(late(page)).not.toHaveClass(/\bsifter-hidden\b/);
 });
 
+// Live report, 2026-10-04: on LinkedIn a tagged post's body stayed readable while its
+// reactions and comments blurred. The body sits in a `display: contents` wrapper, which
+// has no box, so a filter on it paints nothing (its computed filter still reads blur(12px),
+// which is why the check above missed it). A sharp striped probe inside such a wrapper must
+// paint differently blurred and shown: an unblurred probe paints the same both times.
+const BLURS = [
+  { name: 'a late tag', how: 'filled', mode: null, cls: /\bsifter-tag\b/ },
+  { name: 'blur mode, from the pre-paint lane', how: 'born', mode: 'blur', cls: /\bsifter-blur\b/ },
+] as const;
+
+for (const v of BLURS) {
+  test(`${v.name} blurs content inside a display: contents wrapper`, async ({ context, page }) => {
+    await open(page, `[componentkey="${LATE}"] > ._77aa { display: contents; }`);
+    if (v.mode) await fromPopup(context, { type: 'sifter:setHideMode', mode: v.mode });
+    await insertLateAd(page, v.how);
+    await expect(late(page)).toHaveClass(v.cls);
+    await page.evaluate((key) => {
+      const b = document.createElement('div');
+      b.id = 'paint-probe';
+      b.style.cssText = 'height: 120px; margin-top: 80px; background: repeating-linear-gradient(90deg, #000 0 4px, #fff 4px 8px);';
+      (document.querySelector(`[componentkey="${key}"] > ._77aa`) as HTMLElement).append(b);
+    }, LATE);
+    const wrapper = await page.evaluate((key) => getComputedStyle(document.querySelector(`[componentkey="${key}"] > ._77aa`)!).display, LATE);
+    expect(wrapper, 'positive control: the wrapper has no box').toBe('contents');
+    await page.waitForTimeout(100);
+    // Share of the probe's pixels that are near pure black or white: ~1 painted sharp, ~0 blurred to grey.
+    const sharpness = async () => {
+      const png = (await page.locator('#paint-probe').screenshot({ animations: 'disabled' })).toString('base64');
+      return page.evaluate(async (src) => {
+        const img = new Image();
+        img.src = `data:image/png;base64,${src}`;
+        await img.decode();
+        const c = document.createElement('canvas');
+        c.width = img.width;
+        c.height = img.height;
+        const ctx = c.getContext('2d')!;
+        ctx.drawImage(img, 0, 0);
+        const d = ctx.getImageData(0, 0, c.width, c.height).data;
+        let extreme = 0;
+        for (let i = 0; i < d.length; i += 4) if (d[i]! < 40 || d[i]! > 215) extreme++;
+        return extreme / (d.length / 4);
+      }, png);
+    };
+    expect(await sharpness(), 'the probe painted sharp while its post was blurred').toBeLessThan(0.3);
+    await page.locator(`[componentkey="${LATE}"] > [data-sifter-placeholder] .row [data-act="show"]`).click();
+    if (v.mode) await expect(late(page)).not.toHaveClass(v.cls);
+    else await expect(late(page)).toHaveClass(/\bsifter-tag-open\b/);
+    await page.waitForTimeout(100);
+    expect(await sharpness(), 'positive control: shown, the probe paints sharp').toBeGreaterThan(0.8);
+  });
+}
+
 test('a tag the reader leaves a full screen behind collapses', async ({ context, page }) => {
   // A tall first card, so the top of the feed is more than two screens above the late card.
   await open(page, '[componentkey^="update-card-focus1001"] { min-height: 1800px; }');

@@ -1,5 +1,40 @@
 # Sifter checkpoint
 
+**Session 18c (2026-10-04, branch `feat/prepaint`): blur through `display: contents`,
+menu error.** Daniel in Chrome on the 18b build: "some posts are not hidden, while their
+comment sections are sensored", and an error on the extensions page.
+
+- **Cause, confirmed live:** a LinkedIn tagged unit's post body is a `display: contents`
+  child. It has no box, so the `filter: blur(12px)` on it paints nothing (its computed
+  filter still reads `blur(12px)`, which is why `stability.spec.ts` missed it). The grid
+  and flex siblings (reactions, comments) blurred. Session 18b made the tag the default
+  late path, so it surfaced now. Same gap as session 16's veil fix.
+- **Fix** (`hider.ts`): `markContents` sets `data-sifter-contents` on each `display:
+  contents` child (nested up to 4 deep), and a new UNIT_CSS rule blurs `[marker] > *`.
+  This doesn't compound, because each wrapper it passes through paints nothing.
+  - A tag marks synchronously (it comes from the debounced pass, where style reads are fine).
+  - Blur mode marks in the next `requestAnimationFrame` (`markSoon`), because `hide(now)`
+    can run in the pre-paint lane, which reads no style beyond label nodes (rule 7). From
+    an ordinary task's MutationObserver callback, that rAF runs before the frame paints.
+    From a site's own rAF, it runs one frame late.
+  - `unhide` unmarks.
+  - **Known gap:** a wrapper the site replaces after the hide is not re-marked, and text
+    nodes sitting directly in a wrapper can't be reached by a selector.
+- **Menu:** `contextMenus.create` in `onInstalled` now has a callback that consumes
+  `runtime.lastError`. A second install event raced past `removeAll`. It was harmless,
+  since the existing menu worked.
+- **Receipts:**
+  - `pnpm verify`: 432 passed, 5 skipped; tp=62 fp=0 fn=0.
+  - `pnpm test:e2e`: 43 passed, 1 skipped.
+  - New e2e (`stability.spec.ts`, tag and blur-mode-from-the-lane): sharpness, i.e. the
+    share of near-black/white pixels in a striped probe inside a `display: contents`
+    wrapper. It must be < 0.3 blurred and > 0.8 after Show.
+    - **Negative control:** with the new CSS rule removed, both fail with sharpness 1.
+    - A first version compared screenshots blurred vs shown. Its blur-mode variant passed
+      without the fix (Show's layout change alters the raster), so it was replaced.
+  - Unit mutation: dropping either mark call fails its own unit test.
+- **Open:** live check in Daniel's Chrome (reload the unpacked copy).
+
 **Session 18 (2026-10-03, branch `feat/prepaint`): hide before paint, never move what
 the reader can see.** Daniel on the merged #23-#28 build in Chrome: "still very jumpy
 ... posts occasionally get hidden but create an empty space between posts that

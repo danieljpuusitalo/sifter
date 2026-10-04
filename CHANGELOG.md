@@ -33,6 +33,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- On LinkedIn, a tagged or blurred post's text stayed readable while only its
+  reactions and comments were blurred. LinkedIn wraps the post body in a box
+  the browser doesn't draw itself, so the blur on it did nothing; Sifter now
+  blurs what's inside it.
+- Chrome's extensions page no longer shows "Cannot create item with duplicate id
+  sifter-hide-this" after an update. The right-click menu worked anyway; the
+  error is now handled.
 - On Facebook, a hidden module in the right-hand column shrinks to its bar at
   once: that column never scrolls off screen, and only it moves, never the feed.
 - The scroll bench reported no hides or collapses at all: its probe watched the

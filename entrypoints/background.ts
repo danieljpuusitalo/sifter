@@ -36,12 +36,18 @@ export default defineBackground(() => {
     browser.contextMenus
       .removeAll()
       .then(() => {
-        browser.contextMenus.create({
-          id: MENU_ID,
-          title: 'Hide this post with Sifter',
-          contexts: ['page', 'link', 'image', 'video', 'selection'],
-          documentUrlPatterns: LAUNCH_MATCHES,
-        });
+        // Two install events close together (an update, then a reload) can race past
+        // removeAll and create twice. The menu exists then, so consume the duplicate-id
+        // error: without a callback Chrome reports it as "Unchecked runtime.lastError".
+        browser.contextMenus.create(
+          {
+            id: MENU_ID,
+            title: 'Hide this post with Sifter',
+            contexts: ['page', 'link', 'image', 'video', 'selection'],
+            documentUrlPatterns: LAUNCH_MATCHES,
+          },
+          () => void browser.runtime.lastError,
+        );
       })
       .then(() => syncOptInScripts())
       .then((optInMatches) => injectIntoOpenTabs(injectTargetMatches(optInMatches)))

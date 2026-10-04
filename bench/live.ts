@@ -72,6 +72,8 @@ if (!PATTERNS.includes(PATTERN)) {
   process.exit(2);
 }
 const PROBE = process.argv.includes('--probe');
+/** Also trace raster work (tile raster and GPU tasks, off the main thread): what a CSS filter costs. Heavier trace. */
+const RASTER = process.argv.includes('--raster');
 /** The feed's own scroller, where the site has one; the probe falls back to the document. */
 const SCROLLERS: Record<string, string> = { linkedin: 'main' };
 
@@ -151,7 +153,8 @@ async function setSuggested(context: BrowserContext, value: boolean): Promise<vo
 }
 
 async function recordTrace(cdp: CDPSession, file: string, run: () => Promise<void>): Promise<void> {
-  const categories = PROFILE_MODE ? `${CATEGORIES},disabled-by-default-v8.cpu_profiler` : CATEGORIES;
+  let categories = PROFILE_MODE ? `${CATEGORIES},disabled-by-default-v8.cpu_profiler` : CATEGORIES;
+  if (RASTER) categories += ',disabled-by-default-devtools.timeline,cc,gpu';
   await cdp.send('Tracing.start', { categories, transferMode: 'ReturnAsStream' });
   await run();
   const done = new Promise<string>((res) => cdp.once('Tracing.tracingComplete', (e) => res(e.stream as string)));
@@ -332,6 +335,10 @@ export function analyse(file: string) {
   const extSpans: { ts: number; end: number }[] = [];
   const nestedStyle = { ms: 0, n: 0, max: 0 };
   const nestedLayout = { ms: 0, n: 0, max: 0 };
+  // A V8 collection that lands inside an extension call: the page and the content
+  // script share one heap, so whoever allocates when new space fills pays the
+  // scavenge (one 20 ms "onMutations" call on 2026-10-04 was 19.9 ms of MinorGC).
+  const nestedGc = { ms: 0, n: 0, max: 0 };
   let openExt: Ev | null = null;
   const forcers = new Map<string, { ms: number; n: number }>();
   for (const e of mt) {
@@ -354,7 +361,11 @@ export function analyse(file: string) {
           forcers.set(key, f);
         }
       }
-      if (e.name === 'UpdateLayoutTree' || e.name === 'RecalculateStyles') {
+      if (e.name === 'MinorGC' || e.name === 'MajorGC') {
+        nestedGc.ms += e.dur! / 1000;
+        nestedGc.n++;
+        nestedGc.max = Math.max(nestedGc.max, e.dur! / 1000);
+      } else if (e.name === 'UpdateLayoutTree' || e.name === 'RecalculateStyles') {
         nestedStyle.ms += e.dur! / 1000;
         nestedStyle.n++;
         nestedStyle.max = Math.max(nestedStyle.max, e.dur! / 1000);
@@ -411,6 +422,7 @@ export function analyse(file: string) {
       tasksOver4ms: perTask.filter((x) => x > 4).length,
       forcedStyle: { ms: +nestedStyle.ms.toFixed(1), n: nestedStyle.n, max: +nestedStyle.max.toFixed(2) },
       forcedLayout: { ms: +nestedLayout.ms.toFixed(1), n: nestedLayout.n, max: +nestedLayout.max.toFixed(2) },
+      gcInside: { ms: +nestedGc.ms.toFixed(1), n: nestedGc.n, max: +nestedGc.max.toFixed(2) },
       forcedBy: [...forcers.entries()]
         .sort((a, b) => b[1].ms - a[1].ms)
         .slice(0, 8)
@@ -424,7 +436,37 @@ export function analyse(file: string) {
       styleMs: +sumName(['UpdateLayoutTree', 'RecalculateStyles']).toFixed(1),
       layoutMs: +sumName(['Layout']).toFixed(1),
       gcMs: +sumName(['MinorGC', 'MajorGC', 'V8.GC_SCAVENGER', 'BlinkGC.AtomicPhase']).toFixed(1),
+      paintMs: +sumName(['PrePaint', 'Paint', 'Layerize']).toFixed(1),
     },
+    raster: RASTER ? rasterTotals(events, names) : null,
+  };
+}
+
+/**
+ * Off-main-thread paint cost, every process (`--raster` only): tile raster in the
+ * renderer's worker threads, and what the GPU process spends on raster and drawing.
+ * Outermost events only per thread, so a nested slice is not counted twice.
+ */
+function rasterTotals(events: Ev[], names: Map<string, string>) {
+  const byThread = new Map<string, number>();
+  const ends = new Map<string, number>();
+  const xs = events.filter((e) => e.ph === 'X' && typeof e.dur === 'number').sort((a, b) => a.ts - b.ts);
+  let rasterMs = 0;
+  for (const e of xs) {
+    const k = `${e.pid}:${e.tid}`;
+    const thread = names.get(k) ?? '';
+    const raster = e.name === 'RasterTask' || e.name === 'GpuRasterization' || /Raster/.test(e.name);
+    const gpuThread = /CrGpuMain|VizCompositor|GpuWatchdog|DrDc/.test(thread);
+    if (!raster && !gpuThread) continue;
+    if ((ends.get(k) ?? 0) > e.ts) continue;
+    ends.set(k, e.ts + e.dur!);
+    const ms = e.dur! / 1000;
+    if (raster) rasterMs += ms;
+    if (gpuThread) byThread.set(thread, (byThread.get(thread) ?? 0) + ms);
+  }
+  return {
+    rasterMs: +rasterMs.toFixed(1),
+    gpuThreads: Object.fromEntries([...byThread].map(([t, ms]) => [t, +ms.toFixed(1)])),
   };
 }
 

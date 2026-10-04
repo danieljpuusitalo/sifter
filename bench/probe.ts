@@ -41,6 +41,7 @@ export const PROBE_SCRIPT = `
   const stateOf = new WeakMap();
   const pending = [];
   const keys = new Map();
+  let revealedKeys = new Set();
   const idOf = (el) => { let id = ids.get(el); if (!id) { id = nextId++; ids.set(el, id); } return id; };
   const state = (el) => {
     const c = el.classList;
@@ -139,6 +140,12 @@ export const PROBE_SCRIPT = `
       }
       const on = r.height > 0 && r.bottom > vp.top && r.top < vp.bottom;
       if (on) {
+        // Revealed: a post (by text key, so a re-mount counts once) that reached the screen.
+        if (!revealedKeys.has(el.__probeKey)) {
+          revealedKeys.add(el.__probeKey);
+          raw.revealed++;
+          if (state(el) === 'collapsed') raw.revealedCollapsed++;
+        }
         tops.set(id, r.top);
         if (prev && prev.tops.has(id)) dts.push(r.top - prev.tops.get(id));
       }
@@ -194,7 +201,8 @@ export const PROBE_SCRIPT = `
     },
     /** Zero the counters and rows but keep every unit seen so far, so a later return still reads as a re-mount. */
     reset() {
-      raw = { rows: [], changes: [], remounts: 0, remountAtEnd: 0, remountNotAtEnd: 0, remountFlips: { toCollapsed: 0, toFull: 0 }, remountHeightChanged: 0, remountHeightChangedSifter: 0, ckStable: 0, ckChanged: 0, ckMissing: 0, newAtEnd: 0, newNotAtEnd: 0, dupText: 0, feedLoads: 0, lastAppendAt: -1e9, distance: 0, down: 0, up: 0, unitsMax: 0, anchor: null };
+      raw = { rows: [], changes: [], remounts: 0, remountAtEnd: 0, remountNotAtEnd: 0, remountFlips: { toCollapsed: 0, toFull: 0 }, remountHeightChanged: 0, remountHeightChangedSifter: 0, ckStable: 0, ckChanged: 0, ckMissing: 0, newAtEnd: 0, newNotAtEnd: 0, dupText: 0, feedLoads: 0, lastAppendAt: -1e9, distance: 0, down: 0, up: 0, unitsMax: 0, anchor: null, revealed: 0, revealedCollapsed: 0 };
+      revealedKeys = new Set();
       pending.length = 0;
       prev = null;
     },
@@ -242,6 +250,8 @@ export type ProbeRaw = {
   up: number;
   unitsMax: number;
   anchor: string | null;
+  revealed: number;
+  revealedCollapsed: number;
 };
 
 /** Below this a move is sub-pixel rounding, not a jump. */
@@ -331,6 +341,10 @@ export function summariseProbe(raw: ProbeRaw | null, sifterScrolls: number[] = [
     feedLoads: raw.feedLoads,
     scrollHeightChanges,
     unitsMax: raw.unitsMax,
+    /** Posts that reached the screen (once each), and how many of those were collapsed when they did. */
+    revealed: { n: raw.revealed, collapsed: raw.revealedCollapsed },
+    /** Feed loads per post revealed: same as off when Sifter's collapses only make the same distance cover more posts. */
+    loadsPerRevealed: raw.revealed ? +(raw.feedLoads / raw.revealed).toFixed(3) : null,
   };
 }
 export type ProbeSummary = NonNullable<ReturnType<typeof summariseProbe>>;

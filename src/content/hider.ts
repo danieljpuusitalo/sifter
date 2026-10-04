@@ -288,10 +288,44 @@ export class Hider {
   }
 
   /**
+   * A new hide, not applied at once, would land as a tag (and so mark the unit's
+   * `display: contents` boxes). The scanner asks in its read phase, to read them there.
+   */
+  tagsLateHides(): boolean {
+    return !!this.late && this.mode !== 'blur' && !this.late.loadHide?.();
+  }
+
+  /**
+   * Reads only: the unit's `display: contents` children (and any nested inside them,
+   * three levels down) that a tag's blur must reach through. The scanner calls it in
+   * its read phase, where style is already clean, so the tag's writes never have to
+   * be followed by a style read (that read forced a recalc of the freshly tagged post,
+   * once per tag).
+   */
+  contentsOf(unit: Element): Element[] {
+    const view = this.doc.defaultView;
+    const out: Element[] = [];
+    if (!view) return out;
+    const placeholder = this.records.get(unit)?.placeholder ?? null;
+    const visit = (parent: Element, depth: number): void => {
+      for (const child of Array.from(parent.children)) {
+        if (child === placeholder || child.hasAttribute(PLACEHOLDER_ATTR)) continue;
+        if (view.getComputedStyle(child).display !== 'contents') continue;
+        out.push(child);
+        if (depth < 3) visit(child, depth + 1);
+      }
+    };
+    visit(unit, 0);
+    return out;
+  }
+
+  /**
    * @param now Apply the real mode at once, never a tag: the pre-paint lane (the
    *   post has not been drawn yet) and hides the reader asked for.
+   * @param contents `contentsOf(unit)`, read before any write: a tag then marks
+   *   these with writes only. Without it, the tag reads them after its own writes.
    */
-  hide(unit: Element, category: HideCategory, hint?: string, now = false): void {
+  hide(unit: Element, category: HideCategory, hint?: string, now = false, contents?: readonly Element[]): void {
     const existing = this.records.get(unit);
     if (existing) {
       const changed = existing.category !== category || existing.hint !== hint;
@@ -314,10 +348,10 @@ export class Hider {
     this.records.set(unit, rec);
     this.tracked.add(unit);
     // Blur never changes layout, and while the page is still loading nobody is reading yet.
-    const tag = !now && !!this.late && this.mode !== 'blur' && !this.late.loadHide?.();
+    const tag = !now && this.tagsLateHides();
     this.hidden.add(unit);
     if (!tag) (unit as HTMLElement).classList.add(HIDDEN_CLASS);
-    this.applyMode(unit, rec, tag);
+    this.applyMode(unit, rec, tag, contents);
   }
 
   /** Hard reset: removes the placeholder and the record entirely. Used for a full unhide, disabling, and "Not an ad". */
@@ -448,7 +482,7 @@ export class Hider {
    * Presents a fresh (or re-moded) hide: the placeholder for collapse and blur (and
    * for a tag in every mode), then either the tag or the mode itself.
    */
-  private applyMode(unit: Element, rec: Record_, tag: boolean): void {
+  private applyMode(unit: Element, rec: Record_, tag: boolean, contents?: readonly Element[]): void {
     const el = unit as HTMLElement;
     rec.mode = this.mode;
     rec.prev = null;
@@ -461,12 +495,15 @@ export class Hider {
     }
     if (tag) {
       el.classList.add(TAG_CLASS);
-      // A tag comes from the debounced pass, where style reads are allowed: mark now.
+      // A tag comes from the debounced pass, where style reads are allowed. The scanner
+      // read the boxes before writing anything; a read here, after the placeholder and
+      // the class, would force a style recalc of the post.
+      const mark = () => (contents ? this.markGiven(unit, rec, contents) : this.markContents(unit, rec));
       if (this.cost) {
         const t0 = performance.now();
-        this.markContents(unit, rec);
+        mark();
         this.cost('markContents', performance.now() - t0);
-      } else this.markContents(unit, rec);
+      } else mark();
       this.late?.watch(unit);
       return;
     }
@@ -478,20 +515,16 @@ export class Hider {
    * blur reaches the content they wrap. One computed-style read per child, no layout.
    */
   private markContents(unit: Element, rec: Record_): void {
-    const view = this.doc.defaultView;
-    if (!view) return;
-    const visit = (parent: Element, depth: number): void => {
-      for (const child of Array.from(parent.children)) {
-        if (child === rec.placeholder || child.hasAttribute(PLACEHOLDER_ATTR)) continue;
-        if (view.getComputedStyle(child).display !== 'contents') continue;
-        if (!child.hasAttribute(CONTENTS_ATTR)) {
-          child.setAttribute(CONTENTS_ATTR, '');
-          rec.contents.push(child);
-        }
-        if (depth < 3) visit(child, depth + 1);
-      }
-    };
-    visit(unit, 0);
+    this.markGiven(unit, rec, this.contentsOf(unit));
+  }
+
+  /** Writes only: marks boxes `contentsOf` read earlier, skipping any the site has since moved out of the unit. */
+  private markGiven(unit: Element, rec: Record_, contents: readonly Element[]): void {
+    for (const child of contents) {
+      if (child.hasAttribute(CONTENTS_ATTR) || !unit.contains(child)) continue;
+      child.setAttribute(CONTENTS_ATTR, '');
+      rec.contents.push(child);
+    }
   }
 
   private unmarkContents(rec: Record_): void {

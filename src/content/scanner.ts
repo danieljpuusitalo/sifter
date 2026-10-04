@@ -115,6 +115,8 @@ type Decision = {
   why?: HideWhy;
   /** A release because the unit emptied. */
   empty?: boolean;
+  /** A new hide that will land as a tag: the `display: contents` boxes its blur must reach, read here so the write phase never reads style. */
+  contents?: Element[];
 };
 
 /** Past this many characters a placeholder's hint is post body, not a label. */
@@ -1163,7 +1165,7 @@ export class Scanner {
       if (decision.action === 'hide') {
         const hint = cat === 'custom' ? ruleHint(block.selector) : suggestedHint(adapter, block.rule);
         const why: HideWhy = { category: decision.category, rule: block.rule, kind: 'block', detail: block.selector };
-        return { unit, fp, hide: decision.category, block: true, hint, why };
+        return { unit, fp, hide: decision.category, block: true, hint, why, contents: this.tagContents(unit) };
       }
       return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;
     }
@@ -1242,9 +1244,19 @@ export class Scanner {
           : (decision.category === 'suggested' ? suggestedHint(adapter, marker?.rule) : undefined) ?? firstHint(text);
       const kind = decision.category === 'custom' && custom ? 'muted' : marker?.kind;
       const why: HideWhy = { category: decision.category, rule: marker?.rule, kind, detail: safeDetail(kind, marker?.detail) };
-      return { unit, fp, hide: decision.category, hint, why };
+      return { unit, fp, hide: decision.category, hint, why, contents: this.tagContents(unit) };
     }
     return this.hider.isHidden(unit) ? { unit, fp, hide: null } : null;
+  }
+
+  /**
+   * A new hide that `apply` will land as a tag marks the unit's `display: contents`
+   * boxes. Read them here, with the other reads, while style is clean: read after the
+   * tag's own writes, they forced a style recalc of the post, once per tag.
+   */
+  private tagContents(unit: Element): Element[] | undefined {
+    if (this.releasing || this.hider.isHidden(unit) || !this.hider.tagsLateHides()) return undefined;
+    return this.hider.contentsOf(unit);
   }
 
   /** DOM writes only. */
@@ -1267,7 +1279,7 @@ export class Scanner {
       this.laneHidden.delete(d.unit);
       // A tag already on the page stays one: the reader is looking at it, not at the switch.
       const atOnce = this.releasing && !this.hider.isTagged(d.unit);
-      this.hider.hide(d.unit, d.hide, d.hint, atOnce);
+      this.hider.hide(d.unit, d.hide, d.hint, atOnce, d.contents);
       this.deps.trace?.wrote(d.unit, atOnce ? 'user' : 'decide', this.now());
       this.hiddenFps.set(d.fp, d.hide);
       if (d.block) this.blockHidden.set(d.unit, d.fp);

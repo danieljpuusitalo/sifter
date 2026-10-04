@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Window } from 'happy-dom';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fixturePath } from '../../evals/fixture-eval';
 import { adapterFor } from '../../src/adapters/index';
 import {
@@ -29,6 +29,8 @@ import type { CategoryToggles } from '../../src/types';
 // reader clicks Hide or the tracker reports it off screen below (viewport.ts). These
 // tests drive a fake tracker by hand; the real one is covered end to end in
 // tests/e2e/stability.spec.ts.
+
+const FIXTURES_DIR = join(__dirname, '../../fixtures/public');
 
 const noopCb: HiderCallbacks = { onShow: () => {}, onNotAd: () => {}, onRehide: () => {}, onHideTag: () => {} };
 
@@ -184,6 +186,47 @@ describe('Hider tag', () => {
     expect(document.querySelectorAll(`[${CONTENTS_ATTR}]`).length).toBe(0);
   });
 
+  // Live LinkedIn, 2026-10-04: markContents took 12-20 ms per tag, because its style
+  // reads came straight after the tag's own writes and forced a recalc of the post.
+  it('given the boxes read beforehand, a tag marks them with no style read at all', () => {
+    document.body.innerHTML =
+      '<ul><li id="u"><span class="label">Promoted</span><div id="w" style="display: contents"><div id="n" style="display: contents"><p id="p">Body</p></div></div></li></ul>';
+    const { h } = lateHider();
+    const before = h.contentsOf(unit());
+    expect(before.map((e) => e.id), 'contentsOf reads the same boxes').toEqual(['w', 'n']);
+    expect(document.querySelectorAll(`[${CONTENTS_ATTR}]`).length, 'contentsOf writes nothing').toBe(0);
+    const spy = vi.spyOn(window, 'getComputedStyle');
+    try {
+      h.hide(unit(), 'sponsored', undefined, false, before);
+      expect(h.isTagged(unit()), 'positive control: tagged').toBe(true);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+    expect([...document.querySelectorAll(`[${CONTENTS_ATTR}]`)].map((e) => e.id)).toEqual(['w', 'n']);
+    h.unhide(unit());
+    expect(document.querySelectorAll(`[${CONTENTS_ATTR}]`).length).toBe(0);
+  });
+
+  it('without the boxes, a tag still reads them itself (the fallback), and skips a box the site moved out', () => {
+    document.body.innerHTML =
+      '<ul><li id="u"><span class="label">Promoted</span><div id="w" style="display: contents"><p>Body</p></div></li></ul><div id="away" style="display: contents"></div>';
+    const { h } = lateHider();
+    const spy = vi.spyOn(window, 'getComputedStyle');
+    try {
+      h.hide(unit(), 'sponsored');
+      expect(spy, 'positive control: the fallback reads style').toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(document.getElementById('w')!.hasAttribute(CONTENTS_ATTR)).toBe(true);
+    // A box read in decide that left the unit before apply is not marked.
+    document.body.insertAdjacentHTML('beforeend', '<ul><li id="v"><p>Other</p></li></ul>');
+    const v = document.getElementById('v') as HTMLElement;
+    h.hide(v, 'sponsored', undefined, false, [document.getElementById('away') as Element]);
+    expect(document.getElementById('away')!.hasAttribute(CONTENTS_ATTR)).toBe(false);
+  });
+
   it('blur mode marks display: contents wrappers in the next frame, never inside hide() (the pre-paint lane reads no style)', async () => {
     document.body.innerHTML = '<ul><li id="u"><span class="label">Promoted</span><div id="w" style="display: contents"><p>Body</p></div></li></ul>';
     const { h } = lateHider('blur');
@@ -298,6 +341,53 @@ describe('Hider tag', () => {
     expect(renderedWithin(lbl, u)).toBe(true);
     expect(renderedText(u)).toContain('Promoted');
     expect(hasContent(u)).toBe(true);
+  });
+});
+
+describe('Scanner tag path', () => {
+  const html = readFileSync(join(FIXTURES_DIR, 'linkedin-feed.html'), 'utf8');
+  const body = /<body>([\s\S]*)<\/body>/.exec(html)?.[1] ?? '';
+  let scanner: Scanner | undefined;
+  afterEach(() => {
+    scanner?.stop();
+    scanner = undefined;
+  });
+
+  it('reads the boxes a tag marks in the read phase: no style read inside a post after it was tagged', () => {
+    document.body.innerHTML = body;
+    const ad = document.querySelector('[componentkey^="update-card-focus1002"]') as HTMLElement;
+    // LinkedIn wraps post content in display: contents boxes.
+    const wrap = document.createElement('div');
+    wrap.id = 'wrap';
+    wrap.style.display = 'contents';
+    const last = ad.lastElementChild as Element;
+    last.replaceWith(wrap);
+    wrap.append(last);
+    const tracker = new FakeTracker();
+    let readsInsideTags = 0;
+    const real = window.getComputedStyle.bind(window);
+    const spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((el, pseudo) => {
+      if (el.closest(`.${TAG_CLASS}`)) readsInsideTags++;
+      return real(el, pseudo);
+    });
+    try {
+      scanner = new Scanner({
+        doc: document,
+        hostname: 'www.linkedin.com',
+        baseUrl: 'https://www.linkedin.com/feed/',
+        adapter: adapterFor('www.linkedin.com'),
+        context: defaultContext('linkedin.com'),
+        persistOverride: () => {},
+        schedule: (fn) => fn(),
+        viewport: () => tracker,
+      });
+      scanner.start();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(ad.classList.contains(TAG_CLASS), 'positive control: the ad is a tag').toBe(true);
+    expect(wrap.hasAttribute(CONTENTS_ATTR), 'the blur still reaches through the wrapper').toBe(true);
+    expect(readsInsideTags).toBe(0);
   });
 });
 

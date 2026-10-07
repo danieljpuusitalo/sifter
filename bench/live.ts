@@ -28,7 +28,7 @@ import { STABILITY_PROBE, summariseStability, type StabRaw } from './stability';
 // (a hide let go by no choice of the user's), for the load and for the scroll.
 // A plain `pnpm build` leaves those out; rebuild normally afterwards either way.
 //
-// `--pattern down|up|reverse|fling` (default down) picks the wheel plan (bench/probe.ts
+// `--pattern down|up|reverse|fling|read` (default down; `read` is one post at a time with a 2.5 s pause) picks the wheel plan (bench/probe.ts
 // `wheelPlan`). `up` scrolls down for the same time first, outside the measured window,
 // then measures the way back. Every run reports the distance the feed actually scrolled,
 // and a run that did not move fails (exit 1): a scroll that never landed measures nothing.
@@ -72,7 +72,7 @@ const PROFILE = resolve(arg('user-data', '.dev-profile-edge'));
 const EDGE = arg('browser', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe');
 const EXT = resolve(arg('ext', '.output/chrome-mv3'));
 const TRACE_DIR = arg('trace-dir', join(process.env.TEMP ?? '.', 'sifter-traces'));
-const PATTERNS: readonly Pattern[] = ['down', 'up', 'reverse', 'fling'];
+const PATTERNS: readonly Pattern[] = ['down', 'up', 'reverse', 'fling', 'read'];
 const PATTERN = arg('pattern', 'down') as Pattern;
 if (!PATTERNS.includes(PATTERN)) {
   console.error(`unknown --pattern ${PATTERN}; one of ${PATTERNS.join(', ')}`);
@@ -622,6 +622,7 @@ async function runOnce(withExt: boolean) {
           maxSliceMs: +(after.maxSliceMs as number).toFixed(1),
           maxDecideMs: +(after.maxDecideMs as number).toFixed(1),
           laneMaxMs: typeof after.laneMaxMs === 'number' ? +after.laneMaxMs.toFixed(2) : null,
+          laneBilledMaxMs: typeof after.laneBilledMaxMs === 'number' ? +after.laneBilledMaxMs.toFixed(2) : null,
           // Label nodes that paid a style read vs settled on raw text (src/extract.ts readLabel).
           labelStyleReads: n('labelStyleReads'),
           labelReadsSkipped: n('labelReadsSkipped'),

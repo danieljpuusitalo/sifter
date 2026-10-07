@@ -1,5 +1,44 @@
 # Sifter checkpoint
 
+**Lane clock (2026-10-07, branch `perf/lane-clock`, stacked on `perf/scroll-stability`):
+fewer blurred posts on LinkedIn.** Daniel: "the occasional blurred post ... nice if that
+amount could be cut slightly."
+
+- **Cause, measured:** a blurred post is a lane cut. The unit is born just below the fold, the 1 ms
+  cap cuts it, and it is decided late, so it gets a tag. The cap was spent by one read, the
+  first `checkVisibility` of a fresh batch, which pays the page's pending style recalc
+  (4-70 ms; Phase 2 item 3: moved work, not added). The reads after it cost about 0.1 ms each.
+- **Change:** the 1 ms no longer counts the batch's single longest unit read (`laneClock` in
+  `scanner.ts`). It is the longest read, not the first, because the recalc lands on the first
+  unit that reaches a label node. A second slow read is still billed. `laneMaxMs` stays the
+  honest total. New `laneBilledMaxMs` is what the cap governs, and the strict `bench:scroll`
+  gate now reads it.
+  - **Hard rule 7's wording changed** in CLAUDE.md and BRIEF.md §3. This is Daniel's call; the PR flags it.
+- **Tests:** three new cases in `prepaint.test.ts`, with the old 2 ms-per-read cases as the
+  negative control. Mutation-checked:
+  - no exemption: 3 fail
+  - first read only: 1 fails
+- **Live LinkedIn** (trace build, native Edge, plugged in, 60 s, same hour):
+
+  | build | pattern | hides | from lane | late (`lateFarBelow` + `lateInView`) | overflow | `laneFrameOverBudget` |
+  |---|---|---|---|---|---|---|
+  | old (14:19) | down | 43 | 26 | 17 | 17 | 33 |
+  | old (14:46) | down | 47 | 41 | 6 | 6 | 21 |
+  | new (14:42) | down | 47 | 47 | 0 | 0 | 2 |
+  | new (14:49) | fling | 19 | 19 | 0 | 0 | 1 |
+
+  `laneOverBudget` (the callback's cut) is still 14-34 per run; the frame continuation now
+  catches nearly all of it. `laneBilledMaxMs` live: 2.8 and 3.4 ms. `laneMaxMs`: 25 and 8.5.
+- **`bench:scroll --cpu 1 --strict --browser <Edge>`, 3 runs per site:** new `laneBilledMaxMs`
+  LinkedIn 1.3 / 1.4 / **2.2**, Facebook 1.3 / **2.1** / 1.6. That is 2 of 6 over the 2 ms limit.
+  Old-scanner control, same session: `laneMaxMs` (its gate) LinkedIn 1.2 / 1.8 / 1.9,
+  Facebook **2.1** / 1.8 / **2.8**, also 2 of 6. This is the same marginal overrun as before;
+  the limit was not moved. `cards` > `--start` on every run.
+- **Also:** a `read` pattern in `bench:live` (one post, then a 2.5 s pause). It ran 75 s on the
+  old build: 9 hides, 0 blurred. Keep live runs at 75 s or less, because a 180 s trace stalled
+  the parse.
+- **Next:** Daniel judges the build live, then decides on the rule-7 wording.
+
 **Scroll stability, Phase 2 (2026-10-04, branch `perf/scroll-stability`): the costs
 Phase 0 measured live.** Commits e296c6f, d3c21ab, 591af3b, 8caad31. Phase 1 (mount memory,
 append rule) is still parked: its mechanism was not seen live.
@@ -1005,7 +1044,7 @@ path is still unverified live (no sponsored feed post appeared this session eith
 ## Do not undo
 
 - **The pre-paint lane looks only at units born in the batch** (session 18, `bornUnits`): an added root or a unit inside one. A unit reached by `closest()` from a changed node was already painted, and hiding it there is the old jump. It reads no layout, honours overrides, off rules, `covers` and `suggestedPaths`, and every hit is confirmed by `decide()`. `tests/unit/prepaint.test.ts` (with a parity run over every public fixture).
-- **The lane's first record and first unit always fit the 1 ms cap** (session 18): the cap is asked before every further one. Asking first let one slow clock read skip whole batches (51 bare frames in the e2e oracle).
+- **The lane's first record and first unit always fit the 1 ms cap** (session 18): the cap is asked before every further one. Asking first let one slow clock read skip whole batches (51 bare frames in the e2e oracle). Since 2026-10-07 the cap also leaves the batch's single longest read unbilled (`laneClock`): that read pays the page's own style recalc, and billing it cut the cheap reads after it into blurred tags.
 - **A hide from a user-started pass applies at once, an existing tag stays a tag** (session 18, `changesHeight` in `scanner.ts`): the reader asked for the change, and `keepInPlace` holds the screen.
 - **A below report never collapses a unit by itself:** every one waits for a fresh rect read in a frame. Mid-scroll (session 18b, P1) a tag collapses only when that rect puts it at `top ≥ innerHeight + max(120, speed × 100 ms)`; the speed lead covers the compositor running ahead of the main thread. A long site task holds scroll events back, so "not scrolling" can be false while the compositor scrolls (881 px, 2026-10-01; `belowCameNear` counts the jumps this prevents). Never collapse on or above the screen.
 - **The lane gets one `requestAnimationFrame` continuation, never a chain** (session 18b, P3): the rAF runs before that frame paints, so what the 1 ms cap cut is still hidden before it is drawn. What that cuts is queued and watched, and `approach()` ends its debounce once one is within a screen (P2). The debounce is a token, so a superseded timer is a no-op.

@@ -1,5 +1,57 @@
 # Sifter checkpoint
 
+**Follow-up A/B/C answered (2026-10-08, lane-clock release build, on `perf/lane-clock`).**
+The frame excess with Sifter on comes from the posts that collapsing brings into the same
+distance, not from Sifter's presence or writes. Whether that matters is a design question
+for Daniel (below), not a bug.
+
+- **Timing runs:** native Edge, plugged in, 60 s, down pattern, interleaved A/B/C, 3 each.
+  Arms: A off, B on with collapse, C on with blur.
+
+  | arm | p99 ms | >50 ms frames | page style ms | elements styled | µs / element | hidden | posts the lane saw |
+  |---|---|---|---|---|---|---|---|
+  | A off | 175 / 83 / 100 | 426 / 174 / 164 | 12163 / 9156 / 8242 | 305k / 302k / 400k | 39.8 / 30.3 / 20.6 | 0 | n/a |
+  | B collapse | 167 / 167 / 150 | 308 / 246 / 226 | 9396 / 10756 / 9702 | 360k / 468k / 434k | 26.1 / 23.0 / 22.3 | 43 / 46 / 43 | 179 / 180 / 180 |
+  | C blur | 150 / 117 / 133 | 246 / 170 / 169 | 9754 / 8704 / 6814 | 338k / 372k / 297k | 28.9 / 23.4 / 23.0 | 37 / 34 / 36 | 136 / 129 / 140 |
+
+  A1 was the session's first run and looks like warm-up (worst on every measure). Distance
+  was 95-98k px on every run.
+- **Probe runs** (`--probe`, the same build, 3 each; frames not timed):
+
+  | arm | posts revealed | of them collapsed | feed loads | posts per load |
+  |---|---|---|---|---|
+  | A off | 140 / 136 / 141 | 0 | 27 / 26 / 28 | 5.0-5.2 |
+  | B collapse | 170 / 174 / 190 | 40 / 43 / 46 | 34 / 34 / 38 | 5.0-5.1 |
+  | C blur | 143 / 139 / 140 | 0 | 28 / 27 / 27 | 5.1-5.2 |
+
+  C's positive control holds: it hides 34-35 ads with 0 collapsed, and it covers the same
+  posts as off.
+- **Reading:**
+  - Per element, the cost is no higher with hides present: B 22-26 µs and C 23-29 µs,
+    against A 21-40. The earlier lead (90-119 µs with ads hidden) did not reproduce, so
+    step 5 (the invalidation-tracking category) is not warranted.
+  - B covers about 30% more posts in the same distance and styles more elements. Its >50 ms
+    frames sit above off on every comparable run.
+  - C, at off's post count, is at off's level on >50 ms frames in 2 of 3 runs (170, 169
+    against 174, 164). p99 stays above off (117-150 against 83-100). n=3, so that residue
+    is a lead, not a finding.
+- **Late catches:** 0 `lateInView` and 0 `lateFarBelow` across all 6 on-runs, 254 hides. On
+  the release build, the lane-clock result holds.
+- **Small, fixable, not done:** in blur mode, `markContents` (via `flushMarks` and
+  `contentsOf`) still forces style: 22.6 / 32.9 / 13 ms per run. Collapse shows no such
+  stack. Item 1 below moved the tag path's reads into decide, but this path still reads
+  after its writes. Blur is not the default.
+- **For Daniel:** collapse buys about 30 more posts per 100k px at a per-pixel frame cost.
+  Per post, Sifter adds no page style cost. The options:
+  - (a) Keep collapse. Recommended: the cost is the content, and reading is paced by post,
+    not by pixel.
+  - (b) Collapse only on screen and blur below it. This is the "design change" named in
+    Phase 2, and it trades back the extra posts.
+- **Also this session:** the e2e virtual-feed test no longer uses `test.fail()`. CI's Linux
+  no longer hits the Phase 0 jump, so CI failed it for passing. It now allows only that one
+  known re-mount jump. The test is on `perf/scroll-stability` (a5fa6d8) and merged into
+  `perf/lane-clock`, and CI is green on #30 and #31.
+
 **Lane clock (2026-10-07, branch `perf/lane-clock`, stacked on `perf/scroll-stability`):
 fewer blurred posts on LinkedIn.** Daniel: "the occasional blurred post ... nice if that
 amount could be cut slightly."
@@ -68,7 +120,7 @@ append rule) is still parked: its mechanism was not seen live.
   The "before" release baseline (the same day, before items 4a/4b) had two runs with 0
   hidden, and both of those met the target: on p99 66.6 and 66.7 against off 83.4. The
   frame excess appears only when a run hides ads.
-- **Follow-up A/B/C (open: LinkedIn served no ads).** The question: is the style excess
+- **Follow-up A/B/C (answered 2026-10-08, see the top section).** The question: is the style excess
   the extra posts (a consequence of collapsing), or Sifter's presence and writes? The
   arms: (A) off, (B) on in collapse mode, (C) on in blur mode, where heights never change,
   so the same distance covers the same posts as off.
@@ -182,7 +234,7 @@ append rule) is still parked: its mechanism was not seen live.
        label words before paint.
      - (c) Move the lane into rAF. This is a rule change with no gain: the recalc is due
        there anyway.
-  2. **Wait for the A/B/C answer.** Whether the frame target needs a design change (not
+  2. **A/B/C answered 2026-10-08 (top section): it is the extra posts, not per-element cost.** Whether the frame target needs a design change (not
      collapsing below the screen) depends on it. If the excess is per-element style cost
      with hides present, it is a CSS or write fix, not a design choice.
 

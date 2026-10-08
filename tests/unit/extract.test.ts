@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { adapterFor } from '../../src/adapters/index';
 import type { Adapter } from '../../src/adapters/schema';
-import { buildPayload, detectMarker, renderedText, renderedWithin } from '../../src/extract';
+import { buildPayload, detectMarker, labelReadCounts, renderedText, renderedWithin } from '../../src/extract';
+import { hasMarkerLine } from '../../src/rules/markers';
 
 const linkedin = adapterFor('www.linkedin.com') as Adapter;
 const google = adapterFor('www.google.com') as Adapter;
@@ -202,6 +203,85 @@ describe('lazy label reads', () => {
     const hit = detectMarker(u, linkedin, base, on);
     expect(hit?.rule).toBe('follow');
   });
+  describe('a wanted word written inside a longer word is not a candidate', () => {
+    // On a live feed most label spans with children are post text, and "ad" sits
+    // inside "read", "already", "loading": each paid a style read for nothing.
+    const styledFor = (header: string) => {
+      const before = labelReadCounts.styled;
+      const cv = vi.spyOn(Element.prototype, 'checkVisibility');
+      const hit = detectMarker(unit(post(header)), linkedin, base);
+      const calls = cv.mock.calls.length;
+      cv.mockRestore();
+      return { hit, styled: labelReadCounts.styled - before, calls };
+    };
+
+    it('"ad" inside words, in one text node or split across two, pays no style read', () => {
+      for (const header of ['<b>Already</b> read', 'Adobe <b>news</b>', 'Repro<b>moted</b>', 'Pro<b>motedly</b>', 'Gladly <b>so</b>']) {
+        const r = styledFor(header);
+        expect(r.hit, header).toBeNull();
+        expect(r.styled, header).toBe(0);
+        expect(r.calls, header).toBe(0);
+      }
+    });
+    it('positive control: the word standing alone in a text node still pays its read, and still hits', () => {
+      const alone = styledFor('Read <b>Ad</b>');
+      expect(alone.styled).toBe(1);
+      expect(alone.calls).toBeGreaterThan(0);
+      expect(alone.hit).toBeNull(); // the line is "Read Ad", not "Ad"
+      const hit = styledFor('<b>Promoted</b> ·');
+      expect(hit.styled).toBe(1);
+      expect(hit.hit?.category).toBe('sponsored');
+    });
+    it('a word spliced around a hidden decoy, or across text nodes at a boundary, is still read', () => {
+      // A hit must come through the style read (styled 1): an unread label's raw text
+      // hitting would mean a hidden decoy could hide a post unchecked.
+      const read = (header: string) => {
+        const r = styledFor(header);
+        expect(r.styled, header).toBe(1);
+        return r.hit?.category;
+      };
+      expect(read('Pro<span class="vh">zq</span>moted')).toBe('sponsored');
+      // Edge punctuation written right against the word is trimmed by labelKey, so it is a boundary.
+      expect(read('·Pro<b>moted</b>')).toBe('sponsored');
+      expect(read('<b>(Promoted)</b>')).toBe('sponsored');
+      // The decoy is a letter, but in its own text node: hidden, the rest reads "Promoted".
+      expect(read('Pro<span class="vh">x</span>moted')).toBe('sponsored');
+      // Letters in a neighbouring text node may be hidden, so they never rule a match out.
+      expect(styledFor('Re<b>pro</b>moted').styled).toBe(1);
+      expect(styledFor('<i>Gl</i>ad').styled).toBe(1);
+    });
+    it('over random spliced headers, every rendered hit is read and found, and nothing else hits', () => {
+      // Seeded, so a failure reproduces. Each header is text nodes built from marker
+      // fragments, letters and punctuation, some hidden: the truth is the visible join.
+      let seed = 20261004;
+      const rand = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+      const pick = <T,>(xs: readonly T[]) => xs[Math.floor(rand() * xs.length)] as T;
+      const FRAGS = ['pro', 'moted', 'Promoted', 'ad', 'Ad', 'ads', 're', 'x', '·', ' ', '\n', 's', 'spon', 'sored', 'a', 'd', '1', '(', ')', 'ly'];
+      let truthHits = 0;
+      let skipped = 0;
+      for (let i = 0; i < 400; i++) {
+        const pieces = Array.from({ length: 1 + Math.floor(rand() * 4) }, () => ({
+          text: Array.from({ length: 1 + Math.floor(rand() * 2) }, () => pick(FRAGS)).join(''),
+          hidden: rand() < 0.3,
+        }));
+        const header = pieces.map((p) => `<b${p.hidden ? ' class="vh"' : ''}>${p.text}</b>`).join('');
+        const truth = hasMarkerLine(pieces.filter((p) => !p.hidden).map((p) => p.text).join(''));
+        const r = styledFor(header);
+        if (truth) {
+          truthHits++;
+          expect(r.styled, header).toBe(1);
+          expect(r.hit?.category, header).toBe('sponsored');
+        } else {
+          expect(r.hit, header).toBeNull();
+          if (r.styled === 0) skipped++;
+        }
+      }
+      // Both sides exercised: rendered hits that must be read, and misses settled without a read.
+      expect(truthHits).toBeGreaterThan(10);
+      expect(skipped).toBeGreaterThan(10);
+    });
+  });
+
   it('a unit with only empty buttons makes no computed-style reads', () => {
     const cs = vi.spyOn(window, 'getComputedStyle');
     const u = unit('<div role="listitem" componentkey="update-card-focus1"><button></button><button></button></div>');

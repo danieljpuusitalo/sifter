@@ -177,10 +177,21 @@ function wanted(markers: boolean, words: readonly ReadonlySet<string>[], endings
  */
 type Label = { text: string; node: Element; confirmed: boolean };
 
+/**
+ * Label nodes read so far in this page: `styled` paid the style reads (a candidate,
+ * or resolved later by `firstShown`), `skipped` were settled on raw text alone.
+ * Cumulative; the scanner reports them in its perf counters and the bench diffs them.
+ */
+export const labelReadCounts = { styled: 0, skipped: 0 };
+
 function readLabel(node: Element, unit: Element, cache: VisibilityCache, w: Wanted): Label {
   const raw = node.textContent ?? '';
   const candidate = node.firstElementChild ? piecesMayHit(node, w) : leafMayHit(raw, w);
-  if (!candidate) return { text: raw, node, confirmed: false };
+  if (!candidate) {
+    labelReadCounts.skipped++;
+    return { text: raw, node, confirmed: false };
+  }
+  labelReadCounts.styled++;
   return { text: labelText(node, unit, cache), node, confirmed: true };
 }
 
@@ -195,36 +206,79 @@ const MAX_PIECES = 64;
 
 function piecesMayHit(node: Element, w: Wanted): boolean {
   const walker = node.ownerDocument.createTreeWalker(node, 4 /* NodeFilter.SHOW_TEXT */);
-  const pieces: string[] = [];
+  const pieces: Piece[] = [];
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    const t = (n.nodeValue ?? '').replace(/\s+/g, '').toLowerCase();
-    if (!t) continue;
+    const lower = (n.nodeValue ?? '').toLowerCase();
+    const s = lower.replace(/\s+/g, '');
+    if (!s) continue;
     if (pieces.length >= MAX_PIECES) return true;
-    pieces.push(t);
+    pieces.push({ s, lower });
   }
   return w.plain.some((word) => spansPieces(word, pieces));
+}
+
+/** One text node: `s` lower case with whitespace removed (what words match against), `lower` as written. */
+type Piece = { s: string; lower: string };
+
+/**
+ * Every hit check compares a whole label line, after `labelKey`, which only
+ * collapses whitespace and trims edge punctuation: a letter or digit is never
+ * dropped. A text node renders whole, so a letter or digit written right against
+ * a matched word, in the same text node, is right against it on the rendered line
+ * too, and that line cannot equal the word, nor end with " " + it. So such a
+ * match can be discarded without a style read: "ad" inside "read" or "loading"
+ * (on a live feed, almost every body span with children). Whitespace, punctuation
+ * and marks count as a boundary, which keeps this a superset of a rendered hit.
+ */
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+
+/** Index in `lower` of the `i`th character of `s`. */
+function writtenAt(p: Piece, i: number): number {
+  if (p.s.length === p.lower.length) return i;
+  let seen = -1;
+  for (let o = 0; o < p.lower.length; o++) {
+    if (/\s/.test(p.lower[o]!)) continue;
+    if (++seen === i) return o;
+  }
+  return p.lower.length;
+}
+
+/** Whether a letter or digit is written right before `s[i]` in the same text node. */
+function joinedBefore(p: Piece, i: number): boolean {
+  const o = writtenAt(p, i);
+  return o > 0 && WORD_CHAR.test(p.lower[o - 1]!);
+}
+
+/** Whether a letter or digit is written right after `s[i]` in the same text node. */
+function joinedAfter(p: Piece, i: number): boolean {
+  const o = writtenAt(p, i) + 1;
+  return o < p.lower.length && WORD_CHAR.test(p.lower[o]!);
 }
 
 /**
  * Whether `word` can be read across `pieces` in order, using each piece whole
  * except the first (from its end) and the last (from its start), with any pieces
  * skipped. That is every string that hiding whole text nodes and joining the rest
- * can produce, so it is a superset of any rendered match. Both sides are lower
- * case with whitespace removed.
+ * can produce, so it is a superset of any rendered match. A match whose first or
+ * last letter is written against another letter or digit in its own text node is
+ * not one (see WORD_CHAR). Both sides are lower case with whitespace removed.
  */
-function spansPieces(word: string, pieces: string[]): boolean {
+function spansPieces(word: string, pieces: Piece[]): boolean {
   // Matched prefix lengths reachable so far; skipping a piece keeps each of them.
   let states = new Set<number>();
   for (const p of pieces) {
-    if (p.includes(word)) return true;
+    const s = p.s;
+    for (let at = s.indexOf(word); at !== -1; at = s.indexOf(word, at + 1)) {
+      if (!joinedBefore(p, at) && !joinedAfter(p, at + word.length - 1)) return true;
+    }
     const next = new Set<number>(states);
-    for (let k = Math.min(p.length, word.length - 1); k >= 1; k--) {
-      if (p.endsWith(word.slice(0, k))) next.add(k);
+    for (let k = Math.min(s.length, word.length - 1); k >= 1; k--) {
+      if (s.endsWith(word.slice(0, k)) && !joinedBefore(p, s.length - k)) next.add(k);
     }
     for (const j of states) {
       const rest = word.slice(j);
-      if (p.startsWith(rest)) return true;
-      if (rest.startsWith(p)) next.add(j + p.length);
+      if (s.startsWith(rest) && !joinedAfter(p, rest.length - 1)) return true;
+      if (rest.startsWith(s)) next.add(j + s.length);
     }
     states = next;
   }
@@ -239,6 +293,8 @@ function spansPieces(word: string, pieces: string[]): boolean {
 function firstShown(labels: Label[], unit: Element, cache: VisibilityCache): string | undefined {
   for (const l of labels) {
     if (!l.confirmed) {
+      labelReadCounts.skipped--;
+      labelReadCounts.styled++;
       l.text = labelText(l.node, unit, cache);
       l.confirmed = true;
     }

@@ -1,0 +1,221 @@
+<!doctype html>
+<!--
+  Synthetic LinkedIn home feed, virtualised. All names and text are invented.
+
+  The static markup is an ordinary gold fixture (data-gold on each unit root), so the
+  evals and unit tests read it like any other. The inline script only runs in a real
+  browser (e2e, bench:scroll virtual): it makes the feed behave the way LinkedIn's does
+  (scroll-stability Phase 0).
+
+  - The feed scrolls inside <main> under a fixed header, with overflow-anchor: none:
+    measured live, Chrome does not anchor LinkedIn's main (tests/e2e/feed.ts SCROLLERS).
+  - A unit more than two screens away is unmounted and its slot kept at the height the
+    unit last measured. Within one screen it is re-created whole, from pristine markup.
+  - Every second sponsored post (index 7, 17, ...) mounts as a shell: its "Promoted"
+    label fills in two frames later, so the pre-paint lane cannot see it.
+  - Some appended posts grow after their first mount (an image loading). A re-mount
+    comes back at its grown height.
+  - A sentinel below the feed appends ten posts 150 ms after it nears the screen.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="sifter-host" content="www.linkedin.com" />
+    <title>Feed | LinkedIn (virtual fixture)</title>
+    <style>
+      html, body { height: 100%; margin: 0; overflow: hidden; }
+      body { font-family: system-ui, sans-serif; background: #f4f2ee; }
+      #nav { position: fixed; top: 0; left: 0; right: 0; height: 52px; background: #fff; border-bottom: 1px solid #ddd; }
+      #workspace { position: fixed; top: 52px; bottom: 0; left: 0; right: 0; overflow-y: auto; overflow-anchor: none; }
+      ._3a1f { max-width: 560px; margin: 0 auto; padding: 16px; }
+      [data-lazy-mount-id] { box-sizing: border-box; padding: 4px 0; }
+      [role='listitem'] { background: #fff; border-radius: 8px; margin: 0; padding: 12px; }
+      ._hd p { margin: 0; min-height: 20px; line-height: 20px; }
+      ._77aa p { margin: 8px 0; }
+      ._media { background: #dde; border-radius: 4px; }
+      #sentinel { height: 40px; }
+    </style>
+  </head>
+  <body>
+    <header id="nav"></header>
+    <main id="workspace">
+      <div class="_3a1f">
+        <div data-testid="mainFeed" role="list" data-component-type="LazyColumn">
+          <div data-lazy-mount-id="v0">
+            <div role="listitem" componentkey="update-card-focus2000FeedType_MAIN_FEED_RELEVANCE" data-gold="none"><div class="_9c2e"><div class="_hd"><p componentkey="v-0-a"><span>Aino Virtanen</span></p><p componentkey="v-0-b"><span>Product designer · 1h</span></p></div></div><div class="_77aa"><p componentkey="v-0-c"><span>Note 0. we wrapped up the quarter with a calm release careful notes and a long walk by the water.</span></p><div class="_media" style="height: 120px"></div></div></div>
+          </div>
+          <div data-lazy-mount-id="v1">
+            <div role="listitem" componentkey="update-card-focus2001FeedType_MAIN_FEED_RELEVANCE" data-gold="none"><div class="_9c2e"><div class="_hd"><p componentkey="v-1-a"><span>Jonas Berg</span></p><p componentkey="v-1-b"><span>Engineering manager · 2h</span></p></div></div><div class="_77aa"><p componentkey="v-1-c"><span>Note 1. the quarter with a calm release careful notes and a long walk by the water before the next planning round begins we wrapped up the.</span></p><div class="_media" style="height: 190px"></div></div></div>
+          </div>
+          <div data-lazy-mount-id="v2">
+            <div role="listitem" componentkey="update-card-focus2002FeedType_MAIN_FEED_RELEVANCE" data-gold="sponsored"><div class="_9c2e"><div class="_hd"><p componentkey="v-2-a"><span>Tulip Payroll</span></p><p componentkey="v-2-b"><span>Promoted</span></p></div></div><div class="_77aa"><p componentkey="v-2-c"><span>Note 2. a calm release careful notes and a long walk by the water before the next planning round begins we wrapped up the quarter with a calm release careful notes and a long.</span></p><div class="_media" style="height: 260px"></div></div></div>
+          </div>
+          <div data-lazy-mount-id="v3">
+            <div role="listitem" componentkey="update-card-focus2003FeedType_MAIN_FEED_RELEVANCE" data-gold="none"><div class="_9c2e"><div class="_hd"><p componentkey="v-3-a"><span>Mika Laine</span></p><p componentkey="v-3-b"><span>Founder · 4h</span></p></div></div><div class="_77aa"><p componentkey="v-3-c"><span>Note 3. careful notes and a long walk by the water before the next planning round begins we wrapped up the quarter with a calm release careful notes and a long walk by the water before the next planning round begins.</span></p><div class="_media" style="height: 330px"></div></div></div>
+          </div>
+          <div data-lazy-mount-id="v4">
+            <div role="listitem" componentkey="update-card-focus2004FeedType_MAIN_FEED_RELEVANCE" data-gold="none"><div class="_9c2e"><div class="_hd"><p componentkey="v-4-a"><span>Elias Koski</span></p><p componentkey="v-4-b"><span>Data analyst · 5h</span></p></div></div><div class="_77aa"><p componentkey="v-4-c"><span>Note 4. a long walk by the water before the next planning round begins we wrapped up the quarter with a calm release careful notes and a long walk by the water before the next planning round begins we wrapped up the quarter with a calm release careful.</span></p><div class="_media" style="height: 120px"></div></div></div>
+          </div>
+          <div data-lazy-mount-id="v5">
+            <div role="listitem" componentkey="update-card-focus2005FeedType_MAIN_FEED_RELEVANCE" data-gold="none"><div class="_9c2e"><div class="_hd"><p componentkey="v-5-a"><span>Nora Dahl</span></p><p componentkey="v-5-b"><span>Teacher · 6h</span></p></div></div><div class="_77aa"><p componentkey="v-5-c"><span>Note 5. by the water before the next planning round begins we wrapped up the quarter with a calm release careful notes and a long.</span></p><div class="_media" style="height: 190px"></div></div></div>
+          </div>
+          <div data-lazy-mount-id="v6">
+            <div role="listitem" componentkey="update-card-focus2006FeedType_MAIN_FEED_RELEVANCE" data-gold="none"><div class="_9c2e"><div class="_hd"><p componentkey="v-6-a"><span>Oskar Nieminen</span></p><p componentkey="v-6-b"><span>Product designer · 7h</span></p></div></div><div class="_77aa"><p componentkey="v-6-c"><span>Note 6. before the next planning round begins we wrapped up the quarter with a calm release careful notes and a long walk by the water before the next planning round begins.</span></p><div class="_media" style="height: 260px"></div></div></div>
+          </div>
+          <div data-lazy-mount-id="v7">
+            <div role="listitem" componentkey="update-card-focus2007FeedType_MAIN_FEED_RELEVANCE" data-gold="sponsored"><div class="_9c2e"><div class="_hd"><p componentkey="v-7-a"><span>Tulip Payroll</span></p><p componentkey="v-7-b"><span>Promoted</span></p></div></div><div class="_77aa"><p componentkey="v-7-c"><span>Note 7. planning round begins we wrapped up the quarter with a calm release careful notes and a long walk by the water before the next planning round begins we wrapped up the quarter with a calm release careful.</span></p><div class="_media" style="height: 330px"></div></div></div>
+          </div>
+          <div data-lazy-mount-id="v8">
+            <div role="listitem" componentkey="update-card-focus2008FeedType_MAIN_FEED_RELEVANCE" data-gold="none"><div class="_9c2e"><div class="_hd"><p componentkey="v-8-a"><span>Ville Aalto</span></p><p componentkey="v-8-b"><span>Researcher · 9h</span></p></div></div><div class="_77aa"><p componentkey="v-8-c"><span>Note 8. we wrapped up the quarter with a calm release careful notes and a long walk by the water before the next planning round begins we wrapped up the quarter with a calm release careful notes and a long walk by the water before the.</span></p><div class="_media" style="height: 120px"></div></div></div>
+          </div>
+          <div data-lazy-mount-id="v9">
+            <div role="listitem" componentkey="update-card-focus2009FeedType_MAIN_FEED_RELEVANCE" data-gold="none"><div class="_9c2e"><div class="_hd"><p componentkey="v-9-a"><span>Iris Saari</span></p><p componentkey="v-9-b"><span>Founder · 10h</span></p></div></div><div class="_77aa"><p componentkey="v-9-c"><span>Note 9. the quarter with a calm release careful notes and a long walk by the water before the next planning round begins.</span></p><div class="_media" style="height: 190px"></div></div></div>
+          </div>
+          <div data-lazy-mount-id="v10">
+            <div role="listitem" componentkey="update-card-focus2010FeedType_MAIN_FEED_RELEVANCE" data-gold="none"><div class="_9c2e"><div class="_hd"><p componentkey="v-10-a"><span>Aino Virtanen</span></p><p componentkey="v-10-b"><span>Data analyst · 11h</span></p></div></div><div class="_77aa"><p componentkey="v-10-c"><span>Note 10. a calm release careful notes and a long walk by the water before the next planning round begins we wrapped up the quarter with a calm release careful.</span></p><div class="_media" style="height: 260px"></div></div></div>
+          </div>
+          <div data-lazy-mount-id="v11">
+            <div role="listitem" componentkey="update-card-focus2011FeedType_MAIN_FEED_RELEVANCE" data-gold="none"><div class="_9c2e"><div class="_hd"><p componentkey="v-11-a"><span>Jonas Berg</span></p><p componentkey="v-11-b"><span>Teacher · 12h</span></p></div></div><div class="_77aa"><p componentkey="v-11-c"><span>Note 11. careful notes and a long walk by the water before the next planning round begins we wrapped up the quarter with a calm release careful notes and a long walk by the water before the.</span></p><div class="_media" style="height: 330px"></div></div></div>
+          </div>
+        </div>
+        <div id="sentinel"></div>
+      </div>
+    </main>
+    <script>
+      (() => {
+        // html-begin
+        const PEOPLE = ['Aino Virtanen', 'Jonas Berg', 'Sara Lindqvist', 'Mika Laine', 'Elias Koski', 'Nora Dahl', 'Oskar Nieminen', 'Lea Holm', 'Ville Aalto', 'Iris Saari'];
+        const ROLES = ['Product designer', 'Engineering manager', 'Researcher', 'Founder', 'Data analyst', 'Teacher'];
+        const COMPANIES = ['Northwind Cloud', 'Harbor Analytics', 'Tulip Payroll', 'Fjord Freight', 'Lumen Labs'];
+        const WORDS = 'we wrapped up the quarter with a calm release careful notes and a long walk by the water before the next planning round begins'.split(' ');
+        const isAd = (i) => i % 5 === 2;
+        function html(i) {
+          const ad = isAd(i);
+          const name = ad ? COMPANIES[i % COMPANIES.length] : PEOPLE[i % PEOPLE.length];
+          const sub = ad ? 'Promoted' : ROLES[i % ROLES.length] + ' · ' + ((i % 23) + 1) + 'h';
+          const words = Array.from({ length: 18 + ((i * 7) % 30) }, (_, k) => WORDS[(i * 3 + k) % WORDS.length]).join(' ');
+          const media = 120 + (i % 4) * 70;
+          return (
+            '<div role="listitem" componentkey="update-card-focus' + (2000 + i) + 'FeedType_MAIN_FEED_RELEVANCE" data-gold="' + (ad ? 'sponsored' : 'none') + '">' +
+            '<div class="_9c2e"><div class="_hd"><p componentkey="v-' + i + '-a"><span>' + name + '</span></p><p componentkey="v-' + i + '-b"><span>' + sub + '</span></p></div></div>' +
+            '<div class="_77aa"><p componentkey="v-' + i + '-c"><span>Note ' + i + '. ' + words + '.</span></p><div class="_media" style="height: ' + media + 'px"></div></div>' +
+            '</div>'
+          );
+        }
+        // html-end
+        const main = document.getElementById('workspace');
+        const feed = document.querySelector('[data-testid="mainFeed"]');
+        const sentinel = document.getElementById('sentinel');
+        const stats = { mounts: 0, unmounts: 0, remounts: 0, shells: 0, grew: 0, loads: 0 };
+        window.__virtual = stats;
+
+        /** The unit as the site would render it again: no trace of Sifter on it. */
+        function pristine(unit) {
+          const c = unit.cloneNode(true);
+          c.querySelectorAll('[data-sifter-placeholder]').forEach((e) => e.remove());
+          for (const el of [c, ...c.querySelectorAll('*')]) {
+            for (const k of [...el.classList]) if (k.startsWith('sifter-')) el.classList.remove(k);
+            for (const a of [...el.attributes]) if (a.name.startsWith('data-sifter')) el.removeAttribute(a.name);
+          }
+          c.removeAttribute('style');
+          if (!c.getAttribute('class')) c.removeAttribute('class');
+          return c.outerHTML;
+        }
+
+        const slots = [];
+        for (const el of feed.querySelectorAll(':scope > [data-lazy-mount-id]')) {
+          const i = Number(el.getAttribute('data-lazy-mount-id').slice(1));
+          const unit = el.querySelector('[role="listitem"]');
+          slots.push({ el, i, html: unit ? pristine(unit) : html(i), mounted: true, grown: true, everUnmounted: false });
+        }
+
+        function build(s) {
+          const t = document.createElement('template');
+          t.innerHTML = s.html || html(s.i);
+          const unit = t.content.firstElementChild;
+          if (isAd(s.i) && s.i % 10 === 7) {
+            const label = [...unit.querySelectorAll('p[componentkey] > span')].find((x) => x.textContent === 'Promoted');
+            if (label) {
+              label.textContent = '';
+              stats.shells++;
+              requestAnimationFrame(() => requestAnimationFrame(() => { label.textContent = 'Promoted'; }));
+            }
+          }
+          if (!s.grown) {
+            s.grown = true;
+            const media = unit.querySelector('._media');
+            const full = media.style.height;
+            media.style.height = '0px';
+            setTimeout(() => { media.style.height = full; stats.grew++; }, 120);
+          }
+          return unit;
+        }
+
+        function virtualise() {
+          const H = main.clientHeight;
+          const st = main.scrollTop;
+          const M = H;
+          const base = main.getBoundingClientRect().top - st;
+          // Measure everything first, then write: no layout read between writes.
+          const boxes = slots.map((s) => s.el.getBoundingClientRect());
+          slots.forEach((s, k) => {
+            const r = boxes[k];
+            const top = r.top - base;
+            const bottom = r.bottom - base;
+            if (s.mounted && (bottom < st - 2 * M || top > st + H + 2 * M)) {
+              s.el.style.height = r.height + 'px';
+              s.el.replaceChildren();
+              s.mounted = false;
+              s.everUnmounted = true;
+              stats.unmounts++;
+            } else if (!s.mounted && bottom > st - M && top < st + H + M) {
+              s.el.style.height = '';
+              s.el.append(build(s));
+              s.mounted = true;
+              stats.mounts++;
+              if (s.everUnmounted) stats.remounts++;
+            }
+          });
+        }
+
+        let queued = false;
+        function schedule() {
+          if (queued) return;
+          queued = true;
+          requestAnimationFrame(() => { queued = false; virtualise(); });
+        }
+
+        let loading = false;
+        function append(k) {
+          const f = document.createDocumentFragment();
+          for (let n = 0; n < k; n++) {
+            const i = slots.length;
+            const el = document.createElement('div');
+            el.setAttribute('data-lazy-mount-id', 'v' + i);
+            const s = { el, i, html: null, mounted: true, grown: !(i % 3 === 0 && !isAd(i)), everUnmounted: false };
+            slots.push(s);
+            el.append(build(s));
+            stats.mounts++;
+            f.append(el);
+          }
+          feed.append(f);
+          stats.loads++;
+        }
+        const near = () => sentinel.getBoundingClientRect().top < main.getBoundingClientRect().bottom + 1200;
+        function load() {
+          if (loading || slots.length >= 400) return;
+          loading = true;
+          setTimeout(() => {
+            append(10);
+            loading = false;
+            schedule();
+            requestAnimationFrame(() => { if (near()) load(); });
+          }, 150);
+        }
+        new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) load(); }, { root: main, rootMargin: '0px 0px 1200px 0px' }).observe(sentinel);
+        main.addEventListener('scroll', schedule, { passive: true });
+        schedule();
+      })();
+    </script>
+  </body>
+</html>

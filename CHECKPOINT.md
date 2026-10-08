@@ -38,6 +38,14 @@ amount could be cut slightly."
   old build: 9 hides, 0 blurred. Keep live runs at 75 s or less, because a 180 s trace stalled
   the parse.
 - **Next:** Daniel judges the build live, then decides on the rule-7 wording.
+- **Open, live report (2026-10-08, future fix):** Daniel clicked a notification ("a page
+  tagged you in a post"), and LinkedIn put him back in the feed with that post hidden.
+  - **Hypothesis, unverified:** LinkedIn opens a notification by showing the post at the
+    top of `/feed/` (a highlighted-update URL), not at `/feed/update/...`.
+  - `suggestedPaths` allows `/feed/`, so a page's post there carries a Follow button and
+    the `follow` rule hides it. Sponsored would not explain it.
+  - **First step:** capture the URL and the hide's `why` from the popup.
+  - **Likely fix:** never hide the unit whose URN the URL names; the user asked for it.
 
 **Scroll stability, Phase 2 (2026-10-04, branch `perf/scroll-stability`): the costs
 Phase 0 measured live.** Commits e296c6f, d3c21ab, 591af3b, 8caad31. Phase 1 (mount memory,

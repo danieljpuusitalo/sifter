@@ -65,7 +65,9 @@ amount could be cut slightly."
   unit that reaches a label node. A second slow read is still billed. `laneMaxMs` stays the
   honest total. New `laneBilledMaxMs` is what the cap governs, and the strict `bench:scroll`
   gate now reads it.
-  - **Hard rule 7's wording changed** in CLAUDE.md and BRIEF.md §3. This is Daniel's call; the PR flags it.
+  - **Hard rule 7's wording changed** in CLAUDE.md and BRIEF.md §3. **Daniel accepted it
+    on 2026-10-08.** The wall-clock lane can exceed 1 ms by its one longest read (live max
+    25 ms), and that read is the page's own recalc.
 - **Tests:** three new cases in `prepaint.test.ts`, with the old 2 ms-per-read cases as the
   negative control. Mutation-checked:
   - no exemption: 3 fail
@@ -89,7 +91,7 @@ amount could be cut slightly."
 - **Also:** a `read` pattern in `bench:live` (one post, then a 2.5 s pause). It ran 75 s on the
   old build: 9 hides, 0 blurred. Keep live runs at 75 s or less, because a 180 s trace stalled
   the parse.
-- **Next:** Daniel judges the build live, then decides on the rule-7 wording.
+- **Landed:** the rule-7 wording was accepted, and the stack merged #30 → #31 → #29 → `main`.
 - **Open, live report (2026-10-08, future fix):** Daniel clicked a notification ("a page
   tagged you in a post"), and LinkedIn put him back in the feed with that post hidden.
   - **Hypothesis, unverified:** LinkedIn opens a notification by showing the post at the
@@ -228,7 +230,8 @@ append rule) is still parked: its mechanism was not seen live.
     The rate is equal: the extra loads are what collapsed ads cost in distance, not a
     feedback loop.
 - **For Daniel:**
-  1. **Lane overrun (item 3).** Options:
+  1. **Lane overrun (item 3). Resolved 2026-10-08 by the lane clock (top) and its rule-7
+     wording, which Daniel accepted.** The options were:
      - (a) Leave it. Recommended: the time is the page's own pending recalc, paid early.
      - (b) The lane skips style reads. This is a rule-7 change and loses split or hidden
        label words before paint.

@@ -1,6 +1,7 @@
 import { createWriteStream, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { chromium, type BrowserContext, type CDPSession, type Page } from '@playwright/test';
+import { PROBE_SCRIPT, summariseProbe, wheelPlan, type Pattern, type ProbeRaw } from './probe';
 import { STABILITY_PROBE, summariseStability, type StabRaw } from './stability';
 
 // Live-site cost trace (hard rule 7, measured where it matters).
@@ -13,7 +14,7 @@ import { STABILITY_PROBE, summariseStability, type StabRaw } from './stability';
 // JavaScript entry point lives in `chrome-extension://` to Sifter, including
 // the style and layout work nested inside those calls.
 //
-//   SIFTER_TRACE=1 pnpm build && pnpm bench:live --site linkedin|facebook|reddit|x|instagram [--seconds 20] [--load-seconds 5] [--mode on|off|both] [--suggested] [--profile]
+//   SIFTER_TRACE=1 pnpm build && pnpm bench:live --site linkedin|facebook|reddit|x|instagram [--seconds 20] [--load-seconds 5] [--mode on|off|both] [--suggested] [--hide-mode collapse|blur|hide] [--profile]
 //   pnpm bench:live analyse <trace.json>
 //
 // `--profile` adds the trace's v8.cpu_profiler samples (the CDP Profiler sees only the
@@ -26,6 +27,17 @@ import { STABILITY_PROBE, summariseStability, type StabRaw } from './stability';
 // reports hide latency (content to hide, split by where the post was) and flips
 // (a hide let go by no choice of the user's), for the load and for the scroll.
 // A plain `pnpm build` leaves those out; rebuild normally afterwards either way.
+//
+// `--pattern down|up|reverse|fling|read` (default down; `read` is one post at a time with a 2.5 s pause) picks the wheel plan (bench/probe.ts
+// `wheelPlan`). `up` scrolls down for the same time first, outside the measured window,
+// then measures the way back. Every run reports the distance the feed actually scrolled,
+// and a run that did not move fails (exit 1): a scroll that never landed measures nothing.
+// `--probe` adds the scroll-stability probe (bench/probe.ts) on the site's scroller
+// (`<main>` on LinkedIn, else the document): residual jumps by blame, re-mounts, whether
+// `componentkey` survives one, and appends. Its raw rows (hashes and counts) go to TEMP
+// with the traces; the summary is counts only. With SIFTER_TRACE=1 the scanner's own
+// attribution (height writes by path and zone, keepInPlace scrolls) is reported too, and
+// its scroll corrections let the probe tell a corrected residual from a visible one.
 //
 // Local only: needs the logged-in `.dev-profile-edge` (gitignored) and closes any
 // window on it first. Writes a summary with counts and timings only, never page
@@ -48,11 +60,29 @@ const SECONDS = Number(arg('seconds', '20'));
 const LOAD_SECONDS = Number(arg('load-seconds', '5'));
 const MODE = arg('mode', 'both');
 const SUGGESTED = process.argv.includes('--suggested');
+/** The hide mode for every on-run (default collapse, the shipped default). Set each run: the profile keeps storage. */
+const HIDE_MODES = ['collapse', 'blur', 'hide'] as const;
+const HIDE_MODE = arg('hide-mode', 'collapse') as (typeof HIDE_MODES)[number];
+if (!HIDE_MODES.includes(HIDE_MODE)) {
+  console.error(`unknown --hide-mode ${HIDE_MODE}; one of ${HIDE_MODES.join(', ')}`);
+  process.exit(2);
+}
 const PROFILE_MODE = process.argv.includes('--profile');
 const PROFILE = resolve(arg('user-data', '.dev-profile-edge'));
 const EDGE = arg('browser', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe');
 const EXT = resolve(arg('ext', '.output/chrome-mv3'));
 const TRACE_DIR = arg('trace-dir', join(process.env.TEMP ?? '.', 'sifter-traces'));
+const PATTERNS: readonly Pattern[] = ['down', 'up', 'reverse', 'fling', 'read'];
+const PATTERN = arg('pattern', 'down') as Pattern;
+if (!PATTERNS.includes(PATTERN)) {
+  console.error(`unknown --pattern ${PATTERN}; one of ${PATTERNS.join(', ')}`);
+  process.exit(2);
+}
+const PROBE = process.argv.includes('--probe');
+/** Also trace raster work (tile raster and GPU tasks, off the main thread): what a CSS filter costs. Heavier trace. */
+const RASTER = process.argv.includes('--raster');
+/** The feed's own scroller, where the site has one; the probe falls back to the document. */
+const SCROLLERS: Record<string, string> = { linkedin: 'main' };
 
 const URLS: Record<string, string> = {
   linkedin: 'https://www.linkedin.com/feed/',
@@ -106,25 +136,33 @@ async function launch(withExt: boolean): Promise<BrowserContext> {
 }
 
 /**
- * Sets the suggested category to the flag's value on every on-run. The dev profile
- * keeps extension storage between runs, so a `--suggested` run used to leave the
- * category on for every later run without the flag: a "baseline" measured with 44
- * hidden posts instead of 9 (2026-09-28).
+ * Sets the suggested category and the hide mode to the flags' values on every on-run.
+ * The dev profile keeps extension storage between runs, so a `--suggested` run used to
+ * leave the category on for every later run without the flag: a "baseline" measured
+ * with 44 hidden posts instead of 9 (2026-09-28).
  */
-async function setSuggested(context: BrowserContext, value: boolean): Promise<void> {
+async function setSettings(context: BrowserContext, value: boolean, mode: string): Promise<void> {
   if (context.serviceWorkers().length === 0) await context.waitForEvent('serviceworker', { timeout: 10000 });
   const id = new URL(context.serviceWorkers()[0]!.url()).host;
   const opt = await context.newPage();
-  await opt.goto(`chrome-extension://${id}/options.html`);
-  await opt.evaluate(async (v) => {
+  // The first-install options tab can navigate to the same URL at the same moment, and
+  // Playwright then rejects this goto as "interrupted" (2 of 15 runs, 2026-10-04): the
+  // page still lands on options.html, so wait for that instead of failing the run.
+  await opt.goto(`chrome-extension://${id}/options.html`).catch(async (e: Error) => {
+    if (!/interrupted by another navigation/.test(e.message)) throw e;
+    await opt.waitForLoadState('load');
+  });
+  await opt.evaluate(async ({ v, m }) => {
     const rt = (globalThis as unknown as { chrome: { runtime: { sendMessage(m: unknown): Promise<unknown> } } }).chrome.runtime;
     await rt.sendMessage({ type: 'sifter:setCategory', category: 'suggested', value: v });
-  }, value);
+    await rt.sendMessage({ type: 'sifter:setHideMode', mode: m });
+  }, { v: value, m: mode });
   await opt.close();
 }
 
 async function recordTrace(cdp: CDPSession, file: string, run: () => Promise<void>): Promise<void> {
-  const categories = PROFILE_MODE ? `${CATEGORIES},disabled-by-default-v8.cpu_profiler` : CATEGORIES;
+  let categories = PROFILE_MODE ? `${CATEGORIES},disabled-by-default-v8.cpu_profiler` : CATEGORIES;
+  if (RASTER) categories += ',disabled-by-default-devtools.timeline,cc,gpu';
   await cdp.send('Tracing.start', { categories, transferMode: 'ReturnAsStream' });
   await run();
   const done = new Promise<string>((res) => cdp.once('Tracing.tracingComplete', (e) => res(e.stream as string)));
@@ -140,17 +178,39 @@ async function recordTrace(cdp: CDPSession, file: string, run: () => Promise<voi
   await new Promise<void>((r) => out.end(r));
 }
 
-/** A person flicking through a feed: wheel ticks in bursts, short pauses to read. */
-async function humanScroll(page: Page, seconds: number): Promise<void> {
+/** A person flicking through a feed: wheel ticks in bursts, short pauses to read (see `wheelPlan`). */
+async function humanScroll(page: Page, pattern: Pattern, seconds: number): Promise<void> {
   await page.mouse.move(700, 500);
-  const end = Date.now() + seconds * 1000;
-  let burst = 0;
-  while (Date.now() < end) {
-    await page.mouse.wheel(0, 120);
-    await page.waitForTimeout(40);
-    if (++burst % 12 === 0) await page.waitForTimeout(400);
+  for (const [dy, wait] of wheelPlan(pattern, seconds)) {
+    if (dy) await page.mouse.wheel(0, dy);
+    await page.waitForTimeout(wait);
   }
 }
+
+/**
+ * How far the page actually scrolled, any scroller: |Δ scrollTop| summed per element from
+ * scroll events (they don't bubble, but a capturing listener on the window sees them).
+ */
+const DISTANCE_PROBE = `
+  window.__dist = { down: 0, up: 0 };
+  (() => {
+    const last = new WeakMap();
+    const seed = (el) => { if (el && !last.has(el)) last.set(el, el.scrollTop); };
+    seed(document.scrollingElement);
+    for (const el of document.querySelectorAll('main')) seed(el);
+    addEventListener('scroll', (e) => {
+      const el = e.target === document ? document.scrollingElement : e.target;
+      if (!(el instanceof Element)) return;
+      const before = last.has(el) ? last.get(el) : el.scrollTop;
+      const d = el.scrollTop - before;
+      last.set(el, el.scrollTop);
+      if (d > 0) window.__dist.down += d; else window.__dist.up -= d;
+    }, { capture: true, passive: true });
+  })();
+`;
+/** Only inside `page.evaluate`: the probe that PROBE_SCRIPT installed. */
+declare const __sifterProbe: { start(c: unknown): void; reset(): void; stop(): ProbeRaw };
+declare const __dist: { down: number; up: number };
 
 type ProfNode = { id: number; parent?: number; callFrame: { functionName: string; url: string; lineNumber: number }; children?: number[] };
 type Profile = { nodes: ProfNode[]; samples: number[]; timeDeltas: number[] };
@@ -283,6 +343,10 @@ export function analyse(file: string) {
   const extSpans: { ts: number; end: number }[] = [];
   const nestedStyle = { ms: 0, n: 0, max: 0 };
   const nestedLayout = { ms: 0, n: 0, max: 0 };
+  // A V8 collection that lands inside an extension call: the page and the content
+  // script share one heap, so whoever allocates when new space fills pays the
+  // scavenge (one 20 ms "onMutations" call on 2026-10-04 was 19.9 ms of MinorGC).
+  const nestedGc = { ms: 0, n: 0, max: 0 };
   let openExt: Ev | null = null;
   const forcers = new Map<string, { ms: number; n: number }>();
   for (const e of mt) {
@@ -305,7 +369,11 @@ export function analyse(file: string) {
           forcers.set(key, f);
         }
       }
-      if (e.name === 'UpdateLayoutTree' || e.name === 'RecalculateStyles') {
+      if (e.name === 'MinorGC' || e.name === 'MajorGC') {
+        nestedGc.ms += e.dur! / 1000;
+        nestedGc.n++;
+        nestedGc.max = Math.max(nestedGc.max, e.dur! / 1000);
+      } else if (e.name === 'UpdateLayoutTree' || e.name === 'RecalculateStyles') {
         nestedStyle.ms += e.dur! / 1000;
         nestedStyle.n++;
         nestedStyle.max = Math.max(nestedStyle.max, e.dur! / 1000);
@@ -343,6 +411,9 @@ export function analyse(file: string) {
   const last = mt.length ? mt[mt.length - 1]!.ts : 0;
   const seconds = (last - first) / 1e6 || 1;
   const sumName = (n: string[]) => mt.filter((e) => n.includes(e.name)).reduce((a, e) => a + e.dur! / 1000, 0);
+  const styleEls = mt
+    .filter((e) => e.name === 'UpdateLayoutTree')
+    .reduce((a, e) => a + (typeof e.args?.elementCount === 'number' ? e.args.elementCount : 0), 0);
   const longTasks = tasks.filter((t) => t.dur! > 50000).length;
   const busyMs = tasks.reduce((a, t) => a + t.dur! / 1000, 0);
   return {
@@ -362,6 +433,7 @@ export function analyse(file: string) {
       tasksOver4ms: perTask.filter((x) => x > 4).length,
       forcedStyle: { ms: +nestedStyle.ms.toFixed(1), n: nestedStyle.n, max: +nestedStyle.max.toFixed(2) },
       forcedLayout: { ms: +nestedLayout.ms.toFixed(1), n: nestedLayout.n, max: +nestedLayout.max.toFixed(2) },
+      gcInside: { ms: +nestedGc.ms.toFixed(1), n: nestedGc.n, max: +nestedGc.max.toFixed(2) },
       forcedBy: [...forcers.entries()]
         .sort((a, b) => b[1].ms - a[1].ms)
         .slice(0, 8)
@@ -373,17 +445,65 @@ export function analyse(file: string) {
     },
     page: {
       styleMs: +sumName(['UpdateLayoutTree', 'RecalculateStyles']).toFixed(1),
+      // Elements restyled, and the cost per element: more posts restyle more elements,
+      // a costlier style per element (selectors, invalidation) shows in the ratio.
+      styleElements: styleEls,
+      styleUsPerElement: styleEls ? +((sumName(['UpdateLayoutTree', 'RecalculateStyles']) * 1000) / styleEls).toFixed(1) : null,
       layoutMs: +sumName(['Layout']).toFixed(1),
       gcMs: +sumName(['MinorGC', 'MajorGC', 'V8.GC_SCAVENGER', 'BlinkGC.AtomicPhase']).toFixed(1),
+      paintMs: +sumName(['PrePaint', 'Paint', 'Layerize']).toFixed(1),
     },
+    raster: RASTER ? rasterTotals(events, names) : null,
+  };
+}
+
+/**
+ * Off-main-thread paint cost, every process (`--raster` only): tile raster in the
+ * renderer's worker threads, and what the GPU process spends on raster and drawing.
+ * Outermost events only per thread, so a nested slice is not counted twice.
+ */
+function rasterTotals(events: Ev[], names: Map<string, string>) {
+  const byThread = new Map<string, number>();
+  const ends = new Map<string, number>();
+  const xs = events.filter((e) => e.ph === 'X' && typeof e.dur === 'number').sort((a, b) => a.ts - b.ts);
+  let rasterMs = 0;
+  for (const e of xs) {
+    const k = `${e.pid}:${e.tid}`;
+    const thread = names.get(k) ?? '';
+    const raster = e.name === 'RasterTask' || e.name === 'GpuRasterization' || /Raster/.test(e.name);
+    const gpuThread = /CrGpuMain|VizCompositor|GpuWatchdog|DrDc/.test(thread);
+    if (!raster && !gpuThread) continue;
+    if ((ends.get(k) ?? 0) > e.ts) continue;
+    ends.set(k, e.ts + e.dur!);
+    const ms = e.dur! / 1000;
+    if (raster) rasterMs += ms;
+    if (gpuThread) byThread.set(thread, (byThread.get(thread) ?? 0) + ms);
+  }
+  return {
+    rasterMs: +rasterMs.toFixed(1),
+    gpuThreads: Object.fromEntries([...byThread].map(([t, ms]) => [t, +ms.toFixed(1)])),
   };
 }
 
 /** The scanner's own counters, over the feed tab, via the service worker (page context can't message it). */
 type Perf = Record<string, number | null | Record<string, number>>;
 /** content/trace.ts's TraceStats; only in a SIFTER_TRACE=1 build. Counts and rule ids, never page text. */
-type Trace = { latency: Record<string, unknown>; flips: unknown[]; flipCount: number; hiddenLeft: number };
+type Trace = { arrival?: Record<string, unknown>; latency: Record<string, unknown>; flips: unknown[]; flipCount: number; hiddenLeft: number };
 type ScannerState = { perf: Perf; trace: Trace | null };
+
+/**
+ * The share of hides over the scroll that the reader could read first: hidden while on
+ * screen, readable until the decision. Needs the trace (the hide latency buckets count
+ * the debounced pass's hides by where they landed). A tag is blurred, so one scrolled
+ * onto the screen (`tagsScrolledIn`, reported alongside) is not readable.
+ */
+function exposure(laneHits: number | null, tagsScrolledIn: number | null, trace: Trace | null) {
+  const lat = trace?.latency as Record<string, { n: number }> | undefined;
+  if (laneHits === null || tagsScrolledIn === null || !lat?.alreadyOnScreen) return null;
+  const hidOn = lat.alreadyOnScreen.n + (lat.enteredWhileQueued?.n ?? 0);
+  const hides = laneHits + hidOn + (lat.offScreen?.n ?? 0);
+  return { hides, readable: hidOn, hidOnScreen: hidOn, tagsScrolledIn, pct: hides ? Math.round((1000 * hidOn) / hides) / 10 : null };
+}
 async function scannerState(context: BrowserContext, type: 'sifter:getPageState' | 'sifter:resetPerfPeaks'): Promise<ScannerState | null> {
   const sw = context.serviceWorkers()[0];
   if (!sw) return null;
@@ -404,7 +524,7 @@ async function scannerState(context: BrowserContext, type: 'sifter:getPageState'
 async function runOnce(withExt: boolean) {
   const context = await launch(withExt);
   try {
-    if (withExt) await setSuggested(context, SUGGESTED);
+    if (withExt) await setSettings(context, SUGGESTED, HIDE_MODE);
     const page = await context.newPage();
     // First install opens the options page; any other tab would take focus from the feed.
     await page.waitForTimeout(1500);
@@ -427,18 +547,42 @@ async function runOnce(withExt: boolean) {
       return { firstPost: f?.firstPost ?? null, lcp: f?.lcp ?? null, fcp };
     });
     const ms = (x: number | null) => (x === null ? null : Math.round(x));
+    // Logged out, the feed URL redirects (LinkedIn: /login, /authwall) and no post ever appears.
+    // The path only: a query string can carry identifiers.
+    const landed = new URL(page.url()).pathname;
+    if (new URL(URLS[SITE] ?? SITE).pathname !== landed || feed.firstPost === null) {
+      console.error(`[live] feed did not load logged-in (landed on ${landed}, firstPost ${feed.firstPost}): this run measures nothing`);
+      process.exitCode = 1;
+    }
     for (const p of context.pages()) if (p !== page) await p.close();
     await page.bringToFront();
     await page.waitForTimeout(3000);
     await page.evaluate(FRAME_PROBE);
     await page.evaluate(STABILITY_PROBE);
-    const t0 = await page.evaluate(() => performance.now());
+    await page.evaluate(DISTANCE_PROBE);
+    if (PROBE) {
+      await page.evaluate(PROBE_SCRIPT);
+      await page.evaluate((c) => __sifterProbe.start(c), { unitSelector: unitSelector(), scrollerSelector: SCROLLERS[SITE] ?? null });
+    }
     const file = join(TRACE_DIR, `${stamp}.json`);
     // The load's latency and flips, read before the reset starts the scroll window.
     const atLoad = withExt ? await scannerState(context, 'sifter:getPageState') : null;
     if (withExt && !atLoad?.trace) console.warn('[live] no hide trace: build with SIFTER_TRACE=1 for latency and flips');
+    if (PATTERN === 'up') {
+      // Something above to come back to: the same time scrolling down, outside the window.
+      await humanScroll(page, 'down', SECONDS);
+      await page.waitForTimeout(1500);
+      await page.evaluate(() => {
+        __dist.down = 0;
+        __dist.up = 0;
+        (window as unknown as { __frames: number[] }).__frames.length = 0;
+      });
+      if (PROBE) await page.evaluate(() => __sifterProbe.reset());
+    }
+    const t0 = await page.evaluate(() => performance.now());
     const load = {
       seconds: LOAD_SECONDS,
+      landed,
       firstPostMs: ms(feed.firstPost),
       fcpMs: ms(feed.fcp),
       lcpMs: ms(feed.lcp),
@@ -450,9 +594,24 @@ async function runOnce(withExt: boolean) {
     };
     // Counters over the scroll only: peaks (and the trace) reset after the load-time scan.
     const before = withExt ? ((await scannerState(context, 'sifter:resetPerfPeaks'))?.perf ?? null) : null;
-    await recordTrace(cdp, file, () => humanScroll(page, SECONDS));
+    await recordTrace(cdp, file, () => humanScroll(page, PATTERN, SECONDS));
     const afterState = withExt ? await scannerState(context, 'sifter:getPageState') : null;
     const after = afterState?.perf ?? null;
+    const dist = await page.evaluate(() => ({ down: Math.round(__dist.down), up: Math.round(__dist.up) }));
+    const distance = { total: dist.down + dist.up, ...dist };
+    if (distance.total === 0) {
+      console.error(`[live] ${withExt ? 'on' : 'off'}-run did not scroll (distance 0): the wheel never reached the feed, this run measures nothing`);
+      process.exitCode = 1;
+    }
+    // The scanner's attribution, counts only: its per-event log stays out of the summary.
+    const attr = (afterState?.trace as { attribution?: { events?: Array<{ at: number; kind: string }> } & Record<string, unknown> } | null)?.attribution;
+    const attribution = attr ? Object.fromEntries(Object.entries(attr).filter(([k]) => k !== 'events')) : null;
+    let probe: ReturnType<typeof summariseProbe> = null;
+    if (PROBE) {
+      const raw = await page.evaluate(() => __sifterProbe.stop());
+      writeFileSync(join(TRACE_DIR, `${stamp}-probe.json`), JSON.stringify(raw));
+      probe = summariseProbe(raw, (attr?.events ?? []).filter((e) => e.kind === 'scroll').map((e) => e.at));
+    }
     const n = (k: string) => (before && after && typeof after[k] === 'number' && typeof before[k] === 'number' ? (after[k] as number) - (before[k] as number) : null);
     const scanner = after
       ? {
@@ -462,9 +621,16 @@ async function runOnce(withExt: boolean) {
           scanMs: n('totalMs') === null ? null : +(n('totalMs') as number).toFixed(1),
           maxSliceMs: +(after.maxSliceMs as number).toFixed(1),
           maxDecideMs: +(after.maxDecideMs as number).toFixed(1),
+          laneMaxMs: typeof after.laneMaxMs === 'number' ? +after.laneMaxMs.toFixed(2) : null,
+          laneBilledMaxMs: typeof after.laneBilledMaxMs === 'number' ? +after.laneBilledMaxMs.toFixed(2) : null,
+          // Label nodes that paid a style read vs settled on raw text (src/extract.ts readLabel).
+          labelStyleReads: n('labelStyleReads'),
+          labelReadsSkipped: n('labelReadsSkipped'),
           worstSlice: after.worstSlice ?? null,
-          veil: Object.fromEntries(['hidesInView', 'hidesAbove', 'hidesBelow', 'veilsSettled', 'anchorCorrections', 'correctionMisses', 'maxCorrectionMissPx', 'correctionsClamped', 'correctionRetries', 'retryMisses', 'veilsPinned', 'veilsUnderTop', 'belowDeferred', 'belowCameInView'].map((k) => [k, n(k)])),
-          trace: afterState?.trace ?? null,
+          late: Object.fromEntries(['hidesAtLoad', 'lateInView', 'lateFarBelow', 'tagsCollapsed', 'railCollapsed', 'belowCameNear', 'collapsedMidScroll', 'tagsScrolledIn', 'laneUnits', 'laneHits', 'laneAbstain', 'laneOverBudget', 'laneFrameHits', 'laneFrameOverBudget', 'approachScans', 'approachPromotes', 'laneReleases', 'laneMs'].map((k) => [k, n(k)])),
+          exposure: exposure(n('laneHits'), n('tagsScrolledIn'), afterState?.trace ?? null),
+          // `attribution` is reported on its own, without the per-event log.
+          trace: afterState?.trace ? { ...afterState.trace, attribution: undefined } : null,
         }
       : null;
     if (PROFILE_MODE) {
@@ -472,7 +638,7 @@ async function runOnce(withExt: boolean) {
       // The CDP Profiler domain only sees the main world; the trace's sampler sees the isolate.
       const raw = JSON.parse(readFileSync(file, 'utf8')) as { traceEvents?: Ev[] } | Ev[];
       const prof = traceProfile(Array.isArray(raw) ? raw : (raw.traceEvents ?? []));
-      return { mode: withExt ? 'on' : 'off', load, profile: prof ? profileSummary(prof) : null, traceFile: file };
+      return { mode: withExt ? 'on' : 'off', pattern: PATTERN, distance, load, profile: prof ? profileSummary(prof) : null, traceFile: file };
     }
     const frames = (await page.evaluate(() => (window as unknown as { __frames: number[] }).__frames)).slice(10);
     if (frames.length < SECONDS * 20) console.warn(`[live] only ${frames.length} frames: the tab was throttled, discard this run`);
@@ -481,10 +647,14 @@ async function runOnce(withExt: boolean) {
     const stability = summariseStability(await page.evaluate(() => (window as unknown as { __stab?: StabRaw }).__stab ?? null), t0);
     return {
       mode: withExt ? 'on' : 'off',
+      pattern: PATTERN,
+      distance,
       visible,
       hidden,
       load,
       stability,
+      probe,
+      attribution,
       scanner,
       frames: {
         n: frames.length,
@@ -516,8 +686,8 @@ async function main() {
   }
   mkdirSync('bench/results', { recursive: true });
   writeFileSync(
-    join('bench/results', `live-${SITE}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`),
-    JSON.stringify({ site: SITE, seconds: SECONDS, suggested: SUGGESTED, results }, null, 2),
+    join('bench/results', `live-${SITE}-${PATTERN}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`),
+    JSON.stringify({ site: SITE, seconds: SECONDS, pattern: PATTERN, probe: PROBE, suggested: SUGGESTED, hideMode: HIDE_MODE, results }, null, 2),
   );
 }
 

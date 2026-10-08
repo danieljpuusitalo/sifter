@@ -4,6 +4,7 @@
     "facebook.com"
   ],
   "feedRootSelector": "[role=\"feed\"]",
+  "prepaint": true,
   "unitSelector": "[role=\"feed\"] [aria-posinset]",
   "suggestedPaths": [
     "^/$",

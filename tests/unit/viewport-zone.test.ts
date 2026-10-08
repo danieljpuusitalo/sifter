@@ -30,7 +30,7 @@ describe('zoneOf', () => {
     expect(zoneOf(entry(700, 1000))).toBe('below');
   });
 
-  it('a clipped unit that straddles the middle stays on screen (veiled, nothing moves)', () => {
+  it('a clipped unit that straddles the middle stays on screen (tagged, nothing moves)', () => {
     expect(zoneOf(entry(200, 600))).toBe('in');
   });
 

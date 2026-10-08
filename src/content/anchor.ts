@@ -1,10 +1,10 @@
 // Writes that change heights all over the page at once (pause, a category switched
-// off, "Show all") must not move what the reader is looking at. The new-hide path
-// has the veil for that; a release has nothing, so every hidden post above the
-// screen expanded under the reader and the feed jumped (live report, 2026-10-01).
+// off, "Show all") must not move what the reader is looking at. A new hide never
+// does (on screen or above it, a late catch is only tagged); a release used to, so every
+// hidden post above the screen expanded under the reader and the feed jumped (live
+// report, 2026-10-01).
 //
-// The fix is the one `flushAbove` uses: note where something on screen sits, do the
-// writes, and scroll back by however far it moved. That costs one forced layout, so
+// The fix: note where something on screen sits, do the writes, and scroll back by however far it moved. That costs one forced layout, so
 // it is only for passes the user started, never for the scroll-time path (hard rule 7).
 
 /** Moves smaller than this are rounding, not a jump. */

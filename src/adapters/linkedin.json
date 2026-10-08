@@ -4,6 +4,7 @@
     "linkedin.com"
   ],
   "feedRootSelector": "[data-testid=\"mainFeed\"]",
+  "prepaint": true,
   "unitSelector": "[role=\"listitem\"][componentkey^=\"update-card-focus\"]",
   "suggestedPaths": [
     "^/$",

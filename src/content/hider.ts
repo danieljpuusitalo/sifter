@@ -1,5 +1,5 @@
 import type { HideCategory, HideMode } from '../types';
-import type { VeilTracker } from './viewport';
+import type { LateTracker } from './viewport';
 
 // Hard rule 5: never remove nodes. Hide by adding a class to the unit root (plus,
 // for "hide" mode only, an inline style), so infinite scroll and site JS keep
@@ -9,9 +9,22 @@ import type { VeilTracker } from './viewport';
 export const HIDDEN_CLASS = 'sifter-hidden';
 export const COLLAPSE_CLASS = 'sifter-collapse';
 export const BLUR_CLASS = 'sifter-blur';
-/** A hide that keeps the unit's height: its content stops painting, nothing moves. Settled into the real mode once off screen. */
-export const VEIL_CLASS = 'sifter-veil';
+/**
+ * A late catch the reader may be looking at: the post keeps its place and height,
+ * blurred under a zero-height "Sponsored · Hide · Show" pill. Nothing moves, and it
+ * is unreadable at once. It collapses on a click, or once it is off screen below the
+ * reader (viewport.ts).
+ */
+export const TAG_CLASS = 'sifter-tag';
+/** A tag the reader chose to see: unblurred in place, pill kept so it can be hidden again. */
+export const TAG_OPEN_CLASS = 'sifter-tag-open';
 export const PLACEHOLDER_ATTR = 'data-sifter-placeholder';
+/**
+ * Marks a `display: contents` box inside a blurred unit. It has no box of its own, so
+ * a filter on it paints nothing: the blur reaches through it to its children instead.
+ * LinkedIn wraps a post's whole body in one.
+ */
+export const CONTENTS_ATTR = 'data-sifter-contents';
 /** Marks the fallback `<style>` element when the document's realm has no constructable sheets. */
 const UNIT_STYLE_ATTR = 'data-sifter';
 
@@ -20,6 +33,15 @@ const LABELS: Record<HideCategory, string> = {
   suggested: 'Hidden suggestion',
   affiliate: 'Hidden affiliate post',
   custom: 'Hidden by your filter',
+  manual: 'Hidden by you',
+};
+
+/** What a tag says: the post is still in plain view, so no "Hidden" and no first line. */
+const TAG_LABELS: Record<HideCategory, string> = {
+  sponsored: 'Sponsored',
+  suggested: 'Suggested',
+  affiliate: 'Affiliate',
+  custom: 'Matches your filter',
   manual: 'Hidden by you',
 };
 
@@ -41,16 +63,20 @@ type Record_ = {
   mode: HideMode;
   /** True once the user clicked "Show": content is visible, but the placeholder stays as a "Hide" bar. */
   shown: boolean;
-  /** Hidden but not yet settled: the unit keeps its height until the viewport tracker says it is off screen. */
-  veiled: boolean;
+  /** Caught late while the reader could see it: blurred in place, until a click or the tracker settles it. */
+  tagged: boolean;
   /** Only "hide" mode touches the unit's own inline style; collapse/blur hide via the shared stylesheet instead. */
   prev: { display: string; displayPriority: string } | null;
+  /** The `display: contents` boxes marked with CONTENTS_ATTR for this unit's blur, so a reset can unmark them. */
+  contents: Element[];
 };
 
 export type HiderCallbacks = {
   onShow: (unit: Element) => void;
   onNotAd: (unit: Element) => void;
   onRehide: (unit: Element) => void;
+  /** "Hide" on a tag: the reader asked for the move. */
+  onHideTag: (unit: Element) => void;
 };
 
 /**
@@ -82,6 +108,13 @@ button {
 }
 button:hover { opacity: 1; }
 button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; border-radius: 2px; }
+:host([data-tag]) .row {
+  position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+  min-height: 0; max-width: calc(100% - 24px); padding: 3px 10px; margin: 0; gap: 10px;
+  font-size: 12px; white-space: nowrap;
+  color: #fff; background: rgba(0, 0, 0, 0.72); opacity: 1; border: 0; border-radius: 999px;
+}
+:host([data-tag]) .label { flex: 0 1 auto; }
 `;
 
 /**
@@ -124,21 +157,19 @@ export function usesSharedSheet(doc: Document): boolean {
  * document-level sheet, keeps the unit itself measurable.
  */
 //
-// The veil hides content without touching layout. It must stay `clip-path`:
-// `renderedWithin`/`renderedText` (extract.ts) and `checkVisibility` read display,
-// visibility and opacity, so a veiled unit rescans exactly as the site built it.
-// Veiling with `visibility` or `opacity` would make a rescan read the unit as empty
-// and release it. `clip-path` does nothing to a `display: contents` box, and
-// LinkedIn wraps each post in one, so the clip also reaches two levels further
-// down (a clip inside a clip is harmless). While veiled (and always in blur mode)
-// the placeholder is a zero-height box whose row overflows on top of the content,
-// so inserting it adds no height either.
+// A tag (and blur mode) never changes the unit's height: the placeholder is a
+// zero-height box whose row overflows on top of the content, so inserting it adds
+// nothing to layout. A tag blurs the unit's content the way blur mode does: a filter
+// is paint only, so a rescan still reads the unit exactly as the site built it.
+// A `display: contents` child paints nothing of its own, so its filter is a no-op: the
+// second blur rule reaches its children (through nested wrappers too) and never
+// compounds, because each wrapper it passes through paints nothing.
 const UNIT_CSS = `
 .${HIDDEN_CLASS}.${COLLAPSE_CLASS} > :not([${PLACEHOLDER_ATTR}]) { display: none !important; }
-.${HIDDEN_CLASS}.${BLUR_CLASS} > :not([${PLACEHOLDER_ATTR}]) { filter: blur(12px) !important; pointer-events: none !important; }
+.${HIDDEN_CLASS}.${BLUR_CLASS} > :not([${PLACEHOLDER_ATTR}]), .${TAG_CLASS}:not(.${TAG_OPEN_CLASS}) > :not([${PLACEHOLDER_ATTR}]) { filter: blur(12px) !important; pointer-events: none !important; }
+.${HIDDEN_CLASS}.${BLUR_CLASS} [${CONTENTS_ATTR}] > *, .${TAG_CLASS}:not(.${TAG_OPEN_CLASS}) [${CONTENTS_ATTR}] > * { filter: blur(12px) !important; pointer-events: none !important; }
 .${HIDDEN_CLASS}.${COLLAPSE_CLASS} { min-height: 0 !important; max-height: none !important; height: auto !important; }
-.${HIDDEN_CLASS}.${VEIL_CLASS} > :not([${PLACEHOLDER_ATTR}]), .${HIDDEN_CLASS}.${VEIL_CLASS} > :not([${PLACEHOLDER_ATTR}]) > *, .${HIDDEN_CLASS}.${VEIL_CLASS} > :not([${PLACEHOLDER_ATTR}]) > * > * { clip-path: inset(0 0 100% 0) !important; pointer-events: none !important; }
-.${HIDDEN_CLASS}.${VEIL_CLASS} > [${PLACEHOLDER_ATTR}], .${HIDDEN_CLASS}.${BLUR_CLASS} > [${PLACEHOLDER_ATTR}] { display: flow-root !important; height: 0 !important; position: relative !important; z-index: 1 !important; }
+.${TAG_CLASS} > [${PLACEHOLDER_ATTR}], .${HIDDEN_CLASS}.${BLUR_CLASS} > [${PLACEHOLDER_ATTR}] { display: flow-root !important; height: 0 !important; position: relative !important; z-index: 1 !important; }
 `;
 
 const unitSheets = new WeakMap<Document, CSSStyleSheet | null>();
@@ -183,50 +214,67 @@ export function unitStylesheetText(doc: Document): string {
 
 export class Hider {
   private records = new WeakMap<Element, Record_>();
-  /** Units currently, visibly hidden (excludes "shown" ones): what `hiddenUnits()`/counts report. */
+  /** Units currently hidden, blurred tags included (excludes "shown" ones): what `hiddenUnits()`/counts report. */
   private hidden = new Set<Element>();
-  /** Every unit with a live record, hidden or shown: what a hard reset (`unhide`/`prune`/`setMode`) must reach. */
+  /** Every unit with a live record, hidden, tagged or shown: what a hard reset (`unhide`/`prune`/`setMode`) must reach. */
   private tracked = new Set<Element>();
+  /** Blurred units waiting for `markContents` in the next animation frame. */
+  private pendingMarks = new Set<Element>();
 
   /**
-   * @param veil When given, every new hide lands as a veil and settles into `mode`
-   *   only once the tracker reports the unit off screen. Without it (tests, evals,
-   *   a page with no IntersectionObserver) hides apply at once, as before.
+   * @param late When given, a hide decided after the page settled lands as a tag
+   *   (the post stays put) unless the tracker says it is far below the reader.
+   *   Without it (tests, evals, a page with no IntersectionObserver) hides apply at
+   *   once, as before.
+   * @param cost Trace builds only: times the tag path's `markContents` (a style read per child).
    */
   constructor(
     private doc: Document,
     private mode: HideMode,
     private cb: HiderCallbacks,
-    private veil?: VeilTracker,
+    private late?: LateTracker,
+    private cost?: (kind: 'markContents', ms: number) => void,
   ) {}
 
+  /** Sifter tracks this unit: hidden, tagged or shown. */
   isHidden(unit: Element): boolean {
     return this.records.has(unit);
   }
 
-  /** Hidden, but still holding its height until it is off screen. */
-  isVeiled(unit: Element): boolean {
-    return this.records.get(unit)?.veiled ?? false;
+  /** Caught late and tagged in place: blurred (or, after Show, open), at its full height. */
+  isTagged(unit: Element): boolean {
+    return this.records.get(unit)?.tagged ?? false;
   }
 
-  /** The veil is lifted into the real hide mode: the unit is off screen, so its height may change. */
+  /**
+   * A tag becomes the real hide. The tracker calls this once the unit is off screen
+   * below the reader; the scanner calls it (inside `keepInPlace`) when the reader
+   * clicks Hide, on a blurred tag or one they opened.
+   */
   settle(unit: Element): void {
     const rec = this.records.get(unit);
-    if (!rec || !rec.veiled) return;
-    rec.veiled = false;
-    this.veil?.unwatch(unit);
+    if (!rec || !rec.tagged) return;
+    rec.shown = false;
+    this.untag(unit, rec);
+    this.hidden.add(unit);
     const el = unit as HTMLElement;
-    el.classList.remove(VEIL_CLASS);
-    if (!rec.shown) this.present(el, rec);
+    el.classList.add(HIDDEN_CLASS);
+    this.present(el, rec);
   }
 
   /** Stop the viewport tracker (the scanner is being torn down). */
   dispose(): void {
-    this.veil?.disconnect();
+    this.late?.disconnect();
   }
 
+  /** Units hidden right now: what the popup counts. A blurred tag is one; the reader can't read it. */
   hiddenUnits(): Element[] {
     return [...this.hidden];
+  }
+
+  /** Hidden or tagged: every unit a settings change must re-decide or a "Show all" must release. */
+  trackedHides(): Element[] {
+    return [...this.tracked].filter((u) => !this.records.get(u)?.shown);
   }
 
   /** The placeholder Sifter put inside a tracked unit, so a read can lift it out of the way. */
@@ -239,13 +287,52 @@ export class Hider {
     return this.records.get(unit)?.category;
   }
 
-  hide(unit: Element, category: HideCategory, hint?: string): void {
+  /**
+   * A new hide, not applied at once, would land as a tag (and so mark the unit's
+   * `display: contents` boxes). The scanner asks in its read phase, to read them there.
+   */
+  tagsLateHides(): boolean {
+    return !!this.late && this.mode !== 'blur' && !this.late.loadHide?.();
+  }
+
+  /**
+   * Reads only: the unit's `display: contents` children (and any nested inside them,
+   * three levels down) that a tag's blur must reach through. The scanner calls it in
+   * its read phase, where style is already clean, so the tag's writes never have to
+   * be followed by a style read (that read forced a recalc of the freshly tagged post,
+   * once per tag).
+   */
+  contentsOf(unit: Element): Element[] {
+    const view = this.doc.defaultView;
+    const out: Element[] = [];
+    if (!view) return out;
+    const placeholder = this.records.get(unit)?.placeholder ?? null;
+    const visit = (parent: Element, depth: number): void => {
+      for (const child of Array.from(parent.children)) {
+        if (child === placeholder || child.hasAttribute(PLACEHOLDER_ATTR)) continue;
+        if (view.getComputedStyle(child).display !== 'contents') continue;
+        out.push(child);
+        if (depth < 3) visit(child, depth + 1);
+      }
+    };
+    visit(unit, 0);
+    return out;
+  }
+
+  /**
+   * @param now Apply the real mode at once, never a tag: the pre-paint lane (the
+   *   post has not been drawn yet) and hides the reader asked for.
+   * @param contents `contentsOf(unit)`, read before any write: a tag then marks
+   *   these with writes only. Without it, the tag reads them after its own writes.
+   */
+  hide(unit: Element, category: HideCategory, hint?: string, now = false, contents?: readonly Element[]): void {
     const existing = this.records.get(unit);
     if (existing) {
       const changed = existing.category !== category || existing.hint !== hint;
       existing.category = category;
       existing.hint = hint;
       if (changed) this.renderPlaceholder(existing, unit);
+      if (now) this.settle(unit);
       return;
     }
     const rec: Record_ = {
@@ -254,15 +341,17 @@ export class Hider {
       placeholder: null,
       mode: this.mode,
       shown: false,
-      veiled: false,
+      tagged: false,
       prev: null,
+      contents: [],
     };
     this.records.set(unit, rec);
-    this.hidden.add(unit);
     this.tracked.add(unit);
-    (unit as HTMLElement).classList.add(HIDDEN_CLASS);
-    // While the page is still loading, nobody is reading yet: take the real mode at once.
-    this.applyMode(unit, rec, !!this.veil && !this.veil.loadHide?.());
+    // Blur never changes layout, and while the page is still loading nobody is reading yet.
+    const tag = !now && this.tagsLateHides();
+    this.hidden.add(unit);
+    if (!tag) (unit as HTMLElement).classList.add(HIDDEN_CLASS);
+    this.applyMode(unit, rec, tag, contents);
   }
 
   /** Hard reset: removes the placeholder and the record entirely. Used for a full unhide, disabling, and "Not an ad". */
@@ -272,12 +361,13 @@ export class Hider {
     this.records.delete(unit);
     this.hidden.delete(unit);
     this.tracked.delete(unit);
-    this.veil?.unwatch(unit);
+    this.late?.unwatch(unit);
     const el = unit as HTMLElement;
-    el.classList.remove(HIDDEN_CLASS, VEIL_CLASS);
+    el.classList.remove(HIDDEN_CLASS, TAG_CLASS, TAG_OPEN_CLASS);
     const modeClass = this.classFor(rec.mode);
     if (modeClass) el.classList.remove(modeClass);
     this.restoreStyle(el, rec);
+    this.unmarkContents(rec);
     rec.placeholder?.remove();
   }
 
@@ -294,14 +384,16 @@ export class Hider {
     if (!rec || rec.shown) return;
     rec.shown = true;
     this.hidden.delete(unit);
+    if (rec.tagged) {
+      // Unblur in place: same height, pill kept (Hide still collapses it), and the
+      // tracker lets go, so it never collapses a post the reader chose to read.
+      (unit as HTMLElement).classList.add(TAG_OPEN_CLASS);
+      this.late?.unwatch(unit);
+      this.renderPlaceholder(rec, unit);
+      return;
+    }
     const el = unit as HTMLElement;
     el.classList.remove(HIDDEN_CLASS);
-    if (rec.veiled) {
-      // A click on the bar: the reader asked for the move, so the veil need not wait.
-      rec.veiled = false;
-      this.veil?.unwatch(unit);
-      el.classList.remove(VEIL_CLASS);
-    }
     const modeClass = this.classFor(rec.mode);
     if (modeClass) el.classList.remove(modeClass);
     if (rec.mode === 'hide') this.restoreStyle(el, rec);
@@ -315,8 +407,19 @@ export class Hider {
     rec.shown = false;
     this.hidden.add(unit);
     const el = unit as HTMLElement;
+    if (rec.tagged) {
+      // An opened tag blurs again in place, and the tracker may collapse it once it is off screen.
+      el.classList.remove(TAG_OPEN_CLASS);
+      this.late?.watch(unit);
+      this.renderPlaceholder(rec, unit);
+      return;
+    }
     el.classList.add(HIDDEN_CLASS);
     // A click on the bar: collapse at once, the reader asked for it.
+    if (!rec.placeholder && rec.mode !== 'hide') {
+      rec.placeholder = this.makePlaceholder(unit, rec);
+      unit.prepend(rec.placeholder);
+    }
     this.present(el, rec);
     if (rec.placeholder) this.renderPlaceholder(rec, unit);
   }
@@ -332,17 +435,20 @@ export class Hider {
         rec.mode = mode;
         continue;
       }
+      if (rec.tagged) {
+        // A tag looks the same in every mode. Blur moves nothing, so it may apply at once.
+        rec.mode = mode;
+        if (mode === 'blur') this.settle(u);
+        continue;
+      }
       const el = u as HTMLElement;
       const oldClass = this.classFor(rec.mode);
       if (oldClass) el.classList.remove(oldClass);
-      // A veiled unit stays veiled (the tracker is still watching it) and settles into the new mode.
-      const veiled = rec.veiled;
-      el.classList.remove(VEIL_CLASS);
       this.restoreStyle(el, rec);
       rec.prev = null;
       rec.placeholder?.remove();
       rec.placeholder = null;
-      this.applyMode(u, rec, veiled);
+      this.applyMode(u, rec, false);
     }
   }
 
@@ -355,7 +461,7 @@ export class Hider {
     for (const u of [...this.tracked]) {
       const rec = this.records.get(u);
       if (!u.isConnected) {
-        this.veil?.unwatch(u);
+        this.late?.unwatch(u);
         rec?.placeholder?.remove();
         this.records.delete(u);
         this.hidden.delete(u);
@@ -373,27 +479,91 @@ export class Hider {
   }
 
   /**
-   * Presents a fresh (or re-moded) hide: the placeholder for collapse and blur,
-   * then either the veil (height kept, settled later) or the mode itself.
+   * Presents a fresh (or re-moded) hide: the placeholder for collapse and blur (and
+   * for a tag in every mode), then either the tag or the mode itself.
    */
-  private applyMode(unit: Element, rec: Record_, veil: boolean): void {
+  private applyMode(unit: Element, rec: Record_, tag: boolean, contents?: readonly Element[]): void {
     const el = unit as HTMLElement;
     rec.mode = this.mode;
     rec.prev = null;
-    if (this.mode !== 'hide' || (veil && this.veil)) ensureUnitStylesheet(this.doc);
-    // "Hide" mode has no placeholder: the unit itself goes display:none.
-    if (this.mode !== 'hide') {
+    if (this.mode !== 'hide' || tag) ensureUnitStylesheet(this.doc);
+    rec.tagged = tag;
+    // "Hide" mode has no placeholder once hidden: the unit itself goes display:none.
+    if (this.mode !== 'hide' || tag) {
       rec.placeholder = this.makePlaceholder(unit, rec);
       unit.prepend(rec.placeholder);
     }
-    if (veil && this.veil) {
-      rec.veiled = true;
-      el.classList.add(VEIL_CLASS);
-      this.veil.watch(unit);
+    if (tag) {
+      el.classList.add(TAG_CLASS);
+      // A tag comes from the debounced pass, where style reads are allowed. The scanner
+      // read the boxes before writing anything; a read here, after the placeholder and
+      // the class, would force a style recalc of the post.
+      const mark = () => (contents ? this.markGiven(unit, rec, contents) : this.markContents(unit, rec));
+      if (this.cost) {
+        const t0 = performance.now();
+        mark();
+        this.cost('markContents', performance.now() - t0);
+      } else mark();
+      this.late?.watch(unit);
       return;
     }
-    rec.veiled = false;
     this.present(el, rec);
+  }
+
+  /**
+   * Marks the unit's `display: contents` children (and any nested inside them) so the
+   * blur reaches the content they wrap. One computed-style read per child, no layout.
+   */
+  private markContents(unit: Element, rec: Record_): void {
+    this.markGiven(unit, rec, this.contentsOf(unit));
+  }
+
+  /** Writes only: marks boxes `contentsOf` read earlier, skipping any the site has since moved out of the unit. */
+  private markGiven(unit: Element, rec: Record_, contents: readonly Element[]): void {
+    for (const child of contents) {
+      if (child.hasAttribute(CONTENTS_ATTR) || !unit.contains(child)) continue;
+      child.setAttribute(CONTENTS_ATTR, '');
+      rec.contents.push(child);
+    }
+  }
+
+  private unmarkContents(rec: Record_): void {
+    for (const c of rec.contents) c.removeAttribute(CONTENTS_ATTR);
+    rec.contents = [];
+  }
+
+  /** Blur mode can be applied by the pre-paint lane, which must not read style (hard rule 7): mark in the next frame. */
+  private markSoon(unit: Element): void {
+    const raf = this.doc.defaultView?.requestAnimationFrame;
+    if (!raf) {
+      const rec = this.records.get(unit);
+      if (rec) this.markContents(unit, rec);
+      return;
+    }
+    if (this.pendingMarks.size === 0) raf.call(this.doc.defaultView, () => this.flushMarks());
+    this.pendingMarks.add(unit);
+  }
+
+  private flushMarks(): void {
+    const units = [...this.pendingMarks];
+    this.pendingMarks.clear();
+    for (const u of units) {
+      const rec = this.records.get(u);
+      if (rec && !rec.shown && rec.mode === 'blur' && u.isConnected) this.markContents(u, rec);
+    }
+  }
+
+  /** Lifts the tag: the unit is untouched again, its placeholder (if the mode keeps one) a normal bar. */
+  private untag(unit: Element, rec: Record_): void {
+    rec.tagged = false;
+    this.late?.unwatch(unit);
+    (unit as HTMLElement).classList.remove(TAG_CLASS, TAG_OPEN_CLASS);
+    if (rec.mode === 'hide') {
+      rec.placeholder?.remove();
+      rec.placeholder = null;
+    } else if (rec.placeholder) {
+      this.renderPlaceholder(rec, unit);
+    }
   }
 
   /** The mode's own hide, which may change the unit's height. Keeps the first saved inline display. */
@@ -407,6 +577,7 @@ export class Hider {
       return;
     }
     el.classList.add(this.classFor(rec.mode) as string);
+    if (rec.mode === 'blur') this.markSoon(el);
   }
 
   private restoreStyle(el: HTMLElement, rec: Record_): void {
@@ -418,6 +589,7 @@ export class Hider {
   }
 
   private labelText(rec: Record_): string {
+    if (rec.tagged) return TAG_LABELS[rec.category];
     const base = LABELS[rec.category];
     const text = rec.shown ? `Showing ${base.charAt(0).toLowerCase()}${base.slice(1)}` : base;
     return rec.hint ? `${text} · ${rec.hint}` : text;
@@ -456,11 +628,13 @@ export class Hider {
     return host;
   }
 
-  /** (Re)builds the placeholder's row for the record's current state: category, hint and shown/hidden. */
+  /** (Re)builds the placeholder's row for the record's current state: category, hint and shown/hidden/tagged. */
   private renderPlaceholder(rec: Record_, unit: Element): void {
     const host = rec.placeholder;
     if (!host) return;
     host.setAttribute(PLACEHOLDER_ATTR, rec.category);
+    if (rec.tagged) host.setAttribute('data-tag', '');
+    else host.removeAttribute('data-tag');
     const root = host.shadowRoot;
     const row = root?.querySelector('.row');
     if (!row) return;
@@ -469,7 +643,10 @@ export class Hider {
     label.className = 'label';
     label.textContent = this.labelText(rec);
     row.append(label);
-    if (rec.shown) {
+    if (rec.tagged) {
+      row.append(this.button('Hide', 'hide-tag', () => this.cb.onHideTag(unit)));
+      if (!rec.shown) row.append(this.button('Show', 'show', () => this.cb.onShow(unit)));
+    } else if (rec.shown) {
       row.append(this.button('Hide', 'hide', () => this.cb.onRehide(unit)));
     } else {
       row.append(this.button('Show', 'show', () => this.cb.onShow(unit)));

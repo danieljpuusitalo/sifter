@@ -18,7 +18,7 @@ import { Scanner } from '../../src/content/scanner';
 import { defaultContext, type SiteContext } from '../../src/messages';
 
 const ctx = (over: Partial<SiteContext> = {}): SiteContext => defaultContext('linkedin.com', over);
-const noopCb = { onShow: () => {}, onNotAd: () => {}, onRehide: () => {} };
+const noopCb = { onShow: () => {}, onNotAd: () => {}, onRehide: () => {}, onHideTag: () => {} };
 
 /** The placeholder now lives inside the unit, as its first child. */
 function button(unit: Element, act: string): HTMLElement {
@@ -142,7 +142,7 @@ describe('Hider', () => {
   it('"Not an ad" after Show removes the placeholder entirely', () => {
     const u = document.getElementById('u') as HTMLElement;
     const notAdUnits: Element[] = [];
-    const h = new Hider(document, 'collapse', { onShow: () => {}, onNotAd: (unit) => notAdUnits.push(unit), onRehide: () => {} });
+    const h = new Hider(document, 'collapse', { onShow: () => {}, onNotAd: (unit) => notAdUnits.push(unit), onRehide: () => {}, onHideTag: () => {} });
     h.hide(u, 'sponsored');
     h.show(u);
     userClick(u.firstElementChild!.shadowRoot!.querySelector('[data-act="not-ad"]') as HTMLElement);
@@ -245,7 +245,42 @@ describe('Scanner', () => {
     expect(document.querySelectorAll(`[${PLACEHOLDER_ATTR}]`)).toHaveLength(0);
   });
 
-  it('picks up units appended later (infinite scroll) after the debounce', async () => {
+  it('picks up units appended later (infinite scroll) after the debounce, with the pre-paint lane off', async () => {
+    vi.useFakeTimers();
+    try {
+      document.head.innerHTML = `<style>${style}</style>`;
+      document.body.innerHTML = body;
+      const scanner = new Scanner({
+        doc: document,
+        hostname: 'www.linkedin.com',
+        baseUrl: 'https://www.linkedin.com/',
+        adapter: adapterFor('www.linkedin.com'),
+        context: ctx(),
+        persistOverride: () => {},
+        prepaint: false,
+      });
+      scanner.start();
+      // The first pass runs in an idle slice, not in start() itself: let it finish
+      // before appending, so what follows is the incremental path.
+      await vi.advanceTimersByTimeAsync(50);
+      expect(scanner.state().hiddenNow).toBe(3); // positive control: the first pass ran
+      const feed = document.querySelector('[data-testid="mainFeed"]') as HTMLElement;
+      const extra = document.createElement('div');
+      extra.innerHTML =
+        '<div role="listitem" componentkey="update-card-focus2002x" id="late"><div><p componentkey="z1"><span>Late Co</span></p><p componentkey="z2"><span>Promoted</span></p></div><p componentkey="z3"><span>New ad body.</span></p></div>';
+      feed.append(extra);
+      const late = () => document.getElementById('late')?.classList.contains(HIDDEN_CLASS);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(late()).toBe(false); // still inside the 250 ms debounce
+      await vi.advanceTimersByTimeAsync(300);
+      expect(late()).toBe(true);
+      scanner.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the pre-paint lane hides an appended ad in the mutation callback that adds it, before any timer', async () => {
     vi.useFakeTimers();
     try {
       document.head.innerHTML = `<style>${style}</style>`;
@@ -269,10 +304,15 @@ describe('Scanner', () => {
         '<div role="listitem" componentkey="update-card-focus2002x" id="late"><div><p componentkey="z1"><span>Late Co</span></p><p componentkey="z2"><span>Promoted</span></p></div><p componentkey="z3"><span>New ad body.</span></p></div>';
       feed.append(extra);
       const late = () => document.getElementById('late')?.classList.contains(HIDDEN_CLASS);
-      await vi.advanceTimersByTimeAsync(100);
-      expect(late()).toBe(false); // still inside the 250 ms debounce
-      await vi.advanceTimersByTimeAsync(300);
+      expect(late(), 'the observer has not run yet').toBe(false);
+      // A MutationObserver callback is a microtask: it runs here, with no timer advanced.
+      await Promise.resolve();
       expect(late()).toBe(true);
+      expect(scanner.state().perf.laneHits).toBe(1);
+      // The debounced pass confirms it and releases nothing.
+      await vi.advanceTimersByTimeAsync(400);
+      expect(late()).toBe(true);
+      expect(scanner.state().perf.laneReleases).toBe(0);
       scanner.stop();
     } finally {
       vi.useRealTimers();

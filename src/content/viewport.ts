@@ -1,121 +1,104 @@
-// Where hidden units sit relative to the viewport, so a hide never moves the feed
-// under the reader.
+// What happens to a hide decided after the post was drawn. The rule is simple:
+// never move what the reader can see.
 //
-// A hide lands as a veil: the unit's content stops painting, but its box keeps its
-// exact height (hider.ts). This tracker tells the Hider when a veiled unit is off
-// screen, and so when its height may change:
+// Most hides never get here: the pre-paint lane (scanner.ts) hides a post in the
+// same mutation callback that added it, before its first paint. A hide decided
+// later lands as a tag (hider.ts): the post stays exactly where it is, with a
+// zero-height "Sponsored · Hide" pill on top. This tracker says when a tag may
+// become the real hide after all:
 //
-// - below the viewport: at the next still frame, if a fresh rect still puts it
-//   there. Nothing on screen sits below it.
-// - above the viewport: once scrolling has stopped, in one frame, with the move
-//   measured and undone by a scroll. Chrome's scroll anchoring would undo it
-//   too, but later than the read that follows the collapse; the scroll lands
-//   first and replaces it (the e2e holds the screen within 1 px with anchoring
-//   on, and fails without the scroll when a page sets `overflow-anchor: none`).
-//   Sites that move their own slots get no anchoring at all.
-// - on screen, but pinned: a unit in a sticky rail (Facebook's) never leaves the
-//   screen, so it would stay a blank hole under its bar for good. In a fixed or
-//   sticky side column (at most half the window wide; a wider one is the feed)
-//   it collapses at the first look, right after the hide, where it is: the feed
-//   is in another column.
-// - on screen, top under the header: the bar has scrolled up behind a fixed
-//   header, leaving blank space with nothing to say why. It collapses like a unit
-//   above the viewport: everything below its bottom edge holds still.
+// - while the page is still loading (`loadHide`): nobody is reading yet, and the
+//   site itself is still moving things, so the hide applies at once.
+// - below the screen: past the visible bottom edge by a lead, checked with a fresh
+//   rect in the next animation frame, scrolling or not. Nothing the reader can see
+//   sits below it, so the collapse moves nothing they can see. The lead covers the
+//   compositor scrolling ahead of the main thread: at least `MIN_LEAD_PX`, more the
+//   faster the unit moves (session 18b: waiting for a still frame two screens away
+//   let every tag reach the reader of a continuous scroll, 20 of 90 on LinkedIn).
+//   A tag that later ends up below (the reader scrolled back up) collapses then.
+// - pinned in a side column: Facebook's sticky rail never scrolls away, so its
+//   sponsored module collapses at the first look, where it is: the feed is in
+//   another column.
+//
+// Above the viewport, and anywhere on screen, a tag stays a tag. There is no
+// above-viewport collapse and no scroll correction: those moved the feed under
+// the reader no matter how carefully they were timed (sessions 15-17).
 //
 // Zones come from an IntersectionObserver, which reports after layout and never
-// forces one (hard rule 7). Only the flush reads layout, in an idle frame after
-// the gesture ended: two rect reads per batch above the viewport (a third, and a
-// retry, only when a correction missed), one rect read per unit reported below,
-// and one rect
-// and scroll-offset read per on-screen veil whose page has scrolled since. The one
-// computed-style read is the pinned-box walk, once per on-screen veil.
+// forces one (hard rule 7). The flush reads layout only in an animation frame,
+// before any write: one rect read per tag waiting below, and the pinned-box style
+// walk once per tag at its first look on screen, in a still frame.
 
-export type VeilStats = {
-  /** Hides whose unit was on screen (or within the margin) when first measured. */
-  hidesInView: number;
-  hidesAbove: number;
-  hidesBelow: number;
-  /** Veils turned into the user's hide mode once off screen. */
-  veilsSettled: number;
-  /** Above-viewport collapses the browser did not anchor, corrected with a scroll. */
-  anchorCorrections: number;
-  /** Corrections that left the reader's content more than a pixel off (the scroll fell short or overshot). */
-  correctionMisses: number;
-  /** The largest such miss, in px. */
-  maxCorrectionMissPx: number;
-  /** Misses where the scroller did not move the full amount (clamped or absorbed); a retry cannot help. */
-  correctionsClamped: number;
-  /** Misses where the scroll landed but the layout moved again; corrected once more. */
-  correctionRetries: number;
-  /** Retries that still left the content more than a pixel off. */
-  retryMisses: number;
-  /** On-screen veils settled because a scroll did not move them (a sticky rail). */
-  veilsPinned: number;
-  /** On-screen veils settled because their top (and bar) went up under the header. */
-  veilsUnderTop: number;
-  /** Units reported below the viewport, whose collapse waited for a fresh look in a still frame. */
-  belowDeferred: number;
-  /** Of those, the ones that had reached the screen by then: each would have been a jump (live report D). */
-  belowCameInView: number;
-  /** Hides applied at once, with no veil, because the page was still loading (see `loadHide`). */
+export type LateStats = {
+  /** Hides applied at once, with no tag, because the page was still loading (see `loadHide`). */
   hidesAtLoad: number;
+  /** Late catches on screen, above it, or within the lead below at the first look: tagged in place. */
+  lateInView: number;
+  /** Late catches past the lead below the screen at the first look: collapsed at once. */
+  lateFarBelow: number;
+  /** Tags collapsed later, once they were past the lead below (the reader scrolled back up). */
+  tagsCollapsed: number;
+  /** Of `lateFarBelow` and `tagsCollapsed`, those collapsed while the page was scrolling. */
+  collapsedMidScroll: number;
+  /** Tags in a pinned side column (Facebook's rail), collapsed at the first look. */
+  railCollapsed: number;
+  /** Units reported below whose fresh rect was within the lead: each would have been a jump. */
+  belowCameNear: number;
+  /**
+   * Tags off the real screen at their first report that the reader then scrolled onto
+   * it. While a tag was a plain pill, each was an ad the reader could read: exposure
+   * the hide-latency trace misses, because the post was off screen at the hide.
+   */
+  tagsScrolledIn: number;
 };
 
-export const EMPTY_VEIL_STATS: VeilStats = {
-  hidesInView: 0,
-  hidesAbove: 0,
-  hidesBelow: 0,
-  veilsSettled: 0,
-  anchorCorrections: 0,
-  correctionMisses: 0,
-  maxCorrectionMissPx: 0,
-  correctionsClamped: 0,
-  correctionRetries: 0,
-  retryMisses: 0,
-  veilsPinned: 0,
-  veilsUnderTop: 0,
-  belowDeferred: 0,
-  belowCameInView: 0,
+export const EMPTY_LATE_STATS: LateStats = {
   hidesAtLoad: 0,
+  lateInView: 0,
+  lateFarBelow: 0,
+  tagsCollapsed: 0,
+  collapsedMidScroll: 0,
+  railCollapsed: 0,
+  belowCameNear: 0,
+  tagsScrolledIn: 0,
 };
 
-export interface VeilTracker {
-  /** Start watching a veiled unit; `settle` is called once it may change height. */
+export interface LateTracker {
+  /** Start watching a tagged unit; `settle` is called once it may change height. */
   watch(unit: Element): void;
   /** Stop watching (the unit was settled, shown, unhidden or left the page). */
   unwatch(unit: Element): void;
-  stats(): VeilStats;
+  stats(): LateStats;
   disconnect(): void;
   /**
-   * Whether a new hide may skip the veil and take its real mode at once, because
+   * Whether a new hide may skip the tag and take its real mode at once, because
    * the page is still loading: the reader has not scrolled or touched it yet, and
    * the site itself is still moving things. Counts the hide when it says yes.
-   * Optional: without it every hide is veiled.
+   * Optional: without it every late hide is tagged.
    */
   loadHide?(): boolean;
 }
 
-export type VeilTrackerFactory = (settle: (unit: Element) => void) => VeilTracker;
+/** Why a tag was settled: far below at its first look, below later, or in a pinned rail. */
+export type SettleWhy = 'farBelow' | 'tagCollapsed' | 'rail';
 
-/** A unit this close to the viewport still counts as on screen. */
+/** Trace builds only: the tracker's own main-thread time, which the scanner's counters do not see. */
+export type LateTrackerHooks = { cost?(kind: 'flush' | 'io', ms: number): void };
+
+export type LateTrackerFactory = (settle: (unit: Element, why?: SettleWhy) => void, hooks?: LateTrackerHooks) => LateTracker;
+
+/** A unit this close above the viewport still counts as on screen. */
 const MARGIN_PX = 64;
+/** A tag below the screen collapses only this far past its bottom edge, at least. */
+export const MIN_LEAD_PX = 120;
+/** And at least as far as it moves in this long: six frames of the compositor running ahead. */
+export const LEAD_MS = 100;
 /** Scrolling counts as over this long after the last scroll event, if `scrollend` never comes. */
 const SCROLL_IDLE_MS = 150;
-/** Below this, a measured move is rounding. */
-const MOVE_EPSILON_PX = 0.5;
-/** A scroll this long that moves an on-screen unit by half as much or more means it moves with the page. */
-const MOVING_SCROLL_PX = 48;
-/** A unit whose top is above this line (window) has its bar under a fixed header (Facebook's is 56 px). */
-const HEADER_BAND_PX = 64;
-/** An under-top veil settles once no more than this much of it is still below the top edge. */
-const UNDER_TOP_VISIBLE_PX = 48;
-/** In a feed that scrolls inside an element, a top this far past the element's own top edge is clipped. */
-const CLIP_BAND_PX = 8;
 /**
  * The load window: until the reader's first gesture, or this long after
- * DOMContentLoaded, a hide collapses at once instead of veiling. A veil on a page
- * nobody has scrolled yet only leaves a hole at the top (Google's ad block left the
- * results stranded below it until a scroll, 2026-10-01). Ended early by any gesture.
+ * DOMContentLoaded, a hide collapses at once instead of tagging. Ended early by any
+ * gesture or scroll.
  */
 export const LOAD_GRACE_MS = 3000;
 /** Anything the reader does that means they have found their place on the page. */
@@ -123,21 +106,18 @@ const GESTURES = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
 
 type Zone = 'in' | 'above' | 'below';
 
-/** Where an on-screen veil was, and how far its scrollers had scrolled, at the last look. */
-type Seen = { top: number; offset: number; scroller: Element | null; seq: number; moves: boolean };
-
-/** The real tracker, or undefined where the page has no IntersectionObserver (then hides apply at once, as before). */
-export function viewportTracker(win: Window & typeof globalThis): VeilTrackerFactory | undefined {
+/** The real tracker, or undefined where the page has no IntersectionObserver (then hides apply at once). */
+export function viewportTracker(win: Window & typeof globalThis): LateTrackerFactory | undefined {
   if (typeof win.IntersectionObserver !== 'function' || typeof win.requestAnimationFrame !== 'function') return undefined;
-  return (settle) => new ViewportTracker(win, settle);
+  return (settle, hooks) => new ViewportTracker(win, settle, hooks?.cost);
 }
 
 /**
- * Which side of the reader a unit is on. Not intersecting is not the same as outside
- * the window: a feed that scrolls inside an element (LinkedIn's <main>) clips a unit
- * that went up behind the header while its box still reaches below the window's top.
- * So a unit off screen is placed by the window's middle, and one that straddles it
- * while clipped counts as on screen (the flush then checks its top edge).
+ * Which side of the observed band a unit is on. Not intersecting is not the same as
+ * outside the window: a feed that scrolls inside an element (LinkedIn's <main>) clips
+ * a unit that went up behind the header while its box still reaches below the
+ * window's top. So a unit off the band is placed by the band's middle, and one that
+ * straddles it while clipped counts as on screen.
  */
 export function zoneOf(e: IntersectionObserverEntry): Zone {
   if (e.isIntersecting) return 'in';
@@ -152,46 +132,48 @@ export function zoneOf(e: IntersectionObserverEntry): Zone {
   return 'in';
 }
 
-class ViewportTracker implements VeilTracker {
+class ViewportTracker implements LateTracker {
   private readonly io: IntersectionObserver;
   private readonly watched = new Set<Element>();
-  /** Watched units not yet measured once: their first zone is counted in the stats. */
+  /** Watched units not yet measured once: their first look is counted in the stats. */
   private readonly fresh = new Set<Element>();
-  /** Off screen through the top, waiting for scrolling to stop. */
-  private readonly above = new Set<Element>();
   /**
-   * Reported below the viewport: checked again with a fresh rect in the flush, in an
-   * animation frame once scrolling has stopped. The report can be well over 100 ms
-   * old on a busy page (LinkedIn's main thread is 50-80% busy), and a compositor
-   * scroll does not wait for it, so the unit may already be on screen. Collapsing it
-   * then pulls everything under it up by its whole height: the 730-870 px jumps of
-   * live report D. Not only mid-scroll: while a long site task blocks the main
-   * thread no scroll event arrives, so the page looks still while the compositor
-   * scrolls on (an 881 px jump on 2026-10-01, with `belowDeferred` at 0). An
-   * animation frame runs after the frame's scroll offset has caught up.
+   * Reported below the screen: checked again with a fresh rect in the next frame.
+   * The report can be well over 100 ms old on a busy page, and a compositor scroll
+   * does not wait for it. A unit still within the lead stays here and is looked at
+   * again every frame the page scrolls: the observer has no margin below, so it
+   * says nothing more until the unit comes onto the screen.
    */
-  private readonly belowPending = new Set<Element>();
-  /** On screen: where each was at the last look (null: not looked at yet). */
-  private readonly onScreen = new Map<Element, Seen | null>();
-  /** Counts scroll events, so a look is only repeated after something scrolled. */
-  private scrollSeq = 0;
+  private readonly farPending = new Set<Element>();
+  /** Each pending unit's last known top and when: its speed, without reading the scroll offset. */
+  private readonly lastSeen = new WeakMap<Element, { top: number; at: number }>();
+  /** Units in `farPending` whose first look has not been counted yet. */
+  private readonly firstLook = new Set<Element>();
+  /** Reported on screen at the first look: checked once for a pinned side column. */
+  private readonly firstInView = new Set<Element>();
   /** Each looked-at unit's fixed or sticky ancestor (null: none). */
   private readonly pinnedBox = new WeakMap<Element, Element | null>();
-  /** Elements that fired a scroll event: the candidate scroll containers of a unit. */
-  private readonly scrollers = new Set<Element>();
   private scrolling = false;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private frame: number | undefined;
-  private readonly s: VeilStats = { ...EMPTY_VEIL_STATS };
+  private readonly s: LateStats = { ...EMPTY_LATE_STATS };
   /** True until the reader's first gesture or `LOAD_GRACE_MS`: see `loadHide`. */
   private grace = true;
   private graceTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The real screen, no margin: only counts `tagsScrolledIn`. */
+  private readonly screen: IntersectionObserver;
+  /** Watched tags whose first screen report has not come yet, and those it found off screen. */
+  private readonly screenFirst = new Set<Element>();
+  private readonly offScreenAtFirst = new Set<Element>();
 
   constructor(
     private readonly win: Window & typeof globalThis,
-    private readonly settle: (unit: Element) => void,
+    private readonly settle: (unit: Element, why?: SettleWhy) => void,
+    private readonly cost?: (kind: 'flush' | 'io', ms: number) => void,
   ) {
-    this.io = new win.IntersectionObserver((entries) => this.onEntries(entries), { rootMargin: `${MARGIN_PX}px 0px` });
+    // No margin below: anything past the screen's bottom edge is "below".
+    this.io = new win.IntersectionObserver((entries) => this.timed('io', () => this.onEntries(entries)), { rootMargin: `${MARGIN_PX}px 0px 0px 0px` });
+    this.screen = new win.IntersectionObserver((entries) => this.timed('io', () => this.onScreenEntries(entries)));
     const doc = win.document;
     // Capture: element scroll events do not bubble, but they do pass through the document.
     doc.addEventListener('scroll', this.onScroll, { capture: true, passive: true });
@@ -228,24 +210,32 @@ class ViewportTracker implements VeilTracker {
     this.watched.add(unit);
     this.fresh.add(unit);
     this.io.observe(unit);
+    this.screenFirst.add(unit);
+    this.screen.observe(unit);
   }
 
   unwatch(unit: Element): void {
     if (!this.watched.delete(unit)) return;
+    this.screen.unobserve(unit);
+    this.screenFirst.delete(unit);
+    this.offScreenAtFirst.delete(unit);
     this.fresh.delete(unit);
-    this.above.delete(unit);
-    this.belowPending.delete(unit);
-    this.onScreen.delete(unit);
+    this.farPending.delete(unit);
+    this.firstLook.delete(unit);
+    this.firstInView.delete(unit);
     this.io.unobserve(unit);
   }
 
-  stats(): VeilStats {
+  stats(): LateStats {
     return { ...this.s };
   }
 
   disconnect(): void {
     this.endGrace();
     this.io.disconnect();
+    this.screen.disconnect();
+    this.screenFirst.clear();
+    this.offScreenAtFirst.clear();
     const doc = this.win.document;
     doc.removeEventListener('scroll', this.onScroll, { capture: true });
     doc.removeEventListener('scrollend', this.onScrollEnd, { capture: true });
@@ -254,22 +244,19 @@ class ViewportTracker implements VeilTracker {
     this.frame = undefined;
     this.watched.clear();
     this.fresh.clear();
-    this.above.clear();
-    this.belowPending.clear();
-    this.onScreen.clear();
-    this.scrollers.clear();
+    this.farPending.clear();
+    this.firstLook.clear();
+    this.firstInView.clear();
   }
 
-  private readonly onScroll = (e: Event): void => {
+  private readonly onScroll = (): void => {
     // Any scroll ends the load window, the site's own included: once the page sits
     // somewhere other than its top, a collapse on screen moves what the reader sees.
     this.endGrace();
     this.scrolling = true;
-    this.scrollSeq++;
-    const t = e.target as Node | null;
-    if (t && t.nodeType === 1) this.scrollers.add(t as Element);
     if (this.idleTimer !== undefined) clearTimeout(this.idleTimer);
     this.idleTimer = setTimeout(this.onScrollEnd, SCROLL_IDLE_MS);
+    this.schedule();
   };
 
   private readonly onScrollEnd = (): void => {
@@ -284,137 +271,112 @@ class ViewportTracker implements VeilTracker {
       const unit = e.target;
       if (!this.watched.has(unit)) continue;
       const zone = zoneOf(e);
-      if (this.fresh.delete(unit)) {
-        if (zone === 'in') this.s.hidesInView++;
-        else if (zone === 'above') this.s.hidesAbove++;
-        else this.s.hidesBelow++;
+      const first = this.fresh.delete(unit);
+      if (zone === 'below') {
+        // Never collapsed from the report itself: see `farPending`.
+        this.farPending.add(unit);
+        if (first) this.firstLook.add(unit);
+        if (typeof e.time === 'number') this.lastSeen.set(unit, { top: e.boundingClientRect.top, at: e.time });
+        continue;
       }
-      if (zone !== 'below') this.belowPending.delete(unit);
-      if (zone === 'in') {
-        this.above.delete(unit);
-        if (!this.onScreen.has(unit)) this.onScreen.set(unit, null);
-      } else if (zone === 'below') {
-        // Never collapsed from the report itself, scrolling or not: see `belowPending`.
-        if (!this.belowPending.has(unit)) {
-          this.above.delete(unit);
-          this.onScreen.delete(unit);
-          this.belowPending.add(unit);
-          this.s.belowDeferred++;
-        }
-      } else {
-        this.onScreen.delete(unit);
-        this.above.add(unit);
+      this.farPending.delete(unit);
+      if (this.firstLook.delete(unit) || first) {
+        this.s.lateInView++;
+        if (zone === 'in') this.firstInView.add(unit);
       }
     }
     this.schedule();
   }
 
-  private finish(unit: Element): void {
-    this.unwatch(unit);
-    this.s.veilsSettled++;
-    this.settle(unit);
+  private onScreenEntries(entries: IntersectionObserverEntry[]): void {
+    for (const e of entries) {
+      const unit = e.target;
+      if (!this.watched.has(unit)) continue;
+      if (this.screenFirst.delete(unit)) {
+        if (e.isIntersecting) this.screen.unobserve(unit);
+        else this.offScreenAtFirst.add(unit);
+      } else if (e.isIntersecting && this.offScreenAtFirst.delete(unit)) {
+        this.s.tagsScrolledIn++;
+        this.screen.unobserve(unit);
+      }
+    }
   }
 
   private schedule(): void {
-    if (this.frame !== undefined || this.scrolling || (this.above.size === 0 && this.onScreen.size === 0 && this.belowPending.size === 0)) return;
-    // Two frames: `scrollend` fires in the same frame as the last scroll, before its
-    // animation callbacks, so one frame would collapse and correct before that scroll
-    // painted. They would paint as one move with it, and the Layout Instability API
-    // counts the whole collapse as a shift. A frame later the collapse and its
-    // correction cancel out, on screen and in the API.
-    this.frame = this.win.requestAnimationFrame(() => {
-      this.frame = this.win.requestAnimationFrame(() => {
-        this.frame = undefined;
-        this.flush();
-      });
+    if (this.frame !== undefined) return;
+    // The rail check waits for a still frame; a tag below does not.
+    if (this.farPending.size === 0 && (this.scrolling || this.firstInView.size === 0)) return;
+    this.frame = this.win.requestAnimationFrame((t) => {
+      this.frame = undefined;
+      this.timed('flush', () => this.flush(t));
     });
   }
 
-  private flush(): void {
-    if (this.scrolling) return;
-    // Reads first, writes after: the pinned collapses land with the ones above.
-    const below = this.lookBelow();
-    const pinned = this.lookOnScreen();
-    this.flushAbove(pinned);
-    for (const u of below) this.finish(u);
+  /** Runs `fn`, timing it only in a trace build (no hook, no clock read). */
+  private timed(kind: 'flush' | 'io', fn: () => void): void {
+    if (!this.cost) return fn();
+    const t0 = performance.now();
+    fn();
+    this.cost(kind, performance.now() - t0);
   }
 
-  /**
-   * Where each unit reported below really is, now the page is still:
-   * one rect read each, in the flush's read phase. Still below, it is returned to
-   * collapse after everything else. One that reached the screen becomes an on-screen
-   * veil, and one that went right past it waits above, like any other.
-   */
-  private lookBelow(): Element[] {
-    const below: Element[] = [];
-    for (const u of this.belowPending) {
+  /** Reads first, then writes: every collapse lands in one frame, after every rect was read. */
+  private flush(now: number): void {
+    const collapse: [Element, SettleWhy][] = [];
+    const bottom = this.win.innerHeight;
+    let heldBySpeed = false;
+    for (const u of this.farPending) {
       if (!u.isConnected) {
         this.unwatch(u);
         continue;
       }
+      const first = this.firstLook.delete(u);
       const r = u.getBoundingClientRect();
-      if (r.top >= this.win.innerHeight + MARGIN_PX) {
-        below.push(u);
+      const lead = Math.max(MIN_LEAD_PX, this.speedOf(u, r.top, now) * LEAD_MS);
+      // No box at all (inside a hidden subtree): collapsing it moves nothing on screen.
+      if (r.top >= bottom + lead || (r.width === 0 && r.height === 0)) {
+        if (first) this.s.lateFarBelow++;
+        else this.s.tagsCollapsed++;
+        if (this.scrolling) this.s.collapsedMidScroll++;
+        collapse.push([u, first ? 'farBelow' : 'tagCollapsed']);
         continue;
       }
-      this.s.belowCameInView++;
-      if (r.bottom <= -MARGIN_PX) this.above.add(u);
-      else this.onScreen.set(u, null);
+      // Within the lead: it stays tagged, and is looked at again next frame the page
+      // scrolls, or next frame anyway if only its speed held it (it may have stopped).
+      if (r.top >= bottom + MIN_LEAD_PX) heldBySpeed = true;
+      if (first) {
+        this.s.lateInView++;
+        this.s.belowCameNear++;
+      }
     }
-    this.belowPending.clear();
-    return below;
+    if (!this.scrolling) {
+      for (const u of this.firstInView) {
+        if (u.isConnected && this.sideColumnOf(u)) {
+          this.s.railCollapsed++;
+          collapse.push([u, 'rail']);
+        }
+      }
+      this.firstInView.clear();
+    }
+    for (const [u, why] of collapse) {
+      this.unwatch(u);
+      this.settle(u, why);
+    }
+    if (heldBySpeed) this.schedule();
   }
 
   /**
-   * Look again at each on-screen veil whose page has scrolled since the last look.
-   * One in a pinned side column, at its first look, is returned, to collapse where
-   * it is. One that moves with the page and has gone up under the header, all but its
-   * last `UNDER_TOP_VISIBLE_PX`, joins the units above the viewport. Only a unit seen
-   * moving may: collapsing a pinned one
-   * and scrolling to undo the move would move the feed instead.
+   * How fast the unit moves up the screen, toward the reader, in px/ms, from its last
+   * known top. Moving down (the reader scrolling back up) takes it further away, which
+   * a compositor running ahead only adds to. Zero without a sample, or with a stale
+   * one (the page sat still in between).
    */
-  private lookOnScreen(): Element[] {
-    const pinned: Element[] = [];
-    for (const [u, seen] of this.onScreen) {
-      if (!u.isConnected) {
-        this.unwatch(u);
-        continue;
-      }
-      if (seen && seen.seq === this.scrollSeq) continue;
-      // A pinned side column (a sticky rail) may never scroll the unit away: collapse it
-      // at the first look, right after the hide, as before veils. Only its own column
-      // moves (a rail's lower modules), while the page is still settling in; after the
-      // first scroll that move would come out of nowhere. Not "it stayed put through a
-      // scroll" either: when something above collapses and a scroll undoes the move
-      // (Sifter's own correction, or Chrome's anchoring), every feed card stays put too.
-      if (!seen && this.sideColumnOf(u)) {
-        pinned.push(u);
-        this.onScreen.delete(u);
-        continue;
-      }
-      const scroller = this.scrollerOf(u);
-      const offset = this.win.scrollY + (scroller ? scroller.scrollTop : 0);
-      const { top, bottom } = u.getBoundingClientRect();
-      let moves = seen?.moves ?? false;
-      if (seen && seen.scroller === scroller) {
-        const scrolled = Math.abs(offset - seen.offset);
-        const moved = Math.abs(top - seen.top);
-        if (scrolled >= MOVING_SCROLL_PX && moved >= scrolled / 2) moves = true;
-      }
-      // Its top under the header is not enough: the collapse is corrected on its bottom
-      // edge, so whatever of it was still on screen fills with the post above it, which
-      // slides down that far. A tall veil just past the header made that a whole-screen
-      // jump (855 and 869 px, live report D). Only once nearly all of it is gone.
-      const edge = this.topEdge(scroller);
-      if (moves && top < edge && bottom - edge <= UNDER_TOP_VISIBLE_PX) {
-        this.onScreen.delete(u);
-        this.above.add(u);
-        this.s.veilsUnderTop++;
-        continue;
-      }
-      this.onScreen.set(u, { top, offset, scroller, seq: this.scrollSeq, moves });
-    }
-    return pinned;
+  private speedOf(u: Element, top: number, now: number): number {
+    const prev = this.lastSeen.get(u);
+    this.lastSeen.set(u, { top, at: now });
+    if (!prev) return 0;
+    const dt = now - prev.at;
+    return dt > 0 && dt < 500 ? Math.max(0, prev.top - top) / dt : 0;
   }
 
   /**
@@ -446,93 +408,5 @@ class ViewportTracker implements VeilTracker {
   private sideColumnOf(u: Element): Element | null {
     const box = this.pinnedBoxOf(u);
     return box && box.getBoundingClientRect().width <= this.win.innerWidth / 2 ? box : null;
-  }
-
-  /** Above this line a unit's bar cannot be seen: under a fixed header, or clipped by its scroller's top edge. */
-  private topEdge(scroller: Element | null): number {
-    return scroller ? Math.max(HEADER_BAND_PX, scroller.getBoundingClientRect().top + CLIP_BAND_PX) : HEADER_BAND_PX;
-  }
-
-  /** The innermost element that scrolled and contains `unit`; null means the page itself. */
-  private scrollerOf(unit: Element): Element | null {
-    let best: Element | null = null;
-    for (const s of this.scrollers) {
-      if (!s.isConnected) {
-        this.scrollers.delete(s);
-        continue;
-      }
-      if (s.contains(unit) && (!best || best.contains(s))) best = s;
-    }
-    return best;
-  }
-
-  /**
-   * Collapse every unit waiting above the viewport (and the pinned ones), in one
-   * frame, and undo any move. Everything the reader can see sits below the lowest
-   * collapsing unit, so its bottom edge moves exactly as far as that content.
-   */
-  private flushAbove(pinned: Element[]): void {
-    const groups = new Map<Element | null, Element[]>();
-    for (const u of this.above) {
-      if (!u.isConnected) {
-        this.unwatch(u);
-        continue;
-      }
-      const s = this.scrollerOf(u);
-      const g = groups.get(s);
-      if (g) g.push(u);
-      else groups.set(s, [u]);
-    }
-    const marks: { scroller: Element | null; lowest: Element; before: number }[] = [];
-    for (const [scroller, units] of groups) {
-      let lowest: Element | null = null;
-      let before = -Infinity;
-      for (const u of units) {
-        const b = u.getBoundingClientRect().bottom;
-        if (!lowest || b > before) {
-          before = b;
-          lowest = u;
-        }
-      }
-      if (lowest) marks.push({ scroller, lowest, before });
-    }
-    // A pinned unit is in its own column (a sticky rail): the feed does not move when it collapses.
-    for (const u of pinned) {
-      this.s.veilsPinned++;
-      this.finish(u);
-    }
-    for (const units of groups.values()) for (const u of units) this.finish(u);
-    for (const m of marks) {
-      const delta = m.lowest.getBoundingClientRect().bottom - m.before;
-      if (Math.abs(delta) <= MOVE_EPSILON_PX) continue;
-      const applied = this.correct(m.scroller, delta);
-      this.s.anchorCorrections++;
-      // A scroll dirties no layout, so this read is cheap. A miss is a jump the reader
-      // saw (live report D): either the scroller would not move that far, or it did and
-      // the layout moved again under it (content coming into view at its real size).
-      const left = m.lowest.getBoundingClientRect().bottom - m.before;
-      if (Math.abs(left) <= 1) continue;
-      this.s.correctionMisses++;
-      this.s.maxCorrectionMissPx = Math.max(this.s.maxCorrectionMissPx, Math.round(Math.abs(left)));
-      if (Math.abs(applied - delta) > 1) {
-        this.s.correctionsClamped++;
-        continue;
-      }
-      // Once only: a layout that keeps moving is the page's, not ours to chase.
-      this.correct(m.scroller, left);
-      this.s.correctionRetries++;
-      if (Math.abs(m.lowest.getBoundingClientRect().bottom - m.before) > 1) this.s.retryMisses++;
-    }
-  }
-
-  /** Scroll `scroller` (or the window) by `dy`, and return how far it actually moved. */
-  private correct(scroller: Element | null, dy: number): number {
-    const at = () => (scroller ? scroller.scrollTop : this.win.scrollY);
-    const from = at();
-    // `instant`: a page with `scroll-behavior: smooth` would otherwise animate the correction into view.
-    const opts: ScrollToOptions = { top: dy, behavior: 'instant' };
-    if (scroller) scroller.scrollBy(opts);
-    else this.win.scrollBy(opts);
-    return at() - from;
   }
 }

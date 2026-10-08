@@ -126,20 +126,23 @@ test.describe('virtualised feed, extension on', () => {
     expect(run.summary.remounts.n, 'positive control: the probe saw re-mounts').toBeGreaterThan(0);
     expect(run.virtual.remounts).toBeGreaterThan(0);
     expect(run.summary.visible.measured).toBeGreaterThan(300);
-    // KNOWN FAILING, fixed in Phase 1 (perf/scroll-stability, see CHECKPOINT.md). On the
-    // Phase 0 code this fails every run the same way: one frame, +405 px, while scrolling
-    // up. An ad Sifter had collapsed far below was unmounted with its slot at the collapsed
-    // height, and came back whole as a shell the lane cannot read yet, so at full height
-    // (remountJump=1, remounts.flips.toFull=3).
-    // Called after the positive controls on purpose: a vacuous run fails them first and is
-    // reported as a real failure, not as this expected one. Phase 1 deletes this line.
-    test.fail();
+    // KNOWN JUMP, fixed in Phase 1 (parked, see CHECKPOINT.md). One frame, about +405 px,
+    // while scrolling up. An ad Sifter had collapsed far below was unmounted with its slot
+    // at the collapsed height, and came back whole as a shell the lane cannot read yet, so
+    // at full height (remountJump=1, remounts.flips.toFull=3). It depends on the machine:
+    // every run on this laptop's emulated Chromium, no run on CI's Linux since Phase 2. So
+    // this was a `test.fail()` that CI then failed for passing. It allows that one known
+    // jump, and only it. Phase 1 deletes the allowance.
     // Both buckets: the off-run holds still on the same steps, so any jump here is Sifter's,
     // and blame (a time window) can miss a change made frames earlier. A fix that only moves
     // a jump into the site bucket must not pass.
-    expect({ sifter: run.summary.visible.sifter, site: run.summary.visible.site }, 'visible jumps with Sifter on').toEqual({
-      sifter: { frames: 0, px: 0, max: 0 },
-      site: { frames: 0, px: 0, max: 0 },
-    });
+    const { sifter, site } = run.summary.visible;
+    expect(site, 'visible jumps with Sifter on, site bucket').toEqual({ frames: 0, px: 0, max: 0 });
+    if (sifter.frames > 0) {
+      const moved = run.jumps.filter((j) => j.v !== null && Math.abs(j.v) > 1);
+      expect(sifter.frames, 'at most the one known jump').toBe(1);
+      expect(moved.length, 'positive control: the jump is in the probe rows').toBeGreaterThan(0);
+      expect(moved.every((j) => j.remountJump > 0), `only the known re-mount jump: ${JSON.stringify(moved)}`).toBe(true);
+    }
   });
 });

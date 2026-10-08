@@ -69,7 +69,7 @@ const EXT = resolve('.output/chrome-mv3');
  * The pre-paint lane checks its 1 ms before each unit, so one unit may overrun it:
  * its limit allows that, at `--cpu 1` only, like the slice counter.
  */
-const LIMITS = { maxSliceScrollMs: 12 * CPU, extraLongTasks: 1, laneMaxMs: 2 };
+const LIMITS = { maxSliceScrollMs: 12 * CPU, extraLongTasks: 1, laneBilledMaxMs: 2 };
 
 type Site = { host: string; url: string; html: () => string };
 
@@ -318,6 +318,7 @@ async function run(withExt: boolean) {
     approachPromotes: d('approachPromotes'),
     laneReleases: d('laneReleases'),
     laneMaxMs: after ? +after.perf.laneMaxMs.toFixed(2) : null,
+    laneBilledMaxMs: typeof after?.perf.laneBilledMaxMs === 'number' ? +after.perf.laneBilledMaxMs.toFixed(2) : null,
     lateInView: d('lateInView'),
     lateFarBelow: d('lateFarBelow'),
     collapsedMidScroll: d('collapsedMidScroll'),
@@ -464,7 +465,7 @@ function verdict(off: Result, on: Result): string[] {
   if (CPU === 1 && (on.overBudget ?? 0) > 0) problems.push(`${on.overBudget} slice(s) over budget while scrolling`);
   if ((on.maxSliceScroll ?? 0) > LIMITS.maxSliceScrollMs) problems.push(`maxSliceScroll ${on.maxSliceScroll} ms > ${LIMITS.maxSliceScrollMs} ms`);
   if (on.longTasks > off.longTasks + LIMITS.extraLongTasks) problems.push(`longTasks ${on.longTasks} vs ${off.longTasks} off`);
-  if (CPU === 1 && (on.laneMaxMs ?? 0) > LIMITS.laneMaxMs) problems.push(`laneMaxMs ${on.laneMaxMs} ms > ${LIMITS.laneMaxMs} ms`);
+  if (CPU === 1 && (on.laneBilledMaxMs ?? 0) > LIMITS.laneBilledMaxMs) problems.push(`laneBilledMaxMs ${on.laneBilledMaxMs} ms > ${LIMITS.laneBilledMaxMs} ms`);
   if ((on.laneReleases ?? 0) > 0) problems.push(`${on.laneReleases} lane hide(s) released by decide(): the lane hid something it should not`);
   if (on.railOk === false) problems.push('rail module not hidden, or a neighbour was');
   if (on.hidden === 0) problems.push('nothing hidden: the bench is not exercising the scanner');

@@ -1,5 +1,106 @@
 # Sifter checkpoint
 
+**Follow-up A/B/C answered (2026-10-08, lane-clock release build, on `perf/lane-clock`).**
+The frame excess with Sifter on comes from the posts that collapsing brings into the same
+distance, not from Sifter's presence or writes. Whether that matters is a design question
+for Daniel (below), not a bug.
+
+- **Timing runs:** native Edge, plugged in, 60 s, down pattern, interleaved A/B/C, 3 each.
+  Arms: A off, B on with collapse, C on with blur.
+
+  | arm | p99 ms | >50 ms frames | page style ms | elements styled | µs / element | hidden | posts the lane saw |
+  |---|---|---|---|---|---|---|---|
+  | A off | 175 / 83 / 100 | 426 / 174 / 164 | 12163 / 9156 / 8242 | 305k / 302k / 400k | 39.8 / 30.3 / 20.6 | 0 | n/a |
+  | B collapse | 167 / 167 / 150 | 308 / 246 / 226 | 9396 / 10756 / 9702 | 360k / 468k / 434k | 26.1 / 23.0 / 22.3 | 43 / 46 / 43 | 179 / 180 / 180 |
+  | C blur | 150 / 117 / 133 | 246 / 170 / 169 | 9754 / 8704 / 6814 | 338k / 372k / 297k | 28.9 / 23.4 / 23.0 | 37 / 34 / 36 | 136 / 129 / 140 |
+
+  A1 was the session's first run and looks like warm-up (worst on every measure). Distance
+  was 95-98k px on every run.
+- **Probe runs** (`--probe`, the same build, 3 each; frames not timed):
+
+  | arm | posts revealed | of them collapsed | feed loads | posts per load |
+  |---|---|---|---|---|
+  | A off | 140 / 136 / 141 | 0 | 27 / 26 / 28 | 5.0-5.2 |
+  | B collapse | 170 / 174 / 190 | 40 / 43 / 46 | 34 / 34 / 38 | 5.0-5.1 |
+  | C blur | 143 / 139 / 140 | 0 | 28 / 27 / 27 | 5.1-5.2 |
+
+  C's positive control holds: it hides 34-35 ads with 0 collapsed, and it covers the same
+  posts as off.
+- **Reading:**
+  - Per element, the cost is no higher with hides present: B 22-26 µs and C 23-29 µs,
+    against A 21-40. The earlier lead (90-119 µs with ads hidden) did not reproduce, so
+    step 5 (the invalidation-tracking category) is not warranted.
+  - B covers about 30% more posts in the same distance and styles more elements. Its >50 ms
+    frames sit above off on every comparable run.
+  - C, at off's post count, is at off's level on >50 ms frames in 2 of 3 runs (170, 169
+    against 174, 164). p99 stays above off (117-150 against 83-100). n=3, so that residue
+    is a lead, not a finding.
+- **Late catches:** 0 `lateInView` and 0 `lateFarBelow` across all 6 on-runs, 254 hides. On
+  the release build, the lane-clock result holds.
+- **Small, fixable, not done:** in blur mode, `markContents` (via `flushMarks` and
+  `contentsOf`) still forces style: 22.6 / 32.9 / 13 ms per run. Collapse shows no such
+  stack. Item 1 below moved the tag path's reads into decide, but this path still reads
+  after its writes. Blur is not the default.
+- **For Daniel:** collapse buys about 30 more posts per 100k px at a per-pixel frame cost.
+  Per post, Sifter adds no page style cost. The options:
+  - (a) Keep collapse. Recommended: the cost is the content, and reading is paced by post,
+    not by pixel.
+  - (b) Collapse only on screen and blur below it. This is the "design change" named in
+    Phase 2, and it trades back the extra posts.
+- **Also this session:** the e2e virtual-feed test no longer uses `test.fail()`. CI's Linux
+  no longer hits the Phase 0 jump, so CI failed it for passing. It now allows only that one
+  known re-mount jump. The test is on `perf/scroll-stability` (a5fa6d8) and merged into
+  `perf/lane-clock`, and CI is green on #30 and #31.
+
+**Lane clock (2026-10-07, branch `perf/lane-clock`, stacked on `perf/scroll-stability`):
+fewer blurred posts on LinkedIn.** Daniel: "the occasional blurred post ... nice if that
+amount could be cut slightly."
+
+- **Cause, measured:** a blurred post is a lane cut. The unit is born just below the fold, the 1 ms
+  cap cuts it, and it is decided late, so it gets a tag. The cap was spent by one read, the
+  first `checkVisibility` of a fresh batch, which pays the page's pending style recalc
+  (4-70 ms; Phase 2 item 3: moved work, not added). The reads after it cost about 0.1 ms each.
+- **Change:** the 1 ms no longer counts the batch's single longest unit read (`laneClock` in
+  `scanner.ts`). It is the longest read, not the first, because the recalc lands on the first
+  unit that reaches a label node. A second slow read is still billed. `laneMaxMs` stays the
+  honest total. New `laneBilledMaxMs` is what the cap governs, and the strict `bench:scroll`
+  gate now reads it.
+  - **Hard rule 7's wording changed** in CLAUDE.md and BRIEF.md §3. **Daniel accepted it
+    on 2026-10-08.** The wall-clock lane can exceed 1 ms by its one longest read (live max
+    25 ms), and that read is the page's own recalc.
+- **Tests:** three new cases in `prepaint.test.ts`, with the old 2 ms-per-read cases as the
+  negative control. Mutation-checked:
+  - no exemption: 3 fail
+  - first read only: 1 fails
+- **Live LinkedIn** (trace build, native Edge, plugged in, 60 s, same hour):
+
+  | build | pattern | hides | from lane | late (`lateFarBelow` + `lateInView`) | overflow | `laneFrameOverBudget` |
+  |---|---|---|---|---|---|---|
+  | old (14:19) | down | 43 | 26 | 17 | 17 | 33 |
+  | old (14:46) | down | 47 | 41 | 6 | 6 | 21 |
+  | new (14:42) | down | 47 | 47 | 0 | 0 | 2 |
+  | new (14:49) | fling | 19 | 19 | 0 | 0 | 1 |
+
+  `laneOverBudget` (the callback's cut) is still 14-34 per run; the frame continuation now
+  catches nearly all of it. `laneBilledMaxMs` live: 2.8 and 3.4 ms. `laneMaxMs`: 25 and 8.5.
+- **`bench:scroll --cpu 1 --strict --browser <Edge>`, 3 runs per site:** new `laneBilledMaxMs`
+  LinkedIn 1.3 / 1.4 / **2.2**, Facebook 1.3 / **2.1** / 1.6. That is 2 of 6 over the 2 ms limit.
+  Old-scanner control, same session: `laneMaxMs` (its gate) LinkedIn 1.2 / 1.8 / 1.9,
+  Facebook **2.1** / 1.8 / **2.8**, also 2 of 6. This is the same marginal overrun as before;
+  the limit was not moved. `cards` > `--start` on every run.
+- **Also:** a `read` pattern in `bench:live` (one post, then a 2.5 s pause). It ran 75 s on the
+  old build: 9 hides, 0 blurred. Keep live runs at 75 s or less, because a 180 s trace stalled
+  the parse.
+- **Landed:** the rule-7 wording was accepted, and the stack merged #30 → #31 → #29 → `main`.
+- **Open, live report (2026-10-08, future fix):** Daniel clicked a notification ("a page
+  tagged you in a post"), and LinkedIn put him back in the feed with that post hidden.
+  - **Hypothesis, unverified:** LinkedIn opens a notification by showing the post at the
+    top of `/feed/` (a highlighted-update URL), not at `/feed/update/...`.
+  - `suggestedPaths` allows `/feed/`, so a page's post there carries a Follow button and
+    the `follow` rule hides it. Sponsored would not explain it.
+  - **First step:** capture the URL and the hide's `why` from the popup.
+  - **Likely fix:** never hide the unit whose URN the URL names; the user asked for it.
+
 **Scroll stability, Phase 2 (2026-10-04, branch `perf/scroll-stability`): the costs
 Phase 0 measured live.** Commits e296c6f, d3c21ab, 591af3b, 8caad31. Phase 1 (mount memory,
 append rule) is still parked: its mechanism was not seen live.
@@ -21,7 +122,7 @@ append rule) is still parked: its mechanism was not seen live.
   The "before" release baseline (the same day, before items 4a/4b) had two runs with 0
   hidden, and both of those met the target: on p99 66.6 and 66.7 against off 83.4. The
   frame excess appears only when a run hides ads.
-- **Follow-up A/B/C (open: LinkedIn served no ads).** The question: is the style excess
+- **Follow-up A/B/C (answered 2026-10-08, see the top section).** The question: is the style excess
   the extra posts (a consequence of collapsing), or Sifter's presence and writes? The
   arms: (A) off, (B) on in collapse mode, (C) on in blur mode, where heights never change,
   so the same distance covers the same posts as off.
@@ -129,13 +230,14 @@ append rule) is still parked: its mechanism was not seen live.
     The rate is equal: the extra loads are what collapsed ads cost in distance, not a
     feedback loop.
 - **For Daniel:**
-  1. **Lane overrun (item 3).** Options:
+  1. **Lane overrun (item 3). Resolved 2026-10-08 by the lane clock (top) and its rule-7
+     wording, which Daniel accepted.** The options were:
      - (a) Leave it. Recommended: the time is the page's own pending recalc, paid early.
      - (b) The lane skips style reads. This is a rule-7 change and loses split or hidden
        label words before paint.
      - (c) Move the lane into rAF. This is a rule change with no gain: the recalc is due
        there anyway.
-  2. **Wait for the A/B/C answer.** Whether the frame target needs a design change (not
+  2. **A/B/C answered 2026-10-08 (top section): it is the extra posts, not per-element cost.** Whether the frame target needs a design change (not
      collapsing below the screen) depends on it. If the excess is per-element style cost
      with hides present, it is a CSS or write fix, not a design choice.
 
@@ -1005,7 +1107,7 @@ path is still unverified live (no sponsored feed post appeared this session eith
 ## Do not undo
 
 - **The pre-paint lane looks only at units born in the batch** (session 18, `bornUnits`): an added root or a unit inside one. A unit reached by `closest()` from a changed node was already painted, and hiding it there is the old jump. It reads no layout, honours overrides, off rules, `covers` and `suggestedPaths`, and every hit is confirmed by `decide()`. `tests/unit/prepaint.test.ts` (with a parity run over every public fixture).
-- **The lane's first record and first unit always fit the 1 ms cap** (session 18): the cap is asked before every further one. Asking first let one slow clock read skip whole batches (51 bare frames in the e2e oracle).
+- **The lane's first record and first unit always fit the 1 ms cap** (session 18): the cap is asked before every further one. Asking first let one slow clock read skip whole batches (51 bare frames in the e2e oracle). Since 2026-10-07 the cap also leaves the batch's single longest read unbilled (`laneClock`): that read pays the page's own style recalc, and billing it cut the cheap reads after it into blurred tags.
 - **A hide from a user-started pass applies at once, an existing tag stays a tag** (session 18, `changesHeight` in `scanner.ts`): the reader asked for the change, and `keepInPlace` holds the screen.
 - **A below report never collapses a unit by itself:** every one waits for a fresh rect read in a frame. Mid-scroll (session 18b, P1) a tag collapses only when that rect puts it at `top ≥ innerHeight + max(120, speed × 100 ms)`; the speed lead covers the compositor running ahead of the main thread. A long site task holds scroll events back, so "not scrolling" can be false while the compositor scrolls (881 px, 2026-10-01; `belowCameNear` counts the jumps this prevents). Never collapse on or above the screen.
 - **The lane gets one `requestAnimationFrame` continuation, never a chain** (session 18b, P3): the rAF runs before that frame paints, so what the 1 ms cap cut is still hidden before it is drawn. What that cuts is queued and watched, and `approach()` ends its debounce once one is within a screen (P2). The debounce is a token, so a superseded timer is a no-op.

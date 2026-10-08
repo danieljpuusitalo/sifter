@@ -349,7 +349,7 @@ export function summariseProbe(raw: ProbeRaw | null, sifterScrolls: number[] = [
 }
 export type ProbeSummary = NonNullable<ReturnType<typeof summariseProbe>>;
 
-export type Pattern = 'down' | 'up' | 'reverse' | 'fling';
+export type Pattern = 'down' | 'up' | 'reverse' | 'fling' | 'read';
 
 /**
  * Wheel ticks for a pattern, as [deltaY, ms to wait after]. The caller plays a `down`
@@ -366,7 +366,11 @@ export function wheelPlan(pattern: Pattern, seconds: number): Array<[number, num
   let i = 0;
   while (ms < seconds * 1000) {
     i++;
-    if (pattern === 'fling') {
+    if (pattern === 'read') {
+      // A reader: about one post's worth of wheel, then a few seconds on it.
+      push(120, 40);
+      if (i % 5 === 0) push(0, 2500);
+    } else if (pattern === 'fling') {
       push(360, 16);
       if (i % 10 === 0) push(0, 800);
     } else if (pattern === 'reverse') {

@@ -88,6 +88,20 @@ function feed(over: Partial<ScannerDeps> = {}, context = ctx()) {
 
 const unitOf = (n: number) => document.querySelector(`[componentkey^="update-card-focus${n}"]`) as Element;
 
+/** Makes the lane's read of post `n` take `costs[n]` ms on `clock`; every other read takes none. Returns the undo. */
+function slowReads(clock: { t: number }, costs: Record<number, number>): () => void {
+  const proto = Scanner.prototype as unknown as { laneRead: (u: Element, ...rest: unknown[]) => unknown };
+  const real = proto.laneRead;
+  proto.laneRead = function (this: unknown, u: Element, ...rest: unknown[]) {
+    const n = Number(/focus(\d+)/.exec(u.getAttribute('componentkey') ?? '')?.[1]);
+    clock.t += costs[n] ?? 0;
+    return real.call(this, u, ...rest);
+  };
+  return () => {
+    proto.laneRead = real;
+  };
+}
+
 /** A near tracker the test moves by hand: `come(u)` is the observer reporting `u` within a screen. */
 function fakeNear() {
   const watched = new Set<Element>();
@@ -182,6 +196,58 @@ describe('pre-paint lane', () => {
     await observed();
     expect(f.hidden(1004), 'positive control: both fit').toBe(true);
     expect(f.frames).toEqual([]);
+  });
+
+  // Live LinkedIn: one read per batch pays the page's pending style recalc (4-70 ms),
+  // the reads after it find style clean. That read is not billed to the 1 ms.
+  it('one slow read (the page\'s style recalc) is not billed: the cheap reads after it still fit', async () => {
+    const clock = { t: 0 };
+    const restore = slowReads(clock, { 1006: 50 });
+    try {
+      const f = feed({ now: () => clock.t });
+      f.append(card(1006) + card(1001) + card(1004) + card(1002));
+      await observed();
+      expect(f.hidden(1006)).toBe(true);
+      expect(f.hidden(1004), 'read after the slow one, in the same callback').toBe(true);
+      expect(f.hidden(1002)).toBe(true);
+      expect(f.hidden(1001)).toBe(false);
+      expect(f.perf()).toMatchObject({ laneHits: 3, laneOverBudget: 0, laneMaxMs: 50, laneBilledMaxMs: 0 });
+      expect(f.frames).toEqual([]);
+    } finally {
+      restore();
+    }
+  });
+
+  it('the slow read need not be the first: the recalc lands on the first label read', async () => {
+    const clock = { t: 0 };
+    const restore = slowReads(clock, { 1001: 0.5, 1006: 50 });
+    try {
+      const f = feed({ now: () => clock.t });
+      f.append(card(1001) + card(1006) + card(1004));
+      await observed();
+      expect(f.hidden(1006)).toBe(true);
+      expect(f.hidden(1004)).toBe(true);
+      expect(f.perf()).toMatchObject({ laneOverBudget: 0, laneBilledMaxMs: 0.5 });
+    } finally {
+      restore();
+    }
+  });
+
+  it('only one read goes unbilled: a second slow one still cuts the batch', async () => {
+    const clock = { t: 0 };
+    const restore = slowReads(clock, { 1006: 50, 1001: 2 });
+    try {
+      const f = feed({ now: () => clock.t });
+      f.append(card(1006) + card(1001) + card(1004));
+      await observed();
+      expect(f.hidden(1006), 'positive control').toBe(true);
+      expect(f.hidden(1004), 'cut: 2 ms billed is over the 1 ms').toBe(false);
+      expect(f.perf()).toMatchObject({ laneOverBudget: 1, laneBilledMaxMs: 2 });
+      f.frame();
+      expect(f.hidden(1004), 'the continuation takes it').toBe(true);
+    } finally {
+      restore();
+    }
   });
 
   it('the continuation has its own 1 ms: what does not fit then is the debounced pass\'s', async () => {

@@ -182,6 +182,7 @@ const EMPTY_PERF: OwnPerf = {
   laneReleases: 0,
   laneMs: 0,
   laneMaxMs: 0,
+  laneBilledMaxMs: 0,
 };
 
 export class Scanner {
@@ -404,6 +405,7 @@ export class Scanner {
     this.perf.maxDecideMs = 0;
     this.perf.worstSlice = null;
     this.perf.laneMaxMs = 0;
+    this.perf.laneBilledMaxMs = 0;
     this.deps.trace?.reset();
   }
 
@@ -984,18 +986,18 @@ export class Scanner {
     const { adapter } = this.deps;
     if (!adapter) return;
     const t0 = this.now();
-    const over = () => this.now() - t0 > LANE_BUDGET_MS;
+    const clock = laneClock(this.now, t0);
     // The cap is asked before every further record and unit, never the first: one
     // record and one unit always fit, whatever a slow frame does to the clock.
-    const { units: born, cut, next } = bornUnits(records, adapter.unitSelector, over);
+    const { units: born, cut, next } = bornUnits(records, adapter.unitSelector, clock.over);
     if (born.length === 0 && !cut) return;
-    const read = this.laneRun(born, adapter, over);
+    const read = this.laneRun(born, adapter, clock);
     const overBudget = cut || read < born.length;
     if (overBudget) {
       this.perf.laneOverBudget++;
       this.carryLane(born.slice(read), records.slice(next));
     }
-    this.laneTook(t0);
+    this.laneTook(t0, clock);
     // Trace builds only, after the lane's clock stopped: re-mount bookkeeping.
     const { trace } = this.deps;
     if (trace) for (const u of born) trace.born(u);
@@ -1004,9 +1006,10 @@ export class Scanner {
   /**
    * What the 1 ms cap cut from a batch gets one more 1 ms in the next animation
    * frame. rAF callbacks run before that frame's style, layout and paint, so a unit
-   * hidden there is still never drawn. On LinkedIn the first read of a fresh batch
-   * pays its style recalc and the cap cuts the rest; a frame later those reads are
-   * cheap. What does not fit then waits for the debounced pass, as before.
+   * hidden there is still never drawn. The read that pays a fresh batch's style
+   * recalc is not billed (`laneClock`), so on LinkedIn this now runs mostly for
+   * batches with many units or a slow collect. What does not fit then waits for the
+   * debounced pass, as before.
    */
   private carryLane(units: Element[], records: MutationRecord[]): void {
     for (const u of units) this.laneCarryUnits.push(u);
@@ -1025,19 +1028,19 @@ export class Scanner {
     const { adapter, trace } = this.deps;
     if (!adapter || !this.lane || !this.active || !this.observer) return;
     const t0 = this.now();
-    const over = () => this.now() - t0 > LANE_BUDGET_MS;
+    const clock = laneClock(this.now, t0);
     // Units already collected go first and cost no collect; the first of them is the
     // one read that always fits. Without one, the first record is.
     const todo = new Set(carried.filter((u) => u.isConnected && !this.laneLooked.has(u)));
-    const { units: fresh, cut, next } = bornUnits(records, adapter.unitSelector, over, todo.size > 0);
+    const { units: fresh, cut, next } = bornUnits(records, adapter.unitSelector, clock.over, todo.size > 0);
     for (const u of fresh) if (!this.laneLooked.has(u)) todo.add(u);
     const list = [...todo];
     const hitsBefore = this.perf.laneHits;
-    const read = this.laneRun(list, adapter, over);
+    const read = this.laneRun(list, adapter, clock);
     this.perf.laneFrameHits += this.perf.laneHits - hitsBefore;
     const overBudget = cut || read < list.length;
     if (overBudget) this.perf.laneFrameOverBudget++;
-    this.laneTook(t0);
+    this.laneTook(t0, clock);
     if (trace) for (const u of fresh) trace.born(u);
     if (!overBudget) return;
     // After the lane's clock stopped: queue the units the budget cut, so the near
@@ -1057,15 +1060,15 @@ export class Scanner {
     }
   }
 
-  /** Reads `born` in order until `over()` (never before the first), then hides the hits. Returns how many it read. */
-  private laneRun(born: Element[], adapter: Adapter, over: () => boolean): number {
+  /** Reads `born` in order until the clock is over (never before the first), then hides the hits. Returns how many it read. */
+  private laneRun(born: Element[], adapter: Adapter, clock: LaneClock): number {
     const { baseUrl, trace } = this.deps;
     const hasOverrides = Object.keys(this.ctx.overrides).length > 0;
     const hits: LaneHit[] = [];
     let readUpTo = born.length;
     for (let i = 0; i < born.length; i++) {
       const u = born[i]!;
-      if (i > 0 && over()) {
+      if (i > 0 && clock.over()) {
         readUpTo = i;
         break;
       }
@@ -1075,11 +1078,13 @@ export class Scanner {
       // A read that throws (a bad adapter selector) costs the lane this unit, never the
       // site's own callback: the debounced pass meets the same unit and handles it there.
       let hit: LaneHit | 'abstain' | null;
+      const r0 = this.now();
       try {
         hit = this.laneRead(u, adapter, baseUrl, hasOverrides);
       } catch {
         hit = 'abstain';
       }
+      clock.read(this.now() - r0);
       if (hit === 'abstain') {
         this.perf.laneAbstain++;
         trace?.laneSkipped(u, 'abstain');
@@ -1120,10 +1125,12 @@ export class Scanner {
     return { unit: u, category: decision.category, hint, why };
   }
 
-  private laneTook(t0: number): void {
+  private laneTook(t0: number, clock: LaneClock): void {
     const took = this.now() - t0;
     this.perf.laneMs += took;
     if (took > this.perf.laneMaxMs) this.perf.laneMaxMs = took;
+    const billed = took - clock.exempt;
+    if (billed > this.perf.laneBilledMaxMs) this.perf.laneBilledMaxMs = billed;
   }
 
   /** DOM reads only. Returns null when nothing about the unit needs to change. */
@@ -1458,6 +1465,31 @@ function dirtyUnits(selector: string, touched: Set<Node>, added: Set<Element>): 
     }
   }
   return out;
+}
+
+/**
+ * The lane's 1 ms is billed from the start of the batch minus its single longest unit
+ * read. On a live feed one read per batch pays the page's pending style recalc: the
+ * first `checkVisibility` on a freshly inserted subtree, 4-70 ms on LinkedIn. That is
+ * the page's own work, paid early (its next recalc then costs 0.1 ms; CHECKPOINT,
+ * Phase 2 item 3), and the lane writes only after its last read, so every read after
+ * it finds style clean. Billing it to the cap cut those cheap reads for nothing and
+ * let their units paint. The longest read, not the first: the recalc lands on the
+ * first unit that reaches a label node, which need not be the batch's first.
+ */
+type LaneClock = { over(): boolean; read(ms: number): void; readonly exempt: number };
+
+function laneClock(now: () => number, t0: number): LaneClock {
+  let exempt = 0;
+  return {
+    over: () => now() - t0 - exempt > LANE_BUDGET_MS,
+    read: (ms) => {
+      if (ms > exempt) exempt = ms;
+    },
+    get exempt() {
+      return exempt;
+    },
+  };
 }
 
 /**

@@ -1,0 +1,35 @@
+# Cross-OS receipt: the extension is plain JS/CSS with no platform code, so this
+# only proves it builds, loads and hides on macOS (ARM64) and Windows the same as
+# on Linux. Not a required check; CI (ci.yml) is the gate.
+name: Compat
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release/')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm exec playwright test

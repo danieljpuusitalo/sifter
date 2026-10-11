@@ -245,16 +245,18 @@ describe('Scanner with an attributing trace', () => {
   /** A tracker that tags every late hide and never settles one (the reader is looking at everything). */
   const tagEverything = (): LateTracker => ({ watch() {}, unwatch() {}, stats: () => ({ ...EMPTY_LATE_STATS }), disconnect() {} });
 
-  it('a post first seen as a tag and re-mounted is collapsed by the lane: a re-mount flip to collapsed', async () => {
+  /** Post 1002 seen as a tag at full height, then unmounted and re-created whole, as a virtualised feed does. */
+  async function tagRemounted(unitKey: boolean) {
     document.head.innerHTML = `<style>${style}</style>`;
     document.body.innerHTML = body;
     const frames: Array<() => void> = [];
     const trace = tracer(frames);
+    const adapter = adapterFor('www.linkedin.com')!;
     scanner = new Scanner({
       doc: document,
       hostname: 'www.linkedin.com',
       baseUrl: 'https://www.linkedin.com/feed/',
-      adapter: adapterFor('www.linkedin.com'),
+      adapter: unitKey ? adapter : { ...adapter, unitKey: undefined },
       context: defaultContext('linkedin.com'),
       persistOverride: () => {},
       schedule: (fn) => fn(),
@@ -276,11 +278,23 @@ describe('Scanner with an attributing trace', () => {
     await Promise.resolve();
     wrapper.appendChild(copy);
     for (let i = 0; i < 3; i++) await Promise.resolve();
-    expect(copy.classList.contains(HIDDEN_CLASS), 'positive control: the lane hid the re-mount').toBe(true);
     for (const f of frames.splice(0)) f();
-    const s = trace.stats().attribution;
+    return { copy, s: trace.stats().attribution };
+  }
+
+  it('without mount memory, a post first seen as a tag and re-mounted is collapsed by the lane: a re-mount flip to collapsed', async () => {
+    const { copy, s } = await tagRemounted(false);
+    expect(copy.classList.contains(HIDDEN_CLASS), 'positive control: the lane hid the re-mount').toBe(true);
     expect(s.remounts).toBe(1);
     expect(s.remountFlips.toCollapsed).toBe(1);
     expect(s.heightWrites.lane.in + s.heightWrites.lane.above + s.heightWrites.lane.below + s.heightWrites.lane.gone + (writeIO().observed.has(copy) ? 1 : 0)).toBe(1);
+  });
+
+  it('with mount memory, the re-mounted tag comes back a tag at full height: no flip', async () => {
+    const { copy, s } = await tagRemounted(true);
+    expect(s.remounts, 'positive control: the trace saw the re-mount').toBe(1);
+    expect(copy.classList.contains(TAG_CLASS), 'decide() tagged it again').toBe(true);
+    expect(copy.classList.contains(COLLAPSE_CLASS)).toBe(false);
+    expect(s.remountFlips).toEqual({ toCollapsed: 0, toFull: 0 });
   });
 });

@@ -1,5 +1,87 @@
 # Sifter checkpoint
 
+**v1.2.0 pre-submission audit (2026-10-11, branch `release/1.2.0`).** Daniel's live
+report: LinkedIn good, Facebook slow but fine, Google missed a sponsored carousel on
+"shoes". Everything below ships in v1.2.0, together with the blur-marks fix.
+
+- **Google, third carousel shape (confirmed live).** `div.vbIt3d[data-dsktp-pla-or-su=true]`
+  under `#cnt`, with no `#atvcap`, `#tads` or `[data-dsktp-pla]`. It was on 5 of 5 product
+  queries ("shoes", "running shoes", "headphones", "laptop", "sneakers nike sale"), holding
+  4-29 `plap_` /aclk links.
+  - **Trap:** every `plap_` anchor is `display:none`. A marker on one of them trips the
+    foreign-hidden check (`scanner.ts`, "Something other than Sifter"), and the unit is skipped
+    for good.
+  - **Fix:** the new adSelector `[data-dsktp-pla-or-su="true"]:has(a[id^="plap_"])` matches the
+    unit itself and comes first.
+  - **Receipts:** e2e cases at load and late, plus a no-plap decoy. Mutation (selector removed):
+    both hide cases fail and the decoy still passes.
+  - The text-ad wrapper is now `or-su=false` inside `#rso .MjjYud`; it is an ad container, so
+    its "Sponsored result" heading goes with the ad.
+  - **Lesson:** a site can hide its own ad markers by design, so for container ads prefer an
+    adSelector that self-matches the unit.
+- **LinkedIn notification click.** The URL is `/feed/?highlightedUpdateUrn=…&highlightedUpdateType=…&origin=…`,
+  confirmed live.
+  - New adapter field `suggestedOffParams: ["highlightedUpdateUrn"]`: suggested hiding is off
+    while the param is present.
+  - It stays off after LinkedIn strips the param, until the pathname changes. Missing a
+    suggestion is the safe side; hiding the post the reader came for is not.
+  - Sponsored still hides there.
+- **Undo on "Hidden by you"** no longer stores `not-ad`, which permanently exempted the post. It
+  drops the manual hide instead.
+  - Also: options copy matches the popup button, the placeholder row has an `aria-label`, and
+    textareas get the focus ring.
+- **Compat.** `.github/workflows/compat.yml` runs build plus e2e on macos-latest (ARM64) and
+  windows-latest for `release/*` PRs and on dispatch. It is not a required check.
+  - The extension has no platform code, so ARM64 matters only for local benches (Playwright's
+    Chromium is emulated x64 here).
+  - The `minimum_chrome_version` comment no longer claims e2e ran on 116.
+- **Live DOM-drift probe (read-only, Claude-in-Chrome profile, Sifter not loaded there):**
+  - LinkedIn: feed root found; 1 Promoted unit, labelled.
+  - X: 8 units; 1 "Ad" label, inside a marked unit, none outside.
+  - Facebook: not measurable (background window, feed stuck on skeletons, profile acting as a
+    Page).
+  - Reddit: blocked by the browser tool.
+  - Instagram, Threads: not probed (extension disconnected).
+  - **Unprobed sites rely on fixtures plus Daniel's own use.**
+- **Deferred UX, after launch:**
+  - onboarding page;
+  - context-menu feedback when nothing is under the cursor;
+  - a per-post exception list in options;
+  - error states on the options switches;
+  - NL/DE/FR marker verification;
+  - IT/PL marker words.
+  - The placeholder hint quotes the post's `textContent`, so visually hidden text (a split
+    decoy like `Pro<span class=_vh>zq</span>moted`) shows up in it. The store images strip
+    the fixture's decoy (`scripts/store-assets.mjs`); on a live page the hint can carry the
+    same noise.
+- **Store assets** re-rendered: the committed ones dated from 2026-09-25 and showed the old
+  placeholder.
+- **Collapse vs blur-below:** (a), keep collapse, ships unchanged. Revisit after launch.
+- **Scroll stability Phase 1, mount memory (landed here, Daniel's call: hold the release
+  for it).** The macOS compat run (38139908499) failed `virtual.spec.ts` with 2, 5 and 3
+  jumps against the one allowed, every one `remountJump=1`.
+  - **Mechanism:** an ad collapsed far below is unmounted into a slot kept at the collapsed
+    height. On the way up it came back whole and at full height, wherever the lane could not
+    read it in the re-mount's own callback: a shell whose label fills in later, or a unit the
+    1 ms cap cut, whose rAF continuation runs a frame late when the site mutates inside rAF.
+  - **Fix:** `src/content/mount-memory.ts`, an LRU (2000) from the adapter's new `unitKey`
+    (LinkedIn: `componentkey`) to the last presentation. The hider records it on every write;
+    the lane puts it back before any read, uncapped (an attribute read and a map lookup per
+    unit). `hidden` re-collapses, `shown` comes back with its Hide bar, `tagged` is left at
+    full height for `decide()` to tag again. `decide()` confirms every recall, a Show
+    included, and releases in place on disagreement (`laneReleases`). Cleared in
+    `applyContext` (settings change, in-app navigation). Counter: `laneRecalled`.
+  - **Receipts:** `virtual.spec.ts` now allows 0 jumps (the allowance is gone). This laptop:
+    4 of 4 runs 0 jumps, `remountFlips` 0/0. Mutation (memory forced null): 3 of 3 runs fail
+    with one +405 px jump, `toFull` 3. Unit: `tests/unit/mount-memory.test.ts` (9, with a
+    no-`unitKey` negative control); `trace-attribution` now pins both behaviours (a re-mounted
+    tag collapsed without memory, kept at full height with it).
+  - **Live key probe (read-only, 2026-10-11):** LinkedIn's `componentkey` is
+    `update-card-focus` plus a 71-char base64url token (53 bytes): an opaque id, not an
+    index. LinkedIn still did not virtualise, so survival across a re-mount is still
+    unmeasured live. A key reused for another post costs one lane hide that `decide()`
+    releases in place (unit test), never a lasting one.
+
 **Follow-up A/B/C answered (2026-10-08, lane-clock release build, on `perf/lane-clock`).**
 The frame excess with Sifter on comes from the posts that collapsing brings into the same
 distance, not from Sifter's presence or writes. Whether that matters is a design question
@@ -92,7 +174,7 @@ amount could be cut slightly."
   old build: 9 hides, 0 blurred. Keep live runs at 75 s or less, because a 180 s trace stalled
   the parse.
 - **Landed:** the rule-7 wording was accepted, and the stack merged #30 → #31 → #29 → `main`.
-- **Open, live report (2026-10-08, future fix):** Daniel clicked a notification ("a page
+- **RESOLVED 2026-10-11 (v1.2.0), see the top entry. Was: live report (2026-10-08):** Daniel clicked a notification ("a page
   tagged you in a post"), and LinkedIn put him back in the feed with that post hidden.
   - **Hypothesis, unverified:** LinkedIn opens a notification by showing the post at the
     top of `/feed/` (a highlighted-update URL), not at `/feed/update/...`.

@@ -1,4 +1,5 @@
 import type { HideCategory, HideMode } from '../types';
+import type { MountMemory } from './mount-memory';
 import type { LateTracker } from './viewport';
 
 // Hard rule 5: never remove nodes. Hide by adding a class to the unit root (plus,
@@ -220,6 +221,8 @@ export class Hider {
   private tracked = new Set<Element>();
   /** Blurred units waiting for `markContents` in the next animation frame. */
   private pendingMarks = new Set<Element>();
+  /** Set by the scanner when the adapter has a `unitKey`: every presentation change is written here. */
+  memory: MountMemory | null = null;
 
   /**
    * @param late When given, a hide decided after the page settled lands as a tag
@@ -260,6 +263,14 @@ export class Hider {
     const el = unit as HTMLElement;
     el.classList.add(HIDDEN_CLASS);
     this.present(el, rec);
+    this.memo(unit);
+  }
+
+  /** Writes the unit's presentation to mount memory, or forgets it once Sifter lets go. */
+  private memo(unit: Element): void {
+    if (!this.memory) return;
+    const rec = this.records.get(unit);
+    this.memory.set(unit, rec ? { state: rec.shown ? 'shown' : rec.tagged ? 'tagged' : 'hidden', category: rec.category, hint: rec.hint } : null);
   }
 
   /** Stop the viewport tracker (the scanner is being torn down). */
@@ -293,6 +304,16 @@ export class Hider {
    */
   tagsLateHides(): boolean {
     return !!this.late && this.mode !== 'blur' && !this.late.loadHide?.();
+  }
+
+  /**
+   * A new hide would mark the unit's `display: contents` boxes: a tag, or any blur.
+   * The scanner asks in its read phase and passes `contentsOf` to `hide`, so the
+   * marks are writes only.
+   * @param atOnce The hide applies at once, so it is never a tag.
+   */
+  marksContents(atOnce: boolean): boolean {
+    return this.mode === 'blur' || (!atOnce && this.tagsLateHides());
   }
 
   /**
@@ -333,6 +354,7 @@ export class Hider {
       existing.hint = hint;
       if (changed) this.renderPlaceholder(existing, unit);
       if (now) this.settle(unit);
+      this.memo(unit);
       return;
     }
     const rec: Record_ = {
@@ -352,6 +374,7 @@ export class Hider {
     this.hidden.add(unit);
     if (!tag) (unit as HTMLElement).classList.add(HIDDEN_CLASS);
     this.applyMode(unit, rec, tag, contents);
+    this.memo(unit);
   }
 
   /** Hard reset: removes the placeholder and the record entirely. Used for a full unhide, disabling, and "Not an ad". */
@@ -369,6 +392,7 @@ export class Hider {
     this.restoreStyle(el, rec);
     this.unmarkContents(rec);
     rec.placeholder?.remove();
+    this.memo(unit);
   }
 
   unhideAll(): void {
@@ -384,6 +408,7 @@ export class Hider {
     if (!rec || rec.shown) return;
     rec.shown = true;
     this.hidden.delete(unit);
+    this.memo(unit);
     if (rec.tagged) {
       // Unblur in place: same height, pill kept (Hide still collapses it), and the
       // tracker lets go, so it never collapses a post the reader chose to read.
@@ -406,6 +431,7 @@ export class Hider {
     if (!rec || !rec.shown) return;
     rec.shown = false;
     this.hidden.add(unit);
+    this.memo(unit);
     const el = unit as HTMLElement;
     if (rec.tagged) {
       // An opened tag blurs again in place, and the tracker may collapse it once it is off screen.
@@ -507,7 +533,7 @@ export class Hider {
       this.late?.watch(unit);
       return;
     }
-    this.present(el, rec);
+    this.present(el, rec, contents);
   }
 
   /**
@@ -566,8 +592,12 @@ export class Hider {
     }
   }
 
-  /** The mode's own hide, which may change the unit's height. Keeps the first saved inline display. */
-  private present(el: HTMLElement, rec: Record_): void {
+  /**
+   * The mode's own hide, which may change the unit's height. Keeps the first saved inline display.
+   * @param contents Blur only: `contentsOf(el)`, read before any write, so the marks
+   *   land now with no style read. Without it, they are read in the next frame.
+   */
+  private present(el: HTMLElement, rec: Record_, contents?: readonly Element[]): void {
     if (rec.mode === 'hide') {
       rec.prev ??= {
         display: el.style.getPropertyValue('display'),
@@ -577,7 +607,9 @@ export class Hider {
       return;
     }
     el.classList.add(this.classFor(rec.mode) as string);
-    if (rec.mode === 'blur') this.markSoon(el);
+    if (rec.mode !== 'blur') return;
+    if (contents) this.markGiven(el, rec, contents);
+    else this.markSoon(el);
   }
 
   private restoreStyle(el: HTMLElement, rec: Record_): void {
@@ -642,6 +674,7 @@ export class Hider {
     const label = this.doc.createElement('span');
     label.className = 'label';
     label.textContent = this.labelText(rec);
+    row.setAttribute('aria-label', label.textContent);
     row.append(label);
     if (rec.tagged) {
       row.append(this.button('Hide', 'hide-tag', () => this.cb.onHideTag(unit)));

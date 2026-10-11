@@ -5,17 +5,21 @@
   ],
   "feedRootSelector": "[data-testid=\"mainFeed\"]",
   "prepaint": true,
+  "unitKey": "componentkey",
   "unitSelector": "[role=\"listitem\"][componentkey^=\"update-card-focus\"]",
   "suggestedPaths": [
     "^/$",
     "^/feed/?$"
+  ],
+  "suggestedOffParams": [
+    "highlightedUpdateUrn"
   ],
   "labelSelectors": [
     "p[componentkey] > span"
   ],
   "labelNodeLimit": 3,
   "adSelectors": [],
-  "verified": "2026-09-24 live DOM, home feed: classes are hashed; old data-urn / .feed-shared-update-v2 selectors return 0. 'Promoted' is plain text in p[componentkey] > span, no decoys, no shadow DOM. Suggested (live, English UI): the social line is the first p[componentkey] > span, read as '<Name> likes this' (name in a > strong); posts from people outside the network carry a header button reading exactly 'Follow' or 'Connect'. In document order the header is always: social line (or name), two empty buttons, name, Follow/Connect, so the label limit is 5: a reshare's inner Follow button (6th or later) does not count, and neither does most body text. Reposts are kept on purpose: an explicit share, not a reaction. Dutch, German and French strings are baseline guesses, UNVERIFIED live; 'Suggested' is UNVERIFIED. 2026-09-28: suggested rules apply on the home feed only (/ and /feed/), after a live report that they hid posts on company pages and single-post views the user opened on purpose; /feed/update/... is a single post, not the feed. Sponsored detection still runs on every page. 2026-10-01: 'activity' covers 'follow', after a live report that switching 'activity' off still hid liked posts: a connection's like surfaces a stranger's post, whose header then carries a Follow button.",
+  "verified": "2026-09-24 live DOM, home feed: classes are hashed; old data-urn / .feed-shared-update-v2 selectors return 0. 'Promoted' is plain text in p[componentkey] > span, no decoys, no shadow DOM. Suggested (live, English UI): the social line is the first p[componentkey] > span, read as '<Name> likes this' (name in a > strong); posts from people outside the network carry a header button reading exactly 'Follow' or 'Connect'. In document order the header is always: social line (or name), two empty buttons, name, Follow/Connect, so the label limit is 5: a reshare's inner Follow button (6th or later) does not count, and neither does most body text. Reposts are kept on purpose: an explicit share, not a reaction. Dutch, German and French strings are baseline guesses, UNVERIFIED live; 'Suggested' is UNVERIFIED. 2026-09-28: suggested rules apply on the home feed only (/ and /feed/), after a live report that they hid posts on company pages and single-post views the user opened on purpose; /feed/update/... is a single post, not the feed. Sponsored detection still runs on every page. 2026-10-01: 'activity' covers 'follow', after a live report that switching 'activity' off still hid liked posts: a connection's like surfaces a stranger's post, whose header then carries a Follow button. 2026-10-11: notification links are /feed/?highlightedUpdateUrn=...&highlightedUpdateType=...&origin=... (verified live on the notifications page); suggestedOffParams turns suggested off there. unitKey: componentkey was on every born unit in the 2026-10-04 live runs (tracer unkeyed 0); whether it survives a re-mount is unmeasured live, since LinkedIn did not virtualise then or on 2026-10-11. 2026-10-11 live (read-only): the value is 'update-card-focus' plus a 71-char base64url token (53 bytes), an opaque per-post id rather than a position. A key that changed would only cost the memory, never a hide: decide() confirms every lane hide.",
   "suggested": {
     "labelSelectors": [
       "p[componentkey] > span",

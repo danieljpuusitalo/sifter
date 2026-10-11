@@ -8,6 +8,7 @@ import { decideTier0 } from '../rules/tier0';
 import type { BlockCategory, HideCategory, OverrideAction } from '../types';
 import { keepInPlace } from './anchor';
 import { Hider, PLACEHOLDER_ATTR } from './hider';
+import { MountMemory, type Presented } from './mount-memory';
 import type { NearTracker } from './near';
 import { EMPTY_LATE_STATS, type LateStats, type LateTracker, type LateTrackerFactory } from './viewport';
 import { safeDetail, type HideTrace, type HideWhy } from './trace';
@@ -79,6 +80,11 @@ export type ScannerDeps = {
    * the content script passes a live reader; the default is `baseUrl`'s path.
    */
   path?: () => string;
+  /**
+   * The page's current query string (`location.search`), read only for the adapter's
+   * `suggestedOffParams`, by name. Default: none.
+   */
+  search?: () => string;
   now?: () => number;
   /** Dev builds log batches that exceed the time budget. */
   dev?: boolean;
@@ -180,6 +186,7 @@ const EMPTY_PERF: OwnPerf = {
   approachScans: 0,
   approachPromotes: 0,
   laneReleases: 0,
+  laneRecalled: 0,
   laneMs: 0,
   laneMaxMs: 0,
   laneBilledMaxMs: 0,
@@ -232,6 +239,11 @@ export class Scanner {
   /** Compiled `suggestedPaths`; null means suggested applies on every page. */
   private readonly feedPaths: RegExp[] | null;
   private readonly path: () => string;
+  private readonly search: () => string;
+  /** Compiled `suggestedOffParams`; null when the adapter has none. */
+  private readonly offParams: string[] | null;
+  /** The path an off-param was seen on: suggested stays off there until the path changes, even if the param is stripped. */
+  private offParamPath: string | null = null;
   /** The path the categories were compiled for: a change is an in-app navigation. */
   private lastPath = '';
   /** One throwing unit must not spam the console: warn once per page. */
@@ -253,6 +265,8 @@ export class Scanner {
   private laneCarry: MutationRecord[] = [];
   private laneCarryUnits: Element[] = [];
   private laneFrame = false;
+  /** How each keyed unit was last presented, for the lane to put back on a re-mount. Null without a lane or an adapter `unitKey`. */
+  private readonly memory: MountMemory | null;
   private readonly frame: (fn: () => void) => unknown;
   /**
    * A pass the user started (pause, a switch, "Not an ad", an in-app navigation):
@@ -268,6 +282,8 @@ export class Scanner {
     this.categories = deps.context.categories;
     this.feedPaths = compilePaths(deps.adapter?.suggestedPaths);
     this.path = deps.path ?? (() => pathOf(deps.baseUrl));
+    this.search = deps.search ?? (() => '');
+    this.offParams = deps.adapter?.suggestedOffParams?.length ? deps.adapter.suggestedOffParams : null;
     this.positional = positionalSelectors(deps.adapter);
     this.now = deps.now ?? (() => performance.now());
     this.schedule = deps.schedule ?? ((fn, ms) => setTimeout(fn, ms));
@@ -301,15 +317,28 @@ export class Scanner {
       this.late ?? undefined,
       trace ? (k, ms) => trace.cost(k, ms) : undefined,
     );
+    this.memory = this.lane && deps.adapter?.unitKey ? new MountMemory(deps.adapter.unitKey) : null;
+    this.hider.memory = this.memory;
     deps.near?.listen?.(() => this.approach());
     this.compileContext();
+  }
+
+  /** The URL carries one of the adapter's `suggestedOffParams`. Names only, never values. */
+  private offParamPresent(): boolean {
+    if (!this.offParams) return false;
+    const search = this.search();
+    if (!search) return false;
+    const params = new URLSearchParams(search);
+    return this.offParams.some((name) => params.has(name));
   }
 
   /** Derive what the context implies once, not per unit. */
   private compileContext(): void {
     const { customSelectors, mutedWords } = this.ctx;
     this.lastPath = this.path();
-    const onFeed = !this.feedPaths || this.feedPaths.some((re) => re.test(this.lastPath));
+    if (this.offParamPath !== this.lastPath) this.offParamPath = null;
+    if (this.offParamPath === null && this.offParamPresent()) this.offParamPath = this.lastPath;
+    const onFeed = (!this.feedPaths || this.feedPaths.some((re) => re.test(this.lastPath))) && this.offParamPath === null;
     const categories = { ...this.ctx.categories, suggested: this.ctx.categories.suggested && onFeed };
     this.categories = categories;
     // Older service workers answer without offRules while the extension updates.
@@ -372,6 +401,8 @@ export class Scanner {
   applyContext(ctx: SiteContext): void {
     this.ctx = ctx;
     this.compileContext();
+    // New settings or a new page: a post hidden under the old ones may not be now.
+    this.memory?.clear();
     const traced = this.deps.trace ? this.hider.trackedHides() : null;
     this.hider.setMode(ctx.hideMode);
     if (traced) for (const u of traced) this.deps.trace?.wrote(u, 'mode', this.now());
@@ -553,7 +584,9 @@ export class Scanner {
     // An in-app navigation (LinkedIn feed -> company page) swaps the page without a
     // reload, and always mutates the DOM: re-decide everything under the new path.
     // Reading the location is a string, not a DOM read, so this costs nothing per batch.
-    if (this.feedPaths && this.path() !== this.lastPath) {
+    // A param that newly appears on the same path (feed -> a highlighted post) re-decides too;
+    // one that disappears does not (see offParamPath).
+    if (this.feedPaths && (this.path() !== this.lastPath || (this.offParamPath === null && this.offParamPresent()))) {
       this.applyContext(this.ctx);
       return;
     }
@@ -1065,13 +1098,32 @@ export class Scanner {
     const { baseUrl, trace } = this.deps;
     const hasOverrides = Object.keys(this.ctx.overrides).length > 0;
     const hits: LaneHit[] = [];
+    // Mount memory first, uncapped: one attribute read and a map lookup per unit, so a
+    // re-mounted post the cap would cut, or a shell whose label fills in later, still
+    // comes back as it left, before its first paint (see `MountMemory`).
+    const recalled: [Element, Presented][] = [];
+    const known = new Set<Element>();
+    if (this.memory) {
+      for (const u of born) {
+        if (this.hider.isHidden(u) || this.userShown.has(u) || this.seen.has(u)) continue;
+        const p = this.memory.get(u);
+        if (!p) continue;
+        known.add(u);
+        this.laneLooked.add(u);
+        // A tag stays at full height in its slot: decide() tags it again, as a late hide.
+        if (p.state !== 'tagged') recalled.push([u, p]);
+      }
+    }
     let readUpTo = born.length;
+    let readAny = false;
     for (let i = 0; i < born.length; i++) {
       const u = born[i]!;
-      if (i > 0 && clock.over()) {
+      if (known.has(u)) continue;
+      if (readAny && clock.over()) {
         readUpTo = i;
         break;
       }
+      readAny = true;
       this.laneLooked.add(u);
       if (this.hider.isHidden(u) || this.userShown.has(u) || this.seen.has(u)) continue;
       this.perf.laneUnits++;
@@ -1100,6 +1152,19 @@ export class Scanner {
       trace?.hid(h.unit, now, h.why);
       trace?.wrote(h.unit, 'lane', now);
       this.perf.laneHits++;
+    }
+    for (const [u, p] of recalled) {
+      this.hider.hide(u, p.category, p.hint, true);
+      // Unconfirmed like any lane hide: decide() releases it in place if it disagrees.
+      this.laneHidden.add(u);
+      trace?.hid(u, now, { category: p.category, kind: 'recall' });
+      if (p.state === 'shown') {
+        this.userShown.add(u);
+        trace?.shown(u);
+        this.hider.show(u);
+      } else this.perf.laneHits++;
+      trace?.wrote(u, 'lane', now);
+      this.perf.laneRecalled++;
     }
     return readUpTo;
   }
@@ -1223,6 +1288,9 @@ export class Scanner {
       // runs when a marker was found. happy-dom may lack it; then treat as visible.
       // A unit Sifter hid itself is never foreign: "hide" mode puts an inline
       // display:none on the unit itself, which checkVisibility would call foreign.
+      // A site can hide its own ad markers by design (Google's plap_ anchors are
+      // display:none beside the visible card, 2026-10-11): an adapter must then put
+      // a selector that matches the unit itself ahead of them in adSelectors.
       foreignHidden =
         !this.hider.isHidden(unit) &&
         !!marker?.node &&
@@ -1251,7 +1319,8 @@ export class Scanner {
     this.seen.set(unit, { sig, fp });
     if (this.unitsSeen.size < MAX_UNITS_SEEN) this.unitsSeen.add(fp);
 
-    if (this.userShown.has(unit)) return null;
+    // A Show the lane recalled from mount memory is confirmed like its hides are.
+    if (this.userShown.has(unit) && !this.laneHidden.has(unit)) return null;
     const decision = decideTier0({
       override: this.ctx.overrides[fp],
       marker,
@@ -1271,12 +1340,13 @@ export class Scanner {
   }
 
   /**
-   * A new hide that `apply` will land as a tag marks the unit's `display: contents`
-   * boxes. Read them here, with the other reads, while style is clean: read after the
-   * tag's own writes, they forced a style recalc of the post, once per tag.
+   * A new hide that `apply` will land as a tag, or as a blur, marks the unit's
+   * `display: contents` boxes. Read them here, with the other reads, while style is
+   * clean: read after the hide's own writes, they forced a style recalc of the post,
+   * once per hide.
    */
   private tagContents(unit: Element): Element[] | undefined {
-    if (this.releasing || this.hider.isHidden(unit) || !this.hider.tagsLateHides()) return undefined;
+    if (this.hider.isHidden(unit) || !this.hider.marksContents(this.releasing)) return undefined;
     return this.hider.contentsOf(unit);
   }
 
@@ -1284,13 +1354,21 @@ export class Scanner {
   private apply(d: Decision): void {
     if (!d.unit.isConnected) return;
     if (this.userShown.has(d.unit)) {
+      const recalled = this.laneHidden.delete(d.unit);
       if (d.hide) return; // stays shown (with its "Hide" bar) until the user hides it again
       // The user showed it, and this decision no longer hides it at all (its
       // category or rule went off): drop the "Showing…" bar and the record.
       if (!this.releasing) this.deps.trace?.released(d.unit, this.now(), d.empty ? 'emptied' : 'redecided', true);
       this.userShown.delete(d.unit);
-      this.hider.unhide(d.unit);
-      this.deps.trace?.wrote(d.unit, 'release', this.now());
+      if (recalled) {
+        // A recalled Show the full decision disagrees with: the bar goes, the post stays put.
+        this.perf.laneReleases++;
+        this.inPlace(() => this.hider.unhide(d.unit));
+        this.deps.trace?.wrote(d.unit, 'laneRelease', this.now());
+      } else {
+        this.hider.unhide(d.unit);
+        this.deps.trace?.wrote(d.unit, 'release', this.now());
+      }
       this.hiddenFps.delete(d.fp);
       this.blockHidden.delete(d.unit);
       return;
@@ -1351,7 +1429,14 @@ export class Scanner {
 
   private userNotAd(unit: Element): void {
     const fp = this.seen.get(unit)?.fp;
-    if (fp) {
+    if (fp && this.hider.categoryOf(unit) === 'manual') {
+      // "Undo" on a post the reader hid themselves: drop their hide, not "always show".
+      // The post goes back to normal evaluation, so a real ad may be hidden again.
+      const { [fp]: _hide, ...overrides } = this.ctx.overrides;
+      this.ctx = { ...this.ctx, overrides };
+      this.hiddenFps.delete(fp);
+      this.deps.persistOverride(fp, null);
+    } else if (fp) {
       this.ctx = { ...this.ctx, overrides: { ...this.ctx.overrides, [fp]: 'not-ad' } };
       this.hiddenFps.delete(fp);
       this.deps.persistOverride(fp, 'not-ad');

@@ -4,6 +4,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-11
+
 ### Changed
 
 - The feed no longer jumps or leaves blank gaps when Sifter hides something.
@@ -28,11 +30,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   page mutates also forced a style recalc of everything the page had dirtied.
   Precision and recall are unchanged: the fixture eval and the decoy tests
   still pass.
+- In blur mode, a post hidden after it arrived no longer makes the page
+  restyle it a second time: Sifter finds the boxes the blur must reach through
+  before it changes anything, instead of a frame later.
 - README and store listing now say where suggested hiding applies: the home feed
   only, while sponsored hiding runs on every page of a covered site.
 
 ### Fixed
 
+- Google: the "Sponsored products" carousel at the top of a shopping search
+  ("shoes") was shown. Google now serves it in a third shape, under a renamed
+  attribute, with its ad links hidden from view, which Sifter took for "already
+  hidden by something else". It is hidden again, and the "Sponsored result"
+  heading above a mid-page text ad now goes with the ad.
+- LinkedIn: clicking a notification about a post opened the feed with that very
+  post hidden as a suggestion. While the feed is showing a post you opened from a
+  notification, suggested hiding is off until you leave that page. Sponsored
+  posts are still hidden there.
+- On a feed that unloads posts far off screen and rebuilds them as you scroll
+  back, a hidden ad no longer comes back at full height for a frame and pushes
+  the posts you are reading. Sifter remembers how it left each post and puts
+  that back before the post is drawn; a post you chose to show comes back shown.
+- "Undo" on a post you hid yourself now just undoes your hide. Before, it marked
+  the post as "not an ad" for good, so it could never be hidden again even if it
+  was one.
+- The settings page now names the popup button as it reads ("Hide ads on" and the
+  site's name), the hidden-post bar has an accessible name for screen readers, and
+  the muted-words box shows the keyboard focus ring.
 - On LinkedIn, a tagged or blurred post's text stayed readable while only its
   reactions and comments were blurred. LinkedIn wraps the post body in a box
   the browser doesn't draw itself, so the blur on it did nothing; Sifter now

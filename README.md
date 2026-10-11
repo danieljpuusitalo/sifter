@@ -94,7 +94,7 @@ accounts, so some sponsored and suggested posts get through. The popup and the
 settings page show the same tag. It is on by default like every other site, and
 turning it off is one switch.
 
-**Any other site** can be turned on from the popup ("Hide ads on this site"). There
+**Any other site** can be turned on from the popup ("Hide ads on" and the site's name). There
 Sifter uses general detection: it hides elements whose whole visible label is
 "Sponsored", "Ad" or similar.
 

@@ -29,7 +29,11 @@ async function routeFixtures(context) {
     if (url.protocol === 'chrome-extension:') return route.continue();
     const file = FIXTURES[url.hostname];
     if (url.protocol === 'https:' && file && route.request().resourceType() === 'document') {
-      return route.fulfill({ contentType: 'text/html', body: readFileSync(join(ROOT, 'fixtures', 'public', file), 'utf8') });
+      // The fixture splits one label with a visually hidden decoy ("Pro<span class=_vh>zq</span>moted")
+      // to test the scanner. The placeholder hint quotes the post's text, decoy included, which
+      // reads as garbage in a store image, so the images use the plain label.
+      const html = readFileSync(join(ROOT, 'fixtures', 'public', file), 'utf8').replace(/<span class="_vh">[^<]*<\/span>/g, '');
+      return route.fulfill({ contentType: 'text/html', body: html });
     }
     return route.abort();
   });

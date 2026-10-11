@@ -87,6 +87,12 @@ export const AdapterSchema = z.object({
    */
   suggestedPaths: z.array(z.string().min(1)).optional(),
   /**
+   * Query-parameter names whose presence turns "suggested" off on a feed path: the
+   * page was opened to show one specific post (LinkedIn notification links are
+   * /feed/?highlightedUpdateUrn=...). Only names are read, never values.
+   */
+  suggestedOffParams: z.array(z.string().min(1)).optional(),
+  /**
    * Whole page modules to hide under a category, outside the feed's units: X's
    * "Who to follow" box, Facebook's right-rail "Sponsored" column.
    */
@@ -127,6 +133,16 @@ export const AdapterSchema = z.object({
    * is inserted; a card filled in later still takes the debounced pass.
    */
   prepaint: z.boolean().optional(),
+  /**
+   * An attribute on the unit root that the site keeps when it unmounts a post far
+   * from the screen and re-creates it on the way back (LinkedIn: `componentkey`). The
+   * pre-paint lane then puts the post's last presentation back before its first
+   * paint, with no label read (mount memory, `src/content/mount-memory.ts`).
+   */
+  unitKey: z
+    .string()
+    .regex(/^[a-z][a-z0-9-]*$/)
+    .optional(),
   /** Free-text provenance: when and how the selectors were last checked against the live site. */
   verified: z.string().optional(),
 })

@@ -131,6 +131,92 @@ for (const site of SITES) {
   });
 }
 
+// A notification link opens /feed/?highlightedUpdateUrn=...: the feed path, but the page
+// exists to show one post, so suggested must not hide it (the param NAME decides).
+describe('linkedin suggestedOffParams', () => {
+  const site = SITES[0]!;
+  const HIGHLIGHT = '?highlightedUpdateUrn=urn%3Ali%3Aactivity%3A1&highlightedUpdateType=X&origin=Y';
+
+  function scanWith(path: () => string, search: () => string): { doc: Document; scanner: Scanner } {
+    const doc = load(site);
+    const scanner = new Scanner({
+      doc,
+      hostname: site.host,
+      baseUrl: `https://${site.host}/`,
+      path,
+      search,
+      adapter: adapterFor(site.host),
+      context: defaultContext(siteKey(site.host), { categories: ON }),
+      persistOverride: () => undefined,
+      schedule: (fn) => fn(),
+    });
+    scanner.start();
+    return { doc, scanner };
+  }
+  const rescan = async (doc: Document) => {
+    doc.body.appendChild(doc.createElement('div')); // the SPA re-renders
+    await new Promise((r) => setTimeout(r, 0));
+  };
+
+  it('with the param on /feed/, suggested is kept and sponsored is still hidden', () => {
+    const { doc, scanner } = scanWith(() => '/feed/', () => HIGHLIGHT);
+    expect(total(doc, 'suggested')).toBeGreaterThan(0);
+    expect(total(doc, 'sponsored')).toBeGreaterThan(0);
+    expect(hidden(doc, 'suggested')).toBe(0);
+    expect(hidden(doc, 'sponsored')).toBe(total(doc, 'sponsored'));
+    scanner.stop();
+  });
+
+  it('an unrelated param does not turn suggested off', () => {
+    const { doc, scanner } = scanWith(() => '/feed/', () => '?trk=x');
+    expect(hidden(doc, 'suggested')).toBe(total(doc, 'suggested'));
+    expect(total(doc, 'suggested')).toBeGreaterThan(0);
+    scanner.stop();
+  });
+
+  it('a param that appears later on the same path (SPA nav to the highlighted post) releases suggested', async () => {
+    let search = '';
+    const { doc, scanner } = scanWith(() => '/feed/', () => search);
+    expect(hidden(doc, 'suggested')).toBe(total(doc, 'suggested'));
+    expect(total(doc, 'suggested')).toBeGreaterThan(0);
+    search = HIGHLIGHT;
+    await rescan(doc);
+    expect(hidden(doc, 'suggested')).toBe(0);
+    expect(hidden(doc, 'sponsored')).toBe(total(doc, 'sponsored'));
+    scanner.stop();
+  });
+
+  it('a param stripped later on the same path keeps suggested off', async () => {
+    let search = HIGHLIGHT;
+    const { doc, scanner } = scanWith(() => '/feed/', () => search);
+    expect(hidden(doc, 'suggested')).toBe(0);
+    search = '';
+    await rescan(doc);
+    expect(hidden(doc, 'suggested')).toBe(0);
+    expect(hidden(doc, 'sponsored')).toBe(total(doc, 'sponsored'));
+    scanner.stop();
+  });
+
+  it('a path change ends the latch: back on /feed/ with no param, suggested is hidden again', async () => {
+    let path = '/feed/';
+    let search = HIGHLIGHT;
+    const { doc, scanner } = scanWith(() => path, () => search);
+    expect(hidden(doc, 'suggested')).toBe(0);
+    search = '';
+    path = '/feed/update/x';
+    await rescan(doc);
+    expect(hidden(doc, 'suggested')).toBe(0);
+    path = '/feed/';
+    await rescan(doc);
+    expect(hidden(doc, 'suggested')).toBe(total(doc, 'suggested'));
+    scanner.stop();
+  });
+
+  it('the adapter names the param', () => {
+    expect(adapterFor(site.host)?.suggestedOffParams).toContain('highlightedUpdateUrn');
+  });
+});
+
 describe('adapter suggestedPaths', () => {
   it('every pattern compiles', () => {
     for (const a of ADAPTERS) {

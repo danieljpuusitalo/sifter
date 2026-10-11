@@ -233,7 +233,7 @@ function Sites(props: { settings: Settings; onChange: () => void }) {
                     )}
                     {!launch(key) && granted(key) && <span class="muted small block">added by you</span>}
                     {!launch(key) && !granted(key) && (
-                      <span class="muted small block">added by you; Chrome no longer grants access, so Sifter can't run here. Open the site and choose "Hide ads on this site" to grant it again.</span>
+                      <span class="muted small block">added by you; Chrome no longer grants access, so Sifter can't run here. Open the site and choose {'"Hide ads on <site>"'} in the Sifter popup to grant it again.</span>
                     )}
                   </th>
                   <td>
@@ -266,7 +266,7 @@ function Sites(props: { settings: Settings; onChange: () => void }) {
         </table>
       </div>
       <p class="muted small">
-        To add another site, open it and choose "Hide ads on this site" in the Sifter popup. Sites you add use general
+        To add another site, open it and choose {'"Hide ads on <site>"'} in the Sifter popup. Sites you add use general
         detection: they look for elements whose whole text is "Sponsored", "Ad" or similar.
       </p>
     </section>

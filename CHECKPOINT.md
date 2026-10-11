@@ -57,6 +57,30 @@ report: LinkedIn good, Facebook slow but fine, Google missed a sponsored carouse
 - **Store assets** re-rendered: the committed ones dated from 2026-09-25 and showed the old
   placeholder.
 - **Collapse vs blur-below:** (a), keep collapse, ships unchanged. Revisit after launch.
+- **Scroll stability Phase 1, mount memory (landed here, Daniel's call: hold the release
+  for it).** The macOS compat run (38139908499) failed `virtual.spec.ts` with 2, 5 and 3
+  jumps against the one allowed, every one `remountJump=1`.
+  - **Mechanism:** an ad collapsed far below is unmounted into a slot kept at the collapsed
+    height. On the way up it came back whole and at full height, wherever the lane could not
+    read it in the re-mount's own callback: a shell whose label fills in later, or a unit the
+    1 ms cap cut, whose rAF continuation runs a frame late when the site mutates inside rAF.
+  - **Fix:** `src/content/mount-memory.ts`, an LRU (2000) from the adapter's new `unitKey`
+    (LinkedIn: `componentkey`) to the last presentation. The hider records it on every write;
+    the lane puts it back before any read, uncapped (an attribute read and a map lookup per
+    unit). `hidden` re-collapses, `shown` comes back with its Hide bar, `tagged` is left at
+    full height for `decide()` to tag again. `decide()` confirms every recall, a Show
+    included, and releases in place on disagreement (`laneReleases`). Cleared in
+    `applyContext` (settings change, in-app navigation). Counter: `laneRecalled`.
+  - **Receipts:** `virtual.spec.ts` now allows 0 jumps (the allowance is gone). This laptop:
+    4 of 4 runs 0 jumps, `remountFlips` 0/0. Mutation (memory forced null): 3 of 3 runs fail
+    with one +405 px jump, `toFull` 3. Unit: `tests/unit/mount-memory.test.ts` (9, with a
+    no-`unitKey` negative control); `trace-attribution` now pins both behaviours (a re-mounted
+    tag collapsed without memory, kept at full height with it).
+  - **Live key probe (read-only, 2026-10-11):** LinkedIn's `componentkey` is
+    `update-card-focus` plus a 71-char base64url token (53 bytes): an opaque id, not an
+    index. LinkedIn still did not virtualise, so survival across a re-mount is still
+    unmeasured live. A key reused for another post costs one lane hide that `decide()`
+    releases in place (unit test), never a lasting one.
 
 **Follow-up A/B/C answered (2026-10-08, lane-clock release build, on `perf/lane-clock`).**
 The frame excess with Sifter on comes from the posts that collapsing brings into the same

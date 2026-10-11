@@ -1,4 +1,5 @@
 import type { HideCategory, HideMode } from '../types';
+import type { MountMemory } from './mount-memory';
 import type { LateTracker } from './viewport';
 
 // Hard rule 5: never remove nodes. Hide by adding a class to the unit root (plus,
@@ -220,6 +221,8 @@ export class Hider {
   private tracked = new Set<Element>();
   /** Blurred units waiting for `markContents` in the next animation frame. */
   private pendingMarks = new Set<Element>();
+  /** Set by the scanner when the adapter has a `unitKey`: every presentation change is written here. */
+  memory: MountMemory | null = null;
 
   /**
    * @param late When given, a hide decided after the page settled lands as a tag
@@ -260,6 +263,14 @@ export class Hider {
     const el = unit as HTMLElement;
     el.classList.add(HIDDEN_CLASS);
     this.present(el, rec);
+    this.memo(unit);
+  }
+
+  /** Writes the unit's presentation to mount memory, or forgets it once Sifter lets go. */
+  private memo(unit: Element): void {
+    if (!this.memory) return;
+    const rec = this.records.get(unit);
+    this.memory.set(unit, rec ? { state: rec.shown ? 'shown' : rec.tagged ? 'tagged' : 'hidden', category: rec.category, hint: rec.hint } : null);
   }
 
   /** Stop the viewport tracker (the scanner is being torn down). */
@@ -343,6 +354,7 @@ export class Hider {
       existing.hint = hint;
       if (changed) this.renderPlaceholder(existing, unit);
       if (now) this.settle(unit);
+      this.memo(unit);
       return;
     }
     const rec: Record_ = {
@@ -362,6 +374,7 @@ export class Hider {
     this.hidden.add(unit);
     if (!tag) (unit as HTMLElement).classList.add(HIDDEN_CLASS);
     this.applyMode(unit, rec, tag, contents);
+    this.memo(unit);
   }
 
   /** Hard reset: removes the placeholder and the record entirely. Used for a full unhide, disabling, and "Not an ad". */
@@ -379,6 +392,7 @@ export class Hider {
     this.restoreStyle(el, rec);
     this.unmarkContents(rec);
     rec.placeholder?.remove();
+    this.memo(unit);
   }
 
   unhideAll(): void {
@@ -394,6 +408,7 @@ export class Hider {
     if (!rec || rec.shown) return;
     rec.shown = true;
     this.hidden.delete(unit);
+    this.memo(unit);
     if (rec.tagged) {
       // Unblur in place: same height, pill kept (Hide still collapses it), and the
       // tracker lets go, so it never collapses a post the reader chose to read.
@@ -416,6 +431,7 @@ export class Hider {
     if (!rec || !rec.shown) return;
     rec.shown = false;
     this.hidden.add(unit);
+    this.memo(unit);
     const el = unit as HTMLElement;
     if (rec.tagged) {
       // An opened tag blurs again in place, and the tracker may collapse it once it is off screen.

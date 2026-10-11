@@ -8,6 +8,7 @@ import { decideTier0 } from '../rules/tier0';
 import type { BlockCategory, HideCategory, OverrideAction } from '../types';
 import { keepInPlace } from './anchor';
 import { Hider, PLACEHOLDER_ATTR } from './hider';
+import { MountMemory, type Presented } from './mount-memory';
 import type { NearTracker } from './near';
 import { EMPTY_LATE_STATS, type LateStats, type LateTracker, type LateTrackerFactory } from './viewport';
 import { safeDetail, type HideTrace, type HideWhy } from './trace';
@@ -185,6 +186,7 @@ const EMPTY_PERF: OwnPerf = {
   approachScans: 0,
   approachPromotes: 0,
   laneReleases: 0,
+  laneRecalled: 0,
   laneMs: 0,
   laneMaxMs: 0,
   laneBilledMaxMs: 0,
@@ -263,6 +265,8 @@ export class Scanner {
   private laneCarry: MutationRecord[] = [];
   private laneCarryUnits: Element[] = [];
   private laneFrame = false;
+  /** How each keyed unit was last presented, for the lane to put back on a re-mount. Null without a lane or an adapter `unitKey`. */
+  private readonly memory: MountMemory | null;
   private readonly frame: (fn: () => void) => unknown;
   /**
    * A pass the user started (pause, a switch, "Not an ad", an in-app navigation):
@@ -313,6 +317,8 @@ export class Scanner {
       this.late ?? undefined,
       trace ? (k, ms) => trace.cost(k, ms) : undefined,
     );
+    this.memory = this.lane && deps.adapter?.unitKey ? new MountMemory(deps.adapter.unitKey) : null;
+    this.hider.memory = this.memory;
     deps.near?.listen?.(() => this.approach());
     this.compileContext();
   }
@@ -395,6 +401,8 @@ export class Scanner {
   applyContext(ctx: SiteContext): void {
     this.ctx = ctx;
     this.compileContext();
+    // New settings or a new page: a post hidden under the old ones may not be now.
+    this.memory?.clear();
     const traced = this.deps.trace ? this.hider.trackedHides() : null;
     this.hider.setMode(ctx.hideMode);
     if (traced) for (const u of traced) this.deps.trace?.wrote(u, 'mode', this.now());
@@ -1090,13 +1098,32 @@ export class Scanner {
     const { baseUrl, trace } = this.deps;
     const hasOverrides = Object.keys(this.ctx.overrides).length > 0;
     const hits: LaneHit[] = [];
+    // Mount memory first, uncapped: one attribute read and a map lookup per unit, so a
+    // re-mounted post the cap would cut, or a shell whose label fills in later, still
+    // comes back as it left, before its first paint (see `MountMemory`).
+    const recalled: [Element, Presented][] = [];
+    const known = new Set<Element>();
+    if (this.memory) {
+      for (const u of born) {
+        if (this.hider.isHidden(u) || this.userShown.has(u) || this.seen.has(u)) continue;
+        const p = this.memory.get(u);
+        if (!p) continue;
+        known.add(u);
+        this.laneLooked.add(u);
+        // A tag stays at full height in its slot: decide() tags it again, as a late hide.
+        if (p.state !== 'tagged') recalled.push([u, p]);
+      }
+    }
     let readUpTo = born.length;
+    let readAny = false;
     for (let i = 0; i < born.length; i++) {
       const u = born[i]!;
-      if (i > 0 && clock.over()) {
+      if (known.has(u)) continue;
+      if (readAny && clock.over()) {
         readUpTo = i;
         break;
       }
+      readAny = true;
       this.laneLooked.add(u);
       if (this.hider.isHidden(u) || this.userShown.has(u) || this.seen.has(u)) continue;
       this.perf.laneUnits++;
@@ -1125,6 +1152,19 @@ export class Scanner {
       trace?.hid(h.unit, now, h.why);
       trace?.wrote(h.unit, 'lane', now);
       this.perf.laneHits++;
+    }
+    for (const [u, p] of recalled) {
+      this.hider.hide(u, p.category, p.hint, true);
+      // Unconfirmed like any lane hide: decide() releases it in place if it disagrees.
+      this.laneHidden.add(u);
+      trace?.hid(u, now, { category: p.category, kind: 'recall' });
+      if (p.state === 'shown') {
+        this.userShown.add(u);
+        trace?.shown(u);
+        this.hider.show(u);
+      } else this.perf.laneHits++;
+      trace?.wrote(u, 'lane', now);
+      this.perf.laneRecalled++;
     }
     return readUpTo;
   }
@@ -1279,7 +1319,8 @@ export class Scanner {
     this.seen.set(unit, { sig, fp });
     if (this.unitsSeen.size < MAX_UNITS_SEEN) this.unitsSeen.add(fp);
 
-    if (this.userShown.has(unit)) return null;
+    // A Show the lane recalled from mount memory is confirmed like its hides are.
+    if (this.userShown.has(unit) && !this.laneHidden.has(unit)) return null;
     const decision = decideTier0({
       override: this.ctx.overrides[fp],
       marker,
@@ -1313,13 +1354,21 @@ export class Scanner {
   private apply(d: Decision): void {
     if (!d.unit.isConnected) return;
     if (this.userShown.has(d.unit)) {
+      const recalled = this.laneHidden.delete(d.unit);
       if (d.hide) return; // stays shown (with its "Hide" bar) until the user hides it again
       // The user showed it, and this decision no longer hides it at all (its
       // category or rule went off): drop the "Showing…" bar and the record.
       if (!this.releasing) this.deps.trace?.released(d.unit, this.now(), d.empty ? 'emptied' : 'redecided', true);
       this.userShown.delete(d.unit);
-      this.hider.unhide(d.unit);
-      this.deps.trace?.wrote(d.unit, 'release', this.now());
+      if (recalled) {
+        // A recalled Show the full decision disagrees with: the bar goes, the post stays put.
+        this.perf.laneReleases++;
+        this.inPlace(() => this.hider.unhide(d.unit));
+        this.deps.trace?.wrote(d.unit, 'laneRelease', this.now());
+      } else {
+        this.hider.unhide(d.unit);
+        this.deps.trace?.wrote(d.unit, 'release', this.now());
+      }
       this.hiddenFps.delete(d.fp);
       this.blockHidden.delete(d.unit);
       return;

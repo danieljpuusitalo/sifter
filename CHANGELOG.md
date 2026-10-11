@@ -47,6 +47,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   post hidden as a suggestion. While the feed is showing a post you opened from a
   notification, suggested hiding is off until you leave that page. Sponsored
   posts are still hidden there.
+- On a feed that unloads posts far off screen and rebuilds them as you scroll
+  back, a hidden ad no longer comes back at full height for a frame and pushes
+  the posts you are reading. Sifter remembers how it left each post and puts
+  that back before the post is drawn; a post you chose to show comes back shown.
 - "Undo" on a post you hid yourself now just undoes your hide. Before, it marked
   the post as "not an ad" for good, so it could never be hidden again even if it
   was one.

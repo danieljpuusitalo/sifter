@@ -129,6 +129,8 @@ export type ScanPerf = {
   approachPromotes: number;
   /** Lane hides the full decision then disagreed with, released in place. Target 0: each is a rule-6 near miss. */
   laneReleases: number;
+  /** Re-mounted units the lane put back as they were last presented (mount memory), with no label read. Of them, a hide is also in `laneHits`. */
+  laneRecalled: number;
   laneMs: number;
   /** The lane's longest single batch. `resetPerfPeaks` zeroes it. */
   laneMaxMs: number;

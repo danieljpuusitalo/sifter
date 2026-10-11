@@ -23,8 +23,9 @@ export default defineConfig({
     optional_host_permissions: ['https://*/*'],
     homepage_url: 'https://github.com/danieljpuusitalo/sifter',
     // Highest feature floor in the code: storage setAccessLevel (102), scripting
-    // registerContentScripts (96), adapter `:has()` selectors (105). 116 adds margin
-    // and is the oldest Chrome the e2e suite has been run against.
+    // registerContentScripts (96), adapter `:has()` selectors (105). 116 is margin
+    // above that. The floor is set by API availability only: e2e runs on current
+    // Chromium (Linux, macOS, Windows), never on 116 itself.
     minimum_chrome_version: '116',
   },
 });

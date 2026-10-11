@@ -1,5 +1,44 @@
 # Sifter checkpoint
 
+**Release pipeline for store updates (2026-10-11, branch `ops/store-pipeline`).** Daniel asked
+for updates after store launch to be easy, possibly daily. The routine is now `pnpm release
+patch`, then merge (`docs/RELEASING.md`).
+
+- **`release.yml` now runs on every push to `main`**, not on tag push. It releases when
+  `package.json`'s version has no tag: verify, build, permission guard, e2e, then tag, GitHub
+  Release, then a separate `store` job that submits the zip (`chrome-webstore-upload-cli@4.0.2`,
+  pinned). Without the `CWS_*` secrets the store job leaves a notice and passes. A refused
+  submission (review pending) is retried with "Re-run failed jobs". `v1.2.0` is already
+  tagged, so merging this does not release anything.
+- **`scripts/release.mjs`**: refuses unless it's on `main`, clean, level with origin, the last
+  version is tagged and `[Unreleased]` is non-empty. It keeps CHANGELOG's CRLF. Tested in a
+  scratch clone against a local bare remote: the dry run, the real run (branch, commit and file
+  edits correct), and the `gh` failure path (returns to `main` with a plain message).
+- **`scripts/check-permissions.mjs` + `permissions.lock.json`**, in CI and in the release. A new
+  required permission or host disables the extension for every existing user until they
+  accept it. Mutation-tested: adding `tabs` and `google.com.br` to the built manifest exits 1
+  and lists both.
+- **`bench/canary.ts` (`pnpm canary`)**: live, local, read-only check of every launch site.
+  - **Edge ignores `--load-extension` now**, and `--disable-features=DisableLoadExtensionCommandLineSwitch`
+    did not bring it back. The canary launches plain Edge with `--enable-unsafe-extension-debugging`
+    and loads the build via CDP `Extensions.loadUnpacked`, which needs forward slashes in the
+    path ("File path cannot be resolved" with backslashes).
+  - Playwright lists no service worker over CDP, so the options page is the control page.
+  - **Trap:** tsx's keepNames wraps a named arrow inside `page.evaluate` in `__name()`, which
+    is undefined in the page. The sweep threw silently, and the first run counted 0 labels next
+    to 7 hides. Fixed, and guarded: hides with 0 labels seen is a WARN, never a PASS.
+  - **Negative control:** with sponsored hiding off, Reddit and LinkedIn FAIL (2 and 4 labels on
+    screen uncovered) and the run exits 1.
+  - **Full run on 1.2.0:** PASS on LinkedIn 10, Reddit 7, X 4, Instagram 5, Facebook 1, and Google
+    2/1/3 on "running shoes", "headphones" and "laptop". INFO on Threads: no ad served. 0 missed
+    on screen.
+- **Options page footer**: "Sifter <version> · Report a site that broke". It links the new issue
+  form `.github/ISSUE_TEMPLATE/site-broke.yml`, which asks for no private content. It ships in
+  the next release.
+- **Daniel, once, after the first manual store submission**: the CWS API setup in
+  `docs/RELEASING.md` (5 GitHub secrets; the OAuth consent screen must be "In production" or
+  the token dies in 7 days).
+
 **v1.2.0 pre-submission audit (2026-10-11, branch `release/1.2.0`).** Daniel's live
 report: LinkedIn good, Facebook slow but fine, Google missed a sponsored carousel on
 "shoes". Everything below ships in v1.2.0, together with the blur-marks fix.
@@ -1216,6 +1255,7 @@ path is still unverified live (no sponsored feed post appeared this session eith
 
 ## Do not undo
 
+- **Releases come from `main`, never from a hand-pushed tag** (2026-10-11): `release.yml` tags a version that has no tag yet, and the store job is separate so a refused submission can be re-run alone. `permissions.lock.json` changes only on purpose: a new required permission disables Sifter for existing users.
 - **The pre-paint lane looks only at units born in the batch** (session 18, `bornUnits`): an added root or a unit inside one. A unit reached by `closest()` from a changed node was already painted, and hiding it there is the old jump. It reads no layout, honours overrides, off rules, `covers` and `suggestedPaths`, and every hit is confirmed by `decide()`. `tests/unit/prepaint.test.ts` (with a parity run over every public fixture).
 - **The lane's first record and first unit always fit the 1 ms cap** (session 18): the cap is asked before every further one. Asking first let one slow clock read skip whole batches (51 bare frames in the e2e oracle). Since 2026-10-07 the cap also leaves the batch's single longest read unbilled (`laneClock`): that read pays the page's own style recalc, and billing it cut the cheap reads after it into blurred tags.
 - **A hide from a user-started pass applies at once, an existing tag stays a tag** (session 18, `changesHeight` in `scanner.ts`): the reader asked for the change, and `keepInPlace` holds the screen.

@@ -20,6 +20,9 @@ import type { BlockCategory, HideMode } from '../../src/types';
 // The options page, laid out like an ad blocker's: what to block (the "filter
 // lists"), where, the user's own filters, and the exceptions they've made.
 
+/** The issue form (.github/ISSUE_TEMPLATE/site-broke.yml). A link the user follows, not a request Sifter makes. */
+const REPORT_URL = 'https://github.com/danieljpuusitalo/sifter/issues/new?template=site-broke.yml';
+
 const CATEGORIES: { cat: BlockCategory; label: string; short: string; hint: string }[] = [
   {
     cat: 'sponsored',
@@ -176,6 +179,13 @@ export function App() {
           no account, and it makes no network requests of its own. Your settings stay in this browser's extension storage.
         </p>
       </section>
+
+      <p class="muted small">
+        Sifter {browser.runtime.getManifest().version} ·{' '}
+        <a href={REPORT_URL} target="_blank" rel="noreferrer">
+          Report a site that broke
+        </a>
+      </p>
     </main>
   );
 }

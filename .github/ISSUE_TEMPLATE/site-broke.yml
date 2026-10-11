@@ -1,0 +1,42 @@
+name: A site broke
+description: An ad got through, or Sifter hid something it should not have.
+labels: [site-broke]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks. Please do not paste private content: no screenshots of other people's posts,
+        no links with personal details. A description of what you saw is enough.
+  - type: dropdown
+    id: site
+    attributes:
+      label: Site
+      options: [LinkedIn, Facebook, Instagram, Reddit, X, Threads, Google, Other]
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What happened
+      options:
+        - An ad was not hidden
+        - A real post was hidden
+        - The page looked broken or jumped
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Sifter version
+      description: Shown at the bottom of Sifter's options page (right-click the Sifter icon, then Options).
+      placeholder: "1.2.0"
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Where on the page, what the ad or post looked like (e.g. "Sponsored carousel at the top of a Google search for shoes"), and your browser.
+    validations:
+      required: true

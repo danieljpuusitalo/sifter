@@ -25,5 +25,6 @@ jobs:
       - run: pnpm test
       - run: pnpm eval:mock
       - run: pnpm build
+      - run: node scripts/check-permissions.mjs
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm exec playwright test

@@ -296,6 +296,16 @@ export class Hider {
   }
 
   /**
+   * A new hide would mark the unit's `display: contents` boxes: a tag, or any blur.
+   * The scanner asks in its read phase and passes `contentsOf` to `hide`, so the
+   * marks are writes only.
+   * @param atOnce The hide applies at once, so it is never a tag.
+   */
+  marksContents(atOnce: boolean): boolean {
+    return this.mode === 'blur' || (!atOnce && this.tagsLateHides());
+  }
+
+  /**
    * Reads only: the unit's `display: contents` children (and any nested inside them,
    * three levels down) that a tag's blur must reach through. The scanner calls it in
    * its read phase, where style is already clean, so the tag's writes never have to
@@ -507,7 +517,7 @@ export class Hider {
       this.late?.watch(unit);
       return;
     }
-    this.present(el, rec);
+    this.present(el, rec, contents);
   }
 
   /**
@@ -566,8 +576,12 @@ export class Hider {
     }
   }
 
-  /** The mode's own hide, which may change the unit's height. Keeps the first saved inline display. */
-  private present(el: HTMLElement, rec: Record_): void {
+  /**
+   * The mode's own hide, which may change the unit's height. Keeps the first saved inline display.
+   * @param contents Blur only: `contentsOf(el)`, read before any write, so the marks
+   *   land now with no style read. Without it, they are read in the next frame.
+   */
+  private present(el: HTMLElement, rec: Record_, contents?: readonly Element[]): void {
     if (rec.mode === 'hide') {
       rec.prev ??= {
         display: el.style.getPropertyValue('display'),
@@ -577,7 +591,9 @@ export class Hider {
       return;
     }
     el.classList.add(this.classFor(rec.mode) as string);
-    if (rec.mode === 'blur') this.markSoon(el);
+    if (rec.mode !== 'blur') return;
+    if (contents) this.markGiven(el, rec, contents);
+    else this.markSoon(el);
   }
 
   private restoreStyle(el: HTMLElement, rec: Record_): void {

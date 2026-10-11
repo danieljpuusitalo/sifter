@@ -237,6 +237,31 @@ describe('Hider tag', () => {
     expect(document.getElementById('w')!.hasAttribute(CONTENTS_ATTR)).toBe(true);
   });
 
+  // Live LinkedIn, 2026-10-08: in blur mode, the next-frame marks still read style
+  // after the blur class went on, forcing 13-33 ms of recalc per run.
+  it('blur mode, given the boxes read beforehand, marks them at once with no style read', () => {
+    document.body.innerHTML = '<ul><li id="u"><span class="label">Promoted</span><div id="w" style="display: contents"><p>Body</p></div></li></ul>';
+    const { h } = lateHider('blur');
+    expect(h.marksContents(false), 'the scanner is asked to read the boxes').toBe(true);
+    expect(h.marksContents(true), 'also for a hide applied at once').toBe(true);
+    const before = h.contentsOf(unit());
+    const spy = vi.spyOn(window, 'getComputedStyle');
+    try {
+      h.hide(unit(), 'sponsored', undefined, false, before);
+      expect(unit().classList.contains(BLUR_CLASS), 'positive control: blurred').toBe(true);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(document.getElementById('w')!.hasAttribute(CONTENTS_ATTR), 'marked synchronously').toBe(true);
+  });
+
+  it('collapse mode asks for the boxes only when a hide can become a tag', () => {
+    const { h } = lateHider();
+    expect(h.marksContents(false)).toBe(true);
+    expect(h.marksContents(true), 'applied at once: never a tag, nothing to mark').toBe(false);
+  });
+
   it('the tag CSS places the placeholder at zero height and blurs the content, changing no layout', () => {
     const { h } = lateHider();
     h.hide(unit(), 'sponsored');

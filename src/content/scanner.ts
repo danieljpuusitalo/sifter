@@ -1271,12 +1271,13 @@ export class Scanner {
   }
 
   /**
-   * A new hide that `apply` will land as a tag marks the unit's `display: contents`
-   * boxes. Read them here, with the other reads, while style is clean: read after the
-   * tag's own writes, they forced a style recalc of the post, once per tag.
+   * A new hide that `apply` will land as a tag, or as a blur, marks the unit's
+   * `display: contents` boxes. Read them here, with the other reads, while style is
+   * clean: read after the hide's own writes, they forced a style recalc of the post,
+   * once per hide.
    */
   private tagContents(unit: Element): Element[] | undefined {
-    if (this.releasing || this.hider.isHidden(unit) || !this.hider.tagsLateHides()) return undefined;
+    if (this.hider.isHidden(unit) || !this.hider.marksContents(this.releasing)) return undefined;
     return this.hider.contentsOf(unit);
   }
 

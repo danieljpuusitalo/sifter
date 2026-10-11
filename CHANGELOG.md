@@ -28,6 +28,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   page mutates also forced a style recalc of everything the page had dirtied.
   Precision and recall are unchanged: the fixture eval and the decoy tests
   still pass.
+- In blur mode, a post hidden after it arrived no longer makes the page
+  restyle it a second time: Sifter finds the boxes the blur must reach through
+  before it changes anything, instead of a frame later.
 - README and store listing now say where suggested hiding applies: the home feed
   only, while sponsored hiding runs on every page of a covered site.
 

@@ -4,6 +4,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-11
+
 ### Changed
 
 - The feed no longer jumps or leaves blank gaps when Sifter hides something.
@@ -36,6 +38,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Google: the "Sponsored products" carousel at the top of a shopping search
+  ("shoes") was shown. Google now serves it in a third shape, under a renamed
+  attribute, with its ad links hidden from view, which Sifter took for "already
+  hidden by something else". It is hidden again, and the "Sponsored result"
+  heading above a mid-page text ad now goes with the ad.
+- LinkedIn: clicking a notification about a post opened the feed with that very
+  post hidden as a suggestion. While the feed is showing a post you opened from a
+  notification, suggested hiding is off until you leave that page. Sponsored
+  posts are still hidden there.
+- "Undo" on a post you hid yourself now just undoes your hide. Before, it marked
+  the post as "not an ad" for good, so it could never be hidden again even if it
+  was one.
+- The settings page now names the popup button as it reads ("Hide ads on" and the
+  site's name), the hidden-post bar has an accessible name for screen readers, and
+  the muted-words box shows the keyboard focus ring.
 - On LinkedIn, a tagged or blurred post's text stayed readable while only its
   reactions and comments were blurred. LinkedIn wraps the post body in a box
   the browser doesn't draw itself, so the blur on it did nothing; Sifter now

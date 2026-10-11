@@ -3,6 +3,10 @@
 ## Name
 Sifter: hide sponsored posts
 
+The dashboard takes the item title from the manifest `name`, which is "Sifter"; it
+has no separate title field. The longer name above is for the README and anywhere
+else that asks for one. For an Unlisted listing this does not matter.
+
 ## Summary (132 characters max)
 Hides the sponsored posts your ad blocker misses on LinkedIn, Reddit, Google, X, Instagram, Facebook and Threads.
 
@@ -38,7 +42,7 @@ Hide sponsored and promoted posts, and posts matching user-set filters, on the s
 
 ## Permission justifications (for review)
 - Host permissions (launch sites): read the page to find posts labelled as sponsored and hide them. Nothing is transmitted.
-- Optional host permissions (https://*/*): requested per site, only when the user chooses "Hide ads on this site" in the popup.
+- Optional host permissions (https://*/*): requested per site, only when the user chooses "Hide ads on" and the site's name in the popup.
 - storage: user settings and exceptions, stored locally.
 - scripting: inject the content script into a site the user has just turned on.
 - activeTab: read the current tab's hostname so the popup can offer to turn Sifter on there.

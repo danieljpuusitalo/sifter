@@ -79,6 +79,11 @@ export type ScannerDeps = {
    * the content script passes a live reader; the default is `baseUrl`'s path.
    */
   path?: () => string;
+  /**
+   * The page's current query string (`location.search`), read only for the adapter's
+   * `suggestedOffParams`, by name. Default: none.
+   */
+  search?: () => string;
   now?: () => number;
   /** Dev builds log batches that exceed the time budget. */
   dev?: boolean;
@@ -232,6 +237,11 @@ export class Scanner {
   /** Compiled `suggestedPaths`; null means suggested applies on every page. */
   private readonly feedPaths: RegExp[] | null;
   private readonly path: () => string;
+  private readonly search: () => string;
+  /** Compiled `suggestedOffParams`; null when the adapter has none. */
+  private readonly offParams: string[] | null;
+  /** The path an off-param was seen on: suggested stays off there until the path changes, even if the param is stripped. */
+  private offParamPath: string | null = null;
   /** The path the categories were compiled for: a change is an in-app navigation. */
   private lastPath = '';
   /** One throwing unit must not spam the console: warn once per page. */
@@ -268,6 +278,8 @@ export class Scanner {
     this.categories = deps.context.categories;
     this.feedPaths = compilePaths(deps.adapter?.suggestedPaths);
     this.path = deps.path ?? (() => pathOf(deps.baseUrl));
+    this.search = deps.search ?? (() => '');
+    this.offParams = deps.adapter?.suggestedOffParams?.length ? deps.adapter.suggestedOffParams : null;
     this.positional = positionalSelectors(deps.adapter);
     this.now = deps.now ?? (() => performance.now());
     this.schedule = deps.schedule ?? ((fn, ms) => setTimeout(fn, ms));
@@ -305,11 +317,22 @@ export class Scanner {
     this.compileContext();
   }
 
+  /** The URL carries one of the adapter's `suggestedOffParams`. Names only, never values. */
+  private offParamPresent(): boolean {
+    if (!this.offParams) return false;
+    const search = this.search();
+    if (!search) return false;
+    const params = new URLSearchParams(search);
+    return this.offParams.some((name) => params.has(name));
+  }
+
   /** Derive what the context implies once, not per unit. */
   private compileContext(): void {
     const { customSelectors, mutedWords } = this.ctx;
     this.lastPath = this.path();
-    const onFeed = !this.feedPaths || this.feedPaths.some((re) => re.test(this.lastPath));
+    if (this.offParamPath !== this.lastPath) this.offParamPath = null;
+    if (this.offParamPath === null && this.offParamPresent()) this.offParamPath = this.lastPath;
+    const onFeed = (!this.feedPaths || this.feedPaths.some((re) => re.test(this.lastPath))) && this.offParamPath === null;
     const categories = { ...this.ctx.categories, suggested: this.ctx.categories.suggested && onFeed };
     this.categories = categories;
     // Older service workers answer without offRules while the extension updates.
@@ -553,7 +576,9 @@ export class Scanner {
     // An in-app navigation (LinkedIn feed -> company page) swaps the page without a
     // reload, and always mutates the DOM: re-decide everything under the new path.
     // Reading the location is a string, not a DOM read, so this costs nothing per batch.
-    if (this.feedPaths && this.path() !== this.lastPath) {
+    // A param that newly appears on the same path (feed -> a highlighted post) re-decides too;
+    // one that disappears does not (see offParamPath).
+    if (this.feedPaths && (this.path() !== this.lastPath || (this.offParamPath === null && this.offParamPresent()))) {
       this.applyContext(this.ctx);
       return;
     }
@@ -1223,6 +1248,9 @@ export class Scanner {
       // runs when a marker was found. happy-dom may lack it; then treat as visible.
       // A unit Sifter hid itself is never foreign: "hide" mode puts an inline
       // display:none on the unit itself, which checkVisibility would call foreign.
+      // A site can hide its own ad markers by design (Google's plap_ anchors are
+      // display:none beside the visible card, 2026-10-11): an adapter must then put
+      // a selector that matches the unit itself ahead of them in adSelectors.
       foreignHidden =
         !this.hider.isHidden(unit) &&
         !!marker?.node &&
@@ -1352,7 +1380,14 @@ export class Scanner {
 
   private userNotAd(unit: Element): void {
     const fp = this.seen.get(unit)?.fp;
-    if (fp) {
+    if (fp && this.hider.categoryOf(unit) === 'manual') {
+      // "Undo" on a post the reader hid themselves: drop their hide, not "always show".
+      // The post goes back to normal evaluation, so a real ad may be hidden again.
+      const { [fp]: _hide, ...overrides } = this.ctx.overrides;
+      this.ctx = { ...this.ctx, overrides };
+      this.hiddenFps.delete(fp);
+      this.deps.persistOverride(fp, null);
+    } else if (fp) {
       this.ctx = { ...this.ctx, overrides: { ...this.ctx.overrides, [fp]: 'not-ad' } };
       this.hiddenFps.delete(fp);
       this.deps.persistOverride(fp, 'not-ad');

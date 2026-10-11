@@ -293,6 +293,25 @@ describe('scanner: blocks, custom rules, context menu', () => {
     expect(hidden('#t1')).toBe(true);
     expect(scanner.hideContaining(document.body)).toBe(false);
   });
+  it('"Undo" on a post the reader hid removes their hide override instead of storing not-ad', () => {
+    const { scanner, persisted } = setup('x.com', xPage);
+    scanner.hideContaining(document.querySelector('#t1 span'));
+    expect(hidden('#t1')).toBe(true); // positive control
+    const host = document.querySelector('#t1')!.firstElementChild!;
+    const row = host.shadowRoot!.querySelector('.row')!;
+    expect(row.getAttribute('aria-label')).toBe(row.querySelector('.label')!.textContent);
+    expect(row.getAttribute('aria-label')).toMatch(/^Hidden by you/);
+    const undo = host.shadowRoot!.querySelector('[data-act="not-ad"]') as HTMLElement;
+    expect(undo.textContent).toBe('Undo');
+    const e = new MouseEvent('click', { bubbles: true, cancelable: true });
+    Object.defineProperty(e, 'isTrusted', { value: true });
+    undo.dispatchEvent(e);
+    const fp = persisted[0]![0];
+    expect(persisted.at(-1)).toEqual([fp, null]);
+    expect(persisted.some(([, action]) => action === 'not-ad')).toBe(false);
+    expect(hidden('#t1')).toBe(false);
+    expect(scanner.state().counts).toEqual({});
+  });
 });
 
 // Regressions found by the v1 audit: each failed before its fix.

@@ -658,6 +658,7 @@ export class Hider {
     const label = this.doc.createElement('span');
     label.className = 'label';
     label.textContent = this.labelText(rec);
+    row.setAttribute('aria-label', label.textContent);
     row.append(label);
     if (rec.tagged) {
       row.append(this.button('Hide', 'hide-tag', () => this.cb.onHideTag(unit)));

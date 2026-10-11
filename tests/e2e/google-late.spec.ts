@@ -84,6 +84,40 @@ test('#atvcap carousel appended after load is hidden', async ({ page }) => {
   await expect(late(page)).toHaveClass(/sifter-hidden/);
 });
 
+// The third live shape (google.com, 2026-10-11): the attribute is data-dsktp-pla-or-su
+// and every plap_ anchor is display:none. A marker on a hidden anchor reads as
+// "already hidden by another extension" and the unit is skipped for good, so the
+// container must be its own marker. Only real Chromium has checkVisibility.
+const ORSU =
+  '<div class="vbIt3d" data-dsktp-pla-or-su="true" data-late="1"><div class="GUyUUb"><span class="L8u9l">Sponsored products</span></div>' +
+  '<div class="pla"><a id="plap_or" style="display:none" href="https://www.google.com/aclk?sa=l&amp;ai=or"></a><div class="mnr-c">Late Sneaker · €80.00</div></div></div>';
+
+test('or-su carousel with hidden ad anchors present at load is hidden', async ({ page }) => {
+  await expect(page.locator('#orsu')).toHaveClass(/sifter-hidden/);
+});
+
+test('or-su carousel with hidden ad anchors appended after load is hidden', async ({ page }) => {
+  await page.evaluate((html) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'SLPe5b';
+    wrap.innerHTML = html;
+    document.getElementById('cnt')!.prepend(wrap);
+  }, ORSU);
+  await expect(late(page)).toHaveClass(/sifter-hidden/);
+});
+
+test('or-su module with no ad link is left alone', async ({ page }) => {
+  await page.evaluate((html) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'SLPe5b';
+    wrap.innerHTML = html.replace(/<a id="plap_or"[^>]*><\/a>/, '<a href="https://runbox.example/p/1">Organic</a>');
+    document.getElementById('cnt')!.prepend(wrap);
+  }, ORSU);
+  // Positive control on the same page: the at-load #tads hide (beforeEach) proves the scanner runs.
+  await page.waitForTimeout(1200);
+  await expect(late(page)).not.toHaveClass(/sifter-hidden/);
+});
+
 test('carousel filled into an existing empty wrapper is hidden', async ({ page }) => {
   await page.evaluate(() => {
     const wrap = document.createElement('div');

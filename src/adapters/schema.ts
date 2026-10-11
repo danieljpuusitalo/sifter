@@ -87,6 +87,12 @@ export const AdapterSchema = z.object({
    */
   suggestedPaths: z.array(z.string().min(1)).optional(),
   /**
+   * Query-parameter names whose presence turns "suggested" off on a feed path: the
+   * page was opened to show one specific post (LinkedIn notification links are
+   * /feed/?highlightedUpdateUrn=...). Only names are read, never values.
+   */
+  suggestedOffParams: z.array(z.string().min(1)).optional(),
+  /**
    * Whole page modules to hide under a category, outside the feed's units: X's
    * "Who to follow" box, Facebook's right-rail "Sponsored" column.
    */

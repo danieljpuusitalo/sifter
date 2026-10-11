@@ -23,6 +23,11 @@ Use `pnpm` (installed globally). On this Windows machine, run from Git Bash or P
 | `pnpm store:assets` | builds, then renders the store screenshots and promo tile into `docs/store/` from the fixtures |
 | `pnpm readme:gif` | builds, then renders `docs/readme.gif` (before / with Sifter / Show) from the LinkedIn fixture; needs `ffmpeg` on PATH |
 | `pnpm verify` | typecheck + test + eval:mock (what CI runs) |
+| `pnpm canary` | local only: loads the build into native Edge on `.dev-profile-edge` (close that window first) and visits every launch site plus three Google queries. Per site PASS / INFO (no ad served) / WARN (logged out, `/sorry`, or a miss on an experimental site) / FAIL (no units matched, or a sponsored label reached the screen uncovered); exit 1 on FAIL. `--sites a,b --seconds --ext <dir>`. Counts and paths only, to `bench/results/` |
+| `pnpm check:permissions` | after a build: fails when the manifest's permissions, hosts or content-script matches differ from `permissions.lock.json` (CI runs it). `--update` rewrites the lock |
+| `pnpm release patch\|minor\|major` | opens the release PR (bumps the version, dates `[Unreleased]`). Merging it is the release; see `docs/RELEASING.md`. `--dry` changes nothing |
+
+**Releasing:** `docs/RELEASING.md`. Never push `v*` tags by hand: `release.yml` runs on every push to `main` and releases when `package.json`'s version has no tag, then submits to the Chrome Web Store when the `CWS_*` secrets exist.
 
 First e2e run on a new machine: `pnpm exec playwright install chromium`.
 

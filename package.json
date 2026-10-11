@@ -21,7 +21,10 @@
     "icons": "node scripts/render-icons.mjs",
     "store:assets": "wxt build && node scripts/store-assets.mjs",
     "pages": "node scripts/build-pages.mjs",
-    "readme:gif": "wxt build && node scripts/readme-gif.mjs"
+    "readme:gif": "wxt build && node scripts/readme-gif.mjs",
+    "release": "node scripts/release.mjs",
+    "check:permissions": "node scripts/check-permissions.mjs",
+    "canary": "tsx bench/canary.ts"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",

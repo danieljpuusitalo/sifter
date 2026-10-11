@@ -81,6 +81,34 @@ report: LinkedIn good, Facebook slow but fine, Google missed a sponsored carouse
     index. LinkedIn still did not virtualise, so survival across a re-mount is still
     unmeasured live. A key reused for another post costs one lane hide that `decide()`
     releases in place (unit test), never a lasting one.
+- **Released and live-checked (2026-10-11).** PR #32 merged as `6d6150f`, tag `v1.2.0`,
+  release run 38150747528, asset `sifter-1.2.0-chrome.zip` (105,272 bytes). Next: Daniel
+  submits (Phase 4).
+  - **Zip audit:** 15 files, no source maps, no `eval`/`new Function`; the only `fetch(`
+    hits are Vite's modulepreload helper (own files) and the word inside Google's `verified`
+    note. The listing's "no network requests" and the privacy page (HTTP 200) agree.
+  - **Live, Release zip unpacked into `.dev-profile-edge` (native Edge, suggested on,
+    collapse), counts and shapes only:**
+    - Google (google.com, `hl=en`): "running shoes" served the new `or-su` carousel,
+      collapsed to the 36 px note; "shoes", "headphones", "sneakers nike sale" served the
+      `#atvcap` shape, collapsed; empty `#tads`/`#atvcap` left alone; 0 sponsored labels
+      showing on 5 queries. A Playwright-launched profile got Google's `/sorry` page on every
+      query; a plain launch with `--remote-debugging-port=9333`, then attaching, did not.
+    - LinkedIn notification links (2 of 2): the clicked post (first unit) shown,
+      `highlightedUpdateUrn` still present, suggested 0 against 2 on `/feed/`, sponsored
+      still hidden (positive control).
+    - **Mount memory live:** `laneRecalled` 2 on a `/feed/` load and 1 on each highlighted
+      load, `laneReleases` 0. A recall needs a new element with a known key, so LinkedIn
+      re-mounted posts after load and `componentkey` survived it. A 92 s reverse scroll
+      (`bench:live --pattern reverse --probe`, 49k px down, 24k up) saw 0 re-mounts
+      (`remounts.n` 0), and Sifter caused 0 visible jumps; the 6 moves were the site's own.
+    - Reddit (87 units, 9 sponsored), X (141-153, 1-2), Instagram (42-73, 5-10): every
+      exact sponsored label seen while scrolling was covered before it reached the screen
+      (`onScreenUncovered` 0; labels first seen uncovered sat ~2 screens below, inside the
+      ad's own unit, and were covered within the debounce).
+    - Threads: 174 posts over 60 s, **no sponsored label at all**, so the ad path is still
+      unconfirmed; the listing now calls Threads experimental, like Facebook.
+    - Facebook: 1 unit; 1 sponsored, 1 suggested (partial coverage, as listed).
 
 **Follow-up A/B/C answered (2026-10-08, lane-clock release build, on `perf/lane-clock`).**
 The frame excess with Sifter on comes from the posts that collapsing brings into the same

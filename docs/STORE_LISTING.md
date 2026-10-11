@@ -20,7 +20,7 @@ itself, as posts in your feed. Those carry the site's own label ("Sponsored",
 "Promoted", "Ad"), and that label is what Sifter reads.
 
 WHAT IT HIDES
-• Sponsored posts on LinkedIn, Reddit, X, Instagram, Facebook (experimental: partial coverage) and Threads
+• Sponsored posts on LinkedIn, Reddit, X and Instagram, plus Facebook (experimental: partial coverage) and Threads (experimental: no ad seen live yet)
 • Sponsored results and shopping ads on Google Search results pages (not Google Hotels, Flights or Maps)
 • Optionally, suggested posts from accounts you don't follow (in your home feed only; profiles and pages you open are left alone)
 • Anything matching your own muted words or element rules

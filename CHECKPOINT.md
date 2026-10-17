@@ -2,6 +2,24 @@
 
 **Landed 2026-10-17:** #36, #37, #35 and #38 are merged into `main` in that order. Statuses below that say "open" or "not merged" predate that.
 
+**Open at the end of 2026-10-17: PR #39 `bench/style-attribution`.** It is bench and docs only, CI verify green. Not merged: Daniel hasn't asked. The evidence is in "Follow-up on the open audit items" below. None of the four decisions has been answered. Each has my recommendation:
+
+1. **Rule-7 wording.** Give the debounced pass the lane's "one longest unit read" exemption, and stop billing GC, incremental marking included, against the 8 ms.
+   - **Recommendation:** yes, but only together with a new bench counter for Sifter's own allocation. Sifter adds to GC pressure, and its share is unmeasured.
+   - **Caveat:** the exempted recalc isn't always moved work. Sometimes the page's next recalc still costs 14–34 ms.
+   - **Scope:** the change touches BRIEF.md §3 and the CLAUDE.md rule text.
+2. **Collapse consumes the feed about 2.8× faster.** LinkedIn renders more per second, but jank per post loaded is level.
+   - **Recommendation:** accept it. Before closing, rerun 2–3 ads-only off/on pairs: ads-only 2 (0.45 → 1.23) isn't explained by the collapse geometry.
+   - **The alternative:** taller bars, or blur when many posts are hidden.
+3. **First-visit flash.** On a full load, 2–3 units show for 3–7 frames in 6 of 7 launches. `document_start` = no for v1 was Daniel's session-5 call.
+   - **Recommendation:** keep it, unless he notices the flash in real use.
+   - **If not:** a measured experiment with the script at `document_start`, letting the lane run from the first insert. Risk: settings arrive by message from a possibly cold service worker.
+   - **Ruled out:** selector-only CSS at load, because it conflicts with rule 6.
+4. **Manual checks, Daniel's:**
+   - A true background tab: Playwright always reports the page as visible.
+   - Reload Sifter in `chrome://extensions` with LinkedIn open, to test the orphan handoff and the latch.
+   - Dutch UI and dark mode.
+
 **LinkedIn in-app navigation (2026-10-17, PR #36 `fix/spa-navigation-lane`; PR #35
 `feat/linkedin-self-mentions` also open, neither merged).** Daniel asked for real-usage
 scenarios tested live (read-only, counts only, page-world probe that reports shapes).

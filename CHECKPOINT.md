@@ -13,18 +13,37 @@ scenarios tested live (read-only, counts only, page-world probe that reports sha
   - Covered by `tests/unit/navigation.test.ts` (7 cases, mutation-proved).
 - **Checked live and safe:** the photo overlay (a dialog, URL stays `/feed/`, 0 flashes).
   So is feed → profile → Back on 1.2.0, apart from the two defects above.
-- **Not yet re-checked live:** the combined build (#35 + #36). It's staged in
-  `~/sifter-v1.0.0`, built from local unpushed branch `tmp/live-combined`. The previous
-  copy is in `~/sifter-v1.0.0.bak-2026-10-17-pr35`. Daniel has to reload it in
-  chrome://extensions first. Delete `tmp/live-combined` after that check.
+- **Re-checked live on the combined build (#35 + #36), read-only:**
+  - Notifications → Home: 5/5 matching posts covered at insert, 0 flashes. Before: 6.
+  - Company → Back: 5/5 covered at insert, 0 flashes.
+  - Show survives company → Back: found by `componentkey`, Hide bar back, 0 flashes. The
+    probe counted that one shown ad as uncovered, which is its positive control.
+  - Notification open: the opened post stays visible. Below-the-fold ads were covered by
+    the first frame (lane carry), not at insert, which is by design.
 - **Timing caveat:** the MCP tab was drawn at 1 fps (frame gaps of exactly 1000 ms), so
   the measured frame counts are inflated. Re-time with Chrome in the foreground.
-- **Daniel's call, not implemented: the notification latch.** After a notification, Home
-  keeps `highlightedUpdateUrn`, so suggested hiding stays off for the whole reloaded feed.
-  Options:
-  - (a) Scope the off-param to the first feed unit. The opened post was first in 2 of 2.
-  - (b) End the latch when the unit that was first at latch time disconnects.
-  - (c) Drop the off-param and rely on #35's self exemption.
+- **Notification latch: fixed, branch `fix/notification-latch` (PR stacked on #36).**
+  Daniel left the call to me ("use your brain"), and I picked option (a), pinned.
+  - **The cost, measured:** the whole page went unfiltered. Under the opened post, 3
+    liked-by posts showed. Home keeps `highlightedUpdateUrn`, so the reloaded feed stayed
+    unfiltered too.
+  - **Now:** only the opened post skips the suggested rules, and ads are hidden as always.
+    The opened post is the page's first unit, pinned by `componentkey` the first time it
+    is found. Home's re-render and the top unmounting on a long scroll therefore can't
+    pass the exemption to another post. A path change ends the latch and clears the pin.
+  - **Evidence for "first unit":** on 4 of 4 mention notifications, the only unit linking
+    to the reader's profile was unit 0 of 9. The URN can't identify the post: it appears
+    in all 9 units, never in a permalink path.
+  - **Residual risk:** if LinkedIn ever puts another unit first, that unit gets the
+    exemption. For mention notifications, #35's self exemption backs it up.
+  - **Tests:** 9 cases in `navigation.test.ts` and 7 in `suggested-paths.test.ts`, all
+    mutation-proved: lane, decide, recall, pin, pin reset, and first-unit lookup.
+  - `bench:scroll --cpu 1`: `laneBilledMaxMs` 3.4–3.5 ms trips the 2 ms line, and so does
+    the parent commit (3.4 ms on run 1). This predates the change. With no param, the
+    new code returns on its first comparison.
+- **Live build:** `~/sifter-v1.0.0`, from local unpushed branch `tmp/live-combined`;
+  backup in `~/sifter-v1.0.0.bak-2026-10-17-pr35`. Delete the branch once #35, #36 and
+  the latch PR are merged.
 - **Untested scenarios:** extension reload with the tab open (orphan handoff), service
   worker idle wake, two tabs, background tab, search page, narrow window, long session,
   Dutch UI, dark mode, and navigation on the other sites.

@@ -7,6 +7,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - The options page shows Sifter's version and a "Report a site that broke" link.
+- LinkedIn posts that mention you stay visible, even when a connection's like or
+  comment would otherwise hide them as suggested, so a post you're tagged in opens
+  normally from a notification or the feed. Sifter learns your profile link from
+  LinkedIn's left sidebar and keeps it only on your device; Options, "Your
+  exceptions", shows it with a Forget button. Sponsored posts still hide.
+
+### Fixed
+
+- LinkedIn: going Back to the feed, or Home from Notifications or a company
+  page, no longer shows the feed's ads and suggested posts for a moment before
+  hiding them. A post you had shown stays shown when you come back to it.
+- LinkedIn: opening a post from a notification keeps that post visible, but no
+  longer stops Sifter hiding suggested posts in the rest of the feed. Before,
+  the whole page went unfiltered, and stayed that way after pressing Home.
 
 ## [1.2.0] - 2026-10-11
 

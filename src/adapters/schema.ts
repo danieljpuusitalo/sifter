@@ -87,11 +87,29 @@ export const AdapterSchema = z.object({
    */
   suggestedPaths: z.array(z.string().min(1)).optional(),
   /**
-   * Query-parameter names whose presence turns "suggested" off on a feed path: the
-   * page was opened to show one specific post (LinkedIn notification links are
-   * /feed/?highlightedUpdateUrn=...). Only names are read, never values.
+   * Query-parameter names that mean the page was opened to show one specific post
+   * (LinkedIn notification links are /feed/?highlightedUpdateUrn=...): its first
+   * unit, the opened post, skips the suggested rules; the rest of the feed is filtered
+   * as usual. Only names are read, never values.
    */
   suggestedOffParams: z.array(z.string().min(1)).optional(),
+  /**
+   * The viewer's own profile, learned from the page, so a post that mentions them
+   * is never hidden as suggested (it is about them; a notification opens it).
+   * `source` matches page chrome outside the feed whose first match links only to
+   * the viewer (LinkedIn's left rail, the first `aside`); `prefix` is the profile
+   * path before the id ("/in/").
+   * A unit holding a link to `prefix + id` skips the suggested rules. Sponsored is
+   * decided first and still hides it. The id stays on the device: storage and a
+   * selector only, never model input.
+   */
+  self: z
+    .object({
+      source: z.string().min(1),
+      prefix: z.string().regex(/^\/[a-z0-9/-]*\/$/),
+    })
+    .strict()
+    .optional(),
   /**
    * Whole page modules to hide under a category, outside the feed's units: X's
    * "Who to follow" box, Facebook's right-rail "Sponsored" column.

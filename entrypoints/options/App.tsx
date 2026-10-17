@@ -12,6 +12,8 @@ import {
   loadSettings,
   MAX_WORD_LEN,
   siteCategories,
+  updateSettings,
+  withSelf,
   type Overrides,
   type Settings,
 } from '../../src/storage/settings';
@@ -168,7 +170,7 @@ export function App() {
         </fieldset>
       </section>
 
-      <Exceptions overrides={overrides} onChange={reload} />
+      <Exceptions overrides={overrides} settings={settings} onChange={reload} />
 
       <Backup onChange={reload} />
 
@@ -396,7 +398,7 @@ function Filters(props: { settings: Settings; onSaved: (s: Settings) => void }) 
   );
 }
 
-function Exceptions(props: { overrides: Overrides; onChange: () => void }) {
+function Exceptions(props: { overrides: Overrides; settings: Settings; onChange: () => void }) {
   const rows = Object.entries(props.overrides)
     .map(([key, fps]) => {
       const vals = Object.values(fps);
@@ -404,6 +406,9 @@ function Exceptions(props: { overrides: Overrides; onChange: () => void }) {
     })
     .filter((r) => r.shown + r.hidden > 0);
   const clear = (key: string | null) => void clearOverrides(key).then(props.onChange);
+  // The profile Sifter learned on a site (adapter `self`): posts that mention it stay visible.
+  const selves = Object.entries(props.settings.sites).flatMap(([key, s]) => (s.self ? [{ key, id: s.self }] : []));
+  const forget = (key: string) => void updateSettings((s) => withSelf(s, key, null)).then(props.onChange);
   return (
     <section>
       <h2>Your exceptions</h2>
@@ -411,8 +416,21 @@ function Exceptions(props: { overrides: Overrides; onChange: () => void }) {
         Posts you marked "Not an ad" or "Always show", and posts you hid yourself. Sifter remembers them by a fingerprint of
         the post's text, not the text itself.
       </p>
+      {selves.length > 0 && (
+        <ul class="exceptions">
+          {selves.map((r) => (
+            <li key={`self:${r.key}`}>
+              <span>
+                <strong>{r.key}</strong>
+                <span class="muted small"> posts that mention you (/in/{r.id}) stay visible</span>
+              </span>
+              <button onClick={() => forget(r.key)}>Forget</button>
+            </li>
+          ))}
+        </ul>
+      )}
       {rows.length === 0 ? (
-        <p class="muted">None yet.</p>
+        selves.length === 0 && <p class="muted">None yet.</p>
       ) : (
         <>
           <ul class="exceptions">

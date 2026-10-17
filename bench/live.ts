@@ -81,6 +81,12 @@ if (!PATTERNS.includes(PATTERN)) {
 const PROBE = process.argv.includes('--probe');
 /** Also trace raster work (tile raster and GPU tasks, off the main thread): what a CSS filter costs. Heavier trace. */
 const RASTER = process.argv.includes('--raster');
+/**
+ * Also trace style invalidation: what changed (class or attribute name) to make the page
+ * restyle, and whether extension JS changed it. Answers "does Sifter add page style work
+ * or only pay it early". Heavier trace; don't time frames from it.
+ */
+const INVALIDATIONS = process.argv.includes('--invalidations');
 /** The feed's own scroller, where the site has one; the probe falls back to the document. */
 const SCROLLERS: Record<string, string> = { linkedin: 'main' };
 
@@ -120,7 +126,7 @@ type Ev = {
  * reason 1 << 24, even from a path it has never seen), while an empty profile still
  * loads it (2026-10-17). So the build goes in through CDP, as in `bench/canary.ts`.
  */
-async function launch(withExt: boolean): Promise<BrowserContext> {
+async function launch(withExt: boolean): Promise<{ context: BrowserContext; extId: string | null }> {
   const context = await chromium.launchPersistentContext(PROFILE, {
     executablePath: EDGE,
     headless: false,
@@ -138,13 +144,12 @@ async function launch(withExt: boolean): Promise<BrowserContext> {
     ],
     ignoreDefaultArgs: ['--disable-extensions', '--enable-automation'],
   });
-  if (withExt) {
-    const cdp = await context.browser()!.newBrowserCDPSession();
-    // Backslashes fail here with "File path cannot be resolved".
-    // Keep the session open: detaching it unloads the build.
-    await cdp.send('Extensions.loadUnpacked', { path: EXT.replaceAll('\\', '/') });
-  }
-  return context;
+  if (!withExt) return { context, extId: null };
+  const cdp = await context.browser()!.newBrowserCDPSession();
+  // Backslashes fail here with "File path cannot be resolved".
+  // Keep the session open: detaching it unloads the build.
+  const { id } = await cdp.send('Extensions.loadUnpacked', { path: EXT.replaceAll('\\', '/') });
+  return { context, extId: id };
 }
 
 /**
@@ -153,9 +158,10 @@ async function launch(withExt: boolean): Promise<BrowserContext> {
  * leave the category on for every later run without the flag: a "baseline" measured
  * with 44 hidden posts instead of 9 (2026-09-28).
  */
-async function setSettings(context: BrowserContext, value: boolean, mode: string): Promise<void> {
-  if (context.serviceWorkers().length === 0) await context.waitForEvent('serviceworker', { timeout: 10000 });
-  const id = new URL(context.serviceWorkers()[0]!.url()).host;
+async function setSettings(context: BrowserContext, id: string, value: boolean, mode: string): Promise<void> {
+  // The id comes from `loadUnpacked`, not the service worker: the worker can start and
+  // go idle before Playwright sees it, and a 10 s wait for it then failed a run
+  // (2026-10-17). The options page's messages below wake it, so `scannerState` finds it.
   const opt = await context.newPage();
   // The first-install options tab can navigate to the same URL at the same moment, and
   // Playwright then rejects this goto as "interrupted" (2 of 15 runs, 2026-10-04): the
@@ -175,6 +181,7 @@ async function setSettings(context: BrowserContext, value: boolean, mode: string
 async function recordTrace(cdp: CDPSession, file: string, run: () => Promise<void>): Promise<void> {
   let categories = PROFILE_MODE ? `${CATEGORIES},disabled-by-default-v8.cpu_profiler` : CATEGORIES;
   if (RASTER) categories += ',disabled-by-default-devtools.timeline,cc,gpu';
+  if (INVALIDATIONS) categories += ',disabled-by-default-devtools.timeline.invalidationTracking';
   await cdp.send('Tracing.start', { categories, transferMode: 'ReturnAsStream' });
   await run();
   const done = new Promise<string>((res) => cdp.once('Tracing.tracingComplete', (e) => res(e.stream as string)));
@@ -225,16 +232,25 @@ declare const __sifterProbe: { start(c: unknown): void; reset(): void; stop(): P
 declare const __dist: { down: number; up: number };
 
 type ProfNode = { id: number; parent?: number; callFrame: { functionName: string; url: string; lineNumber: number }; children?: number[] };
-type Profile = { nodes: ProfNode[]; samples: number[]; timeDeltas: number[] };
+type Profile = { nodes: ProfNode[]; samples: number[]; timeDeltas: number[]; startTime: number | null };
 
 /** The isolate-wide sampled profile a trace carries (ProfileChunk events), merged per profile id; the busiest one wins. */
 function traceProfile(events: Ev[]): Profile | null {
   const byId = new Map<string, Profile>();
   for (const e of events) {
+    // The Profile event carries the start time, on the trace clock, that timeDeltas count from.
+    if (e.name === 'Profile') {
+      const id = String((e as unknown as { id: string }).id);
+      const p = byId.get(id) ?? { nodes: [], samples: [], timeDeltas: [], startTime: null };
+      const start = (e.args as { data?: { startTime?: number } }).data?.startTime;
+      if (typeof start === 'number') p.startTime = start;
+      byId.set(id, p);
+      continue;
+    }
     if (e.name !== 'ProfileChunk') continue;
     const data = (e.args as { data?: { cpuProfile?: { nodes?: ProfNode[]; samples?: number[] }; timeDeltas?: number[] } }).data;
     const id = String((e as unknown as { id: string }).id);
-    const p = byId.get(id) ?? { nodes: [], samples: [], timeDeltas: [] };
+    const p = byId.get(id) ?? { nodes: [], samples: [], timeDeltas: [], startTime: null };
     p.nodes.push(...(data?.cpuProfile?.nodes ?? []));
     p.samples.push(...(data?.cpuProfile?.samples ?? []));
     p.timeDeltas.push(...(data?.timeDeltas ?? []));
@@ -248,7 +264,7 @@ function traceProfile(events: Ev[]): Profile | null {
  * leaf frame (DOM calls show as the native leaf under our function), and
  * inclusive time by our own functions. Only stacks with a chrome-extension frame count.
  */
-function profileSummary(p: Profile) {
+function profileSummary(p: Profile, window?: { ts: number; end: number }) {
   const byId = new Map(p.nodes.map((n) => [n.id, n]));
   const parent = new Map<number, number>();
   for (const n of p.nodes) {
@@ -260,7 +276,11 @@ function profileSummary(p: Profile) {
   const self = new Map<string, number>();
   const incl = new Map<string, number>();
   let total = 0;
+  let at = p.startTime ?? 0;
   for (let i = 0; i < p.samples.length; i++) {
+    at += p.timeDeltas[i] ?? 0;
+    // With a window (one call's span), only the samples taken inside it.
+    if (window && (p.startTime === null || at < window.ts || at >= window.end)) continue;
     const dt = (p.timeDeltas[i + 1] ?? p.timeDeltas[i] ?? 0) / 1000;
     const stack: ProfNode[] = [];
     for (let id: number | undefined = p.samples[i]; id !== undefined; id = parent.get(id)) stack.push(byId.get(id)!);
@@ -328,6 +348,41 @@ function pct(xs: number[], p: number): number {
   return +s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))]!.toFixed(1);
 }
 
+/**
+ * One extension call taken apart: self time per trace event name inside it (what is
+ * left on the call itself is its own JS), and each forced recalc with its element count
+ * and the top of its stack. Names and file:line only, never page content.
+ */
+function callAnatomy(mt: Ev[], call: Ev) {
+  const end = call.ts + call.dur!;
+  const inside = mt.filter((e) => e !== call && e.ts >= call.ts && e.ts < end);
+  const self = new Map<string, number>([[`(own JS) ${call.name}`, call.dur! / 1000]]);
+  const open: { e: Ev; key: string }[] = [{ e: call, key: `(own JS) ${call.name}` }];
+  const recalcs: { ms: number; elements: number | null; at: string }[] = [];
+  for (const e of inside) {
+    while (open.length > 1 && open[open.length - 1]!.e.ts + open[open.length - 1]!.e.dur! <= e.ts) open.pop();
+    const parent = open[open.length - 1]!;
+    self.set(parent.key, (self.get(parent.key) ?? 0) - e.dur! / 1000);
+    self.set(e.name, (self.get(e.name) ?? 0) + e.dur! / 1000);
+    open.push({ e, key: e.name });
+    if (e.name === 'UpdateLayoutTree' || e.name === 'RecalculateStyles' || e.name === 'Layout') {
+      const st = (e.args as { beginData?: { stackTrace?: { functionName: string; lineNumber: number; url: string }[] } }).beginData?.stackTrace ?? [];
+      recalcs.push({
+        ms: +(e.dur! / 1000).toFixed(2),
+        elements: typeof e.args?.elementCount === 'number' ? e.args.elementCount : null,
+        at: `${e.name} <- ${st.slice(0, 3).map((f) => `${f.functionName || '(anon)'}:${f.lineNumber}`).join(' <- ')}`,
+      });
+    }
+  }
+  return {
+    entry: `${call.name}:${call.args?.data?.functionName || '(anon)'}`,
+    ms: +(call.dur! / 1000).toFixed(2),
+    window: { ts: call.ts, end },
+    selfByName: [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k, ms]) => ({ k, ms: +ms.toFixed(2) })),
+    recalcs: recalcs.sort((a, b) => b.ms - a.ms).slice(0, 6),
+  };
+}
+
 /** Main-thread attribution from a trace file. */
 export function analyse(file: string) {
   const raw = JSON.parse(readFileSync(file, 'utf8')) as { traceEvents?: Ev[] } | Ev[];
@@ -359,12 +414,35 @@ export function analyse(file: string) {
   // script share one heap, so whoever allocates when new space fills pays the
   // scavenge (one 20 ms "onMutations" call on 2026-10-04 was 19.9 ms of MinorGC).
   const nestedGc = { ms: 0, n: 0, max: 0 };
+  // Incremental marking steps (V8.GCIncrementalMarking) come with no MajorGC around them:
+  // 35 ms of one 38 ms decide pass on 2026-10-17 was marking, uncounted by name.
+  const isGc = (e: Ev) => e.name === 'MinorGC' || e.name === 'MajorGC' || e.name.startsWith('V8.GC') || e.name.startsWith('BlinkGC.');
+  let gcEnd = 0;
+  // Elements each forced recalc restyled: one big count is the page's pending recalc paid
+  // early, many small ones that each cost a lot would be style computed on demand.
+  const forcedEls: number[] = [];
+  // Per extension call, its time net of the GC inside it: a collection is whoever
+  // allocated last paying for the shared heap, not the call's own work.
+  let callGc = 0;
+  let callMaxNet = 0;
   let openExt: Ev | null = null;
+  // The call behind callMaxNet, taken apart after the loop (`worstCall`).
+  let worstExt: Ev | null = null;
+  const closeCall = () => {
+    if (openExt && openExt.dur! / 1000 - callGc > callMaxNet) {
+      callMaxNet = openExt.dur! / 1000 - callGc;
+      worstExt = openExt;
+    }
+    callGc = 0;
+  };
   const forcers = new Map<string, { ms: number; n: number }>();
   for (const e of mt) {
     while (stack.length && stack[stack.length - 1]!.ts + (stack[stack.length - 1]!.dur ?? 0) <= e.ts) {
       const top = stack.pop()!;
-      if (top === openExt) openExt = null;
+      if (top === openExt) {
+        closeCall();
+        openExt = null;
+      }
     }
     if (openExt && e.ts < openExt.ts + (openExt.dur ?? 0)) {
       if (['UpdateLayoutTree', 'RecalculateStyles', 'Layout'].includes(e.name)) {
@@ -381,11 +459,19 @@ export function analyse(file: string) {
           forcers.set(key, f);
         }
       }
-      if (e.name === 'MinorGC' || e.name === 'MajorGC') {
+      if (isGc(e)) {
+        // Outermost only: MinorGC wraps V8.GCScavenger wraps V8.GC_SCAVENGER, and so on.
+        if (e.ts < gcEnd) {
+          stack.push(e);
+          continue;
+        }
+        gcEnd = e.ts + e.dur!;
         nestedGc.ms += e.dur! / 1000;
         nestedGc.n++;
         nestedGc.max = Math.max(nestedGc.max, e.dur! / 1000);
+        callGc += e.dur! / 1000;
       } else if (e.name === 'UpdateLayoutTree' || e.name === 'RecalculateStyles') {
+        if (typeof e.args?.elementCount === 'number') forcedEls.push(e.args.elementCount);
         nestedStyle.ms += e.dur! / 1000;
         nestedStyle.n++;
         nestedStyle.max = Math.max(nestedStyle.max, e.dur! / 1000);
@@ -409,6 +495,8 @@ export function analyse(file: string) {
     }
     stack.push(e);
   }
+  closeCall();
+  const worstCall = worstExt ? callAnatomy(mt, worstExt) : null;
   // Extension time per top-level task: the number a user can feel in one frame.
   const perTask: number[] = [];
   let si = 0;
@@ -446,6 +534,11 @@ export function analyse(file: string) {
       forcedStyle: { ms: +nestedStyle.ms.toFixed(1), n: nestedStyle.n, max: +nestedStyle.max.toFixed(2) },
       forcedLayout: { ms: +nestedLayout.ms.toFixed(1), n: nestedLayout.n, max: +nestedLayout.max.toFixed(2) },
       gcInside: { ms: +nestedGc.ms.toFixed(1), n: nestedGc.n, max: +nestedGc.max.toFixed(2) },
+      callMaxNetOfGc: +callMaxNet.toFixed(2),
+      worstCall,
+      forcedStyleElements: forcedEls.length
+        ? { p50: pct(forcedEls, 50), p95: pct(forcedEls, 95), max: pct(forcedEls, 100), total: forcedEls.reduce((a, b) => a + b, 0) }
+        : null,
       forcedBy: [...forcers.entries()]
         .sort((a, b) => b[1].ms - a[1].ms)
         .slice(0, 8)
@@ -466,6 +559,59 @@ export function analyse(file: string) {
       paintMs: +sumName(['PrePaint', 'Paint', 'Layerize']).toFixed(1),
     },
     raster: RASTER ? rasterTotals(events, names) : null,
+    invalidations: INVALIDATIONS ? invalidationTotals(events.filter((e) => `${e.pid}:${e.tid}` === main)) : null,
+  };
+}
+
+/**
+ * What made the page restyle (`--invalidations` only), from the main thread's
+ * invalidation-tracking events: counts by the class or attribute that changed, by the
+ * recalc reason, and how many of each were changed by extension JS (a
+ * `chrome-extension://` frame on the stack). Names only: no node text, no URLs.
+ */
+function invalidationTotals(events: Ev[]) {
+  type Data = {
+    changedClass?: string;
+    changedAttribute?: string;
+    changedId?: string;
+    changedPseudo?: string;
+    reason?: string;
+    stackTrace?: { url?: string }[];
+  };
+  const fromExt = (d: Data) => !!d.stackTrace?.some((f) => (f.url ?? '').startsWith('chrome-extension://'));
+  const bump = (m: Map<string, { n: number; ext: number }>, k: string, ext: boolean) => {
+    const v = m.get(k) ?? { n: 0, ext: 0 };
+    v.n++;
+    if (ext) v.ext++;
+    m.set(k, v);
+  };
+  const scheduled = new Map<string, { n: number; ext: number }>();
+  const recalc = new Map<string, { n: number; ext: number }>();
+  const invalidator = new Map<string, { n: number; ext: number }>();
+  for (const e of events) {
+    const d = (e.args?.data ?? {}) as Data;
+    if (e.name === 'ScheduleStyleInvalidationTracking') {
+      const k = d.changedClass
+        ? `class:${d.changedClass}`
+        : d.changedAttribute
+          ? `attr:${d.changedAttribute}`
+          : d.changedPseudo
+            ? `pseudo:${d.changedPseudo}`
+            : d.changedId
+              ? 'id'
+              : 'other';
+      bump(scheduled, k, fromExt(d));
+    } else if (e.name === 'StyleRecalcInvalidationTracking') bump(recalc, d.reason ?? '?', fromExt(d));
+    else if (e.name === 'StyleInvalidatorInvalidationTracking') bump(invalidator, d.reason ?? '?', fromExt(d));
+  }
+  const top = (m: Map<string, { n: number; ext: number }>, k = 12) =>
+    [...m.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, k).map(([key, v]) => ({ key, ...v }));
+  const total = (m: Map<string, { n: number; ext: number }>) =>
+    [...m.values()].reduce((a, v) => ({ n: a.n + v.n, ext: a.ext + v.ext }), { n: 0, ext: 0 });
+  return {
+    scheduled: { ...total(scheduled), top: top(scheduled) },
+    recalc: { ...total(recalc), top: top(recalc) },
+    invalidator: { ...total(invalidator), top: top(invalidator) },
   };
 }
 
@@ -534,9 +680,9 @@ async function scannerState(context: BrowserContext, type: 'sifter:getPageState'
 }
 
 async function runOnce(withExt: boolean) {
-  const context = await launch(withExt);
+  const { context, extId } = await launch(withExt);
   try {
-    if (withExt) await setSettings(context, SUGGESTED, HIDE_MODE);
+    if (extId) await setSettings(context, extId, SUGGESTED, HIDE_MODE);
     const page = await context.newPage();
     // First install opens the options page; any other tab would take focus from the feed.
     await page.waitForTimeout(1500);
@@ -648,14 +794,43 @@ async function runOnce(withExt: boolean) {
     if (PROFILE_MODE) {
       // Sampling costs time itself: a profile run names hot functions, a plain run times them.
       // The CDP Profiler domain only sees the main world; the trace's sampler sees the isolate.
+      // Its counters still say which call was worst; that call's samples name what filled it.
       const raw = JSON.parse(readFileSync(file, 'utf8')) as { traceEvents?: Ev[] } | Ev[];
       const prof = traceProfile(Array.isArray(raw) ? raw : (raw.traceEvents ?? []));
-      return { mode: withExt ? 'on' : 'off', pattern: PATTERN, distance, load, profile: prof ? profileSummary(prof) : null, traceFile: file };
+      const trace = analyse(file);
+      const w = trace.ext.worstCall?.window;
+      return {
+        mode: withExt ? 'on' : 'off',
+        pattern: PATTERN,
+        distance,
+        load,
+        scanner,
+        trace,
+        profile: prof ? profileSummary(prof) : null,
+        worstCallProfile: prof && w ? profileSummary(prof, w) : null,
+        traceFile: file,
+      };
     }
     const frames = (await page.evaluate(() => (window as unknown as { __frames: number[] }).__frames)).slice(10);
     if (frames.length < SECONDS * 20) console.warn(`[live] only ${frames.length} frames: the tab was throttled, discard this run`);
     const visible = await page.evaluate(() => document.visibilityState);
     const hidden = await page.evaluate(() => document.querySelectorAll('.sifter-hidden').length);
+    // How much page each run left behind, so the off/on style cost can be read per element
+    // and per unit: a run whose hides collapse the feed loads more of it per second. Also
+    // counts the two properties that make a style read cost more than its node:
+    // `content-visibility: auto` (skipped subtrees get their style on demand) and a
+    // `container-type` (computed style then depends on layout). Read after the trace stops.
+    const dom = await page.evaluate((sel) => {
+      const all = document.getElementsByTagName('*');
+      let cvAuto = 0;
+      let containers = 0;
+      for (const el of all) {
+        const cs = getComputedStyle(el);
+        if (cs.contentVisibility === 'auto') cvAuto++;
+        if (cs.containerType && cs.containerType !== 'normal') containers++;
+      }
+      return { elements: all.length, units: sel ? document.querySelectorAll(sel).length : null, cvAuto, containers };
+    }, unitSelector());
     const stability = summariseStability(await page.evaluate(() => (window as unknown as { __stab?: StabRaw }).__stab ?? null), t0);
     return {
       mode: withExt ? 'on' : 'off',
@@ -663,6 +838,7 @@ async function runOnce(withExt: boolean) {
       distance,
       visible,
       hidden,
+      dom,
       load,
       stability,
       probe,

@@ -33,12 +33,18 @@ replaced with 1.2.0. He asked for the stronger rule as well: never hide a post t
   - `pnpm verify`: 496 tests, eval fp 0, fn 0. e2e: 49 passed. Permissions unchanged.
   - `bench:scroll --cpu 1 --browser Edge`: 3/3 OK. This is vacuous for the new path, because
     the bench has no learned id. The added cost is one attribute query per suggested hit.
-- **Still open, live, after Daniel reloads the unpacked build:**
-  - The notification flow keeps the tagged post.
-  - A tagged post in the plain feed stays.
-  - Strangers' liked posts still hide.
-  - `laneReleases` is 0.
-  - `pnpm canary` passes.
+- **Live, 2026-10-17, the branch build in Daniel's Chrome (read-only, counts only):**
+  - The rail was learned from 3 agreeing links. On `/feed/`, 4 of 13 units were hidden, and
+    none mentioned the viewer.
+  - Four notifications (`*_UPDATE_MENTIONING_YOU`). Opening each kept the highlighted post
+    visible and first. That is 1.2.0's param-off.
+  - **The exemption alone:** after a REACTED notification, `replaceState` to `/` (a new path
+    clears the param latch), then scrolling. The tagged post's first line matches `activity`
+    (the exact bug) and stayed visible, while 5 of 5 other rule-matching units hid. The first
+    notification's post matched no suggested rule, so it was vacuous as a test.
+  - `pnpm canary`: 9 OK, 0 warn, 0 fail.
+- **Not measured live:** `laneReleases` and `selfKept`. Both live in the popup's page state,
+  which the page can't reach. The tagged unit carried no Sifter class at either check.
 - **Watch:**
   - `aside` is structural and uses no text, so a non-English UI should work, but that is
     untested.

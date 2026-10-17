@@ -8,6 +8,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - The options page shows Sifter's version and a "Report a site that broke" link.
 
+### Fixed
+
+- LinkedIn: going Back to the feed, or Home from Notifications or a company
+  page, no longer shows the feed's ads and suggested posts for a moment before
+  hiding them. A post you had shown stays shown when you come back to it.
+
 ## [1.2.0] - 2026-10-11
 
 ### Changed

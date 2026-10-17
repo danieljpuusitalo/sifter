@@ -397,12 +397,17 @@ export class Scanner {
     if (traced) for (const u of traced) this.deps.trace?.wrote(u, 'user', this.now());
   }
 
-  /** New settings from the popup or options: re-decide everything on the page. */
-  applyContext(ctx: SiteContext): void {
+  /**
+   * New settings from the popup or options, or an in-app navigation (`navigated`):
+   * re-decide everything on the page.
+   */
+  applyContext(ctx: SiteContext, navigated = false): void {
     this.ctx = ctx;
     this.compileContext();
-    // New settings or a new page: a post hidden under the old ones may not be now.
-    this.memory?.clear();
+    // New settings: a post hidden under the old ones may not be now. A navigation keeps
+    // the settings, so a post that comes back on Back returns as it left, shown ones
+    // too; only `suggested` depends on the path, and the lane skips that recall where it is off.
+    if (!navigated) this.memory?.clear();
     const traced = this.deps.trace ? this.hider.trackedHides() : null;
     this.hider.setMode(ctx.hideMode);
     if (traced) for (const u of traced) this.deps.trace?.wrote(u, 'mode', this.now());
@@ -586,8 +591,12 @@ export class Scanner {
     // Reading the location is a string, not a DOM read, so this costs nothing per batch.
     // A param that newly appears on the same path (feed -> a highlighted post) re-decides too;
     // one that disappears does not (see offParamPath).
+    // The batch that carries the new path usually carries the new page's units too
+    // (Back to the feed, Home): they get the lane like any other batch, or they paint
+    // uncovered until the re-decide reaches them.
     if (this.feedPaths && (this.path() !== this.lastPath || (this.offParamPath === null && this.offParamPresent()))) {
-      this.applyContext(this.ctx);
+      this.applyContext(this.ctx, true);
+      if (this.lane && this.active) this.prepaint(records);
       return;
     }
     if (this.lane && this.active) this.prepaint(records);
@@ -1107,7 +1116,8 @@ export class Scanner {
       for (const u of born) {
         if (this.hider.isHidden(u) || this.userShown.has(u) || this.seen.has(u)) continue;
         const p = this.memory.get(u);
-        if (!p) continue;
+        // Remembered on the feed, re-mounted on a page where suggested is off: read afresh.
+        if (!p || (p.category === 'suggested' && !this.categories.suggested)) continue;
         known.add(u);
         this.laneLooked.add(u);
         // A tag stays at full height in its slot: decide() tags it again, as a late hide.

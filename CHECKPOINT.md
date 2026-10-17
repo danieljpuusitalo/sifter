@@ -1,5 +1,7 @@
 # Sifter checkpoint
 
+**Landed 2026-10-17:** #36, #37 and #35 are merged into `main` in that order. Statuses below that say "open" or "not merged" predate that.
+
 **LinkedIn in-app navigation (2026-10-17, PR #36 `fix/spa-navigation-lane`; PR #35
 `feat/linkedin-self-mentions` also open, neither merged).** Daniel asked for real-usage
 scenarios tested live (read-only, counts only, page-world probe that reports shapes).
@@ -107,6 +109,56 @@ Daniel asked for it. Native Edge, plugged in, off-run frame p50 16.7 ms, so not 
   `.dev-profile-edge` (disable reason `1 << 24`), so `bench:live` on-runs timed out.
   `bench:live` now loads the build over CDP, as the canary does. `bench:scroll` uses an
   empty profile and was never affected.
+**LinkedIn: posts that mention you stay visible (2026-10-17, branch `feat/linkedin-self-mentions`).**
+Daniel reported that a post he was tagged in hid when he opened it from a notification ("X
+celebrates this"). The report was against a stale unpacked 1.1.1 copy. 1.2.0's
+`suggestedOffParams` already covers the notification URL, so the copy at `~/sifter-v1.0.0` was
+replaced with 1.2.0. He asked for the stronger rule as well: never hide a post that tags him.
+
+- **Mechanism (generic, an adapter field):** `self: { source, prefix }` in `schema.ts`.
+  `src/self.ts`:
+  - The content script learns the id from the first `source` match. It needs at least 2
+    agreeing links, and a mixed set learns nothing. It runs at 1.5 s, 3 s and 10 s, never in
+    the lane, and only on `suggestedPaths` (`learnsOn`). On someone else's profile the
+    first rail could link only to them.
+  - The id is sent as `sifter:setSelf` (allowlisted, regex-checked in the SW) and stored as
+    `sites[key].self`. The settings broadcast re-decides the page.
+  - `detectMarker` skips a suggested hit when the unit links to `prefix + id`. The lane and
+    `decide()` both pass it. Sponsored is decided first and still hides.
+  - New counter `perf.selfKept`. Options, "Your exceptions", shows the id with Forget.
+- **Live probe, read-only, counts only:**
+  - Mentions are vanity `/in/<id>/` links, absolute hrefs.
+  - The first `aside` ('Sidebar') held 3/3 self links. The second ('Aside') held someone
+    else, so `source` is `aside`, read as its first match only.
+  - 18 home-feed units held 0 self links without a mention. Gate (b) passed, so no `scope`
+    field.
+  - The URN-matching alternative was ruled out: the notification's activity id appeared in
+    every unit.
+- **Receipts:**
+  - `tests/unit/self.test.ts`: 17 cases, with positive and negative controls, the lane and
+    `decide()`, sponsored still hiding, and `/in/test-viewer-2/`.
+  - Mutation: exemption off → 4 fail. Lane `self: null` → the lane case fails.
+  - e2e `sifter:setSelf` case: stores, rejects a malformed id, forgets on null.
+  - `pnpm verify`: 496 tests, eval fp 0, fn 0. e2e: 49 passed. Permissions unchanged.
+  - `bench:scroll --cpu 1 --browser Edge`: 3/3 OK. This is vacuous for the new path, because
+    the bench has no learned id. The added cost is one attribute query per suggested hit.
+- **Live, 2026-10-17, the branch build in Daniel's Chrome (read-only, counts only):**
+  - The rail was learned from 3 agreeing links. On `/feed/`, 4 of 13 units were hidden, and
+    none mentioned the viewer.
+  - Four notifications (`*_UPDATE_MENTIONING_YOU`). Opening each kept the highlighted post
+    visible and first. That is 1.2.0's param-off.
+  - **The exemption alone:** after a REACTED notification, `replaceState` to `/` (a new path
+    clears the param latch), then scrolling. The tagged post's first line matches `activity`
+    (the exact bug) and stayed visible, while 5 of 5 other rule-matching units hid. The first
+    notification's post matched no suggested rule, so it was vacuous as a test.
+  - `pnpm canary`: 9 OK, 0 warn, 0 fail.
+- **Not measured live:** `laneReleases` and `selfKept`. Both live in the popup's page state,
+  which the page can't reach. The tagged unit carried no Sifter class at either check.
+- **Watch:**
+  - `aside` is structural and uses no text, so a non-English UI should work, but that is
+    untested.
+  - A wrong id fails safe: fewer suggested hides, never more. A feed rail that held someone
+    else as well as the viewer would learn nothing, because the set is mixed.
 
 **Release pipeline for store updates (2026-10-11, branch `ops/store-pipeline`).** Daniel asked
 for updates after store launch to be easy, possibly daily. The routine is now `pnpm release

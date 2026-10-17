@@ -18,6 +18,8 @@ export type SiteContext = {
   mutedWords: string[];
   /** The adapter's suggested rules switched off on this site. */
   offRules: string[];
+  /** The viewer's profile id learned on this site (adapter `self`), if any. */
+  self?: string;
 };
 
 /** Content script / popup -> service worker. */
@@ -27,6 +29,8 @@ export type BgRequest =
   | { type: 'sifter:setSiteEnabled'; hostname: string; enabled: boolean }
   | { type: 'sifter:setSiteCategory'; hostname: string; category: BlockCategory; value: boolean | null }
   | { type: 'sifter:setSiteRule'; hostname: string; rule: string; value: boolean }
+  /** Content script: the viewer's profile id it learned on this site; null forgets it. */
+  | { type: 'sifter:setSelf'; hostname: string; id: string | null }
   | { type: 'sifter:pause'; minutes: number | null }
   /** Options page: the global category toggles, the hide-mode radio, and the filters form. */
   | { type: 'sifter:setCategory'; category: BlockCategory; value: boolean }
@@ -129,6 +133,8 @@ export type ScanPerf = {
   approachPromotes: number;
   /** Lane hides the full decision then disagreed with, released in place. Target 0: each is a rule-6 near miss. */
   laneReleases: number;
+  /** Decisions where a suggested rule matched but the unit links to the viewer's profile (adapter `self`): kept. */
+  selfKept: number;
   /** Re-mounted units the lane put back as they were last presented (mount memory), with no label read. Of them, a hide is also in `laneHits`. */
   laneRecalled: number;
   laneMs: number;

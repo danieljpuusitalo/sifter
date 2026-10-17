@@ -12,7 +12,9 @@ import {
   siteOffRules,
   siteKey,
   updateSettings,
+  withSelf,
 } from '../src/storage/settings';
+import { SELF_ID_RE } from '../src/self';
 
 const OPT_IN_SCRIPT_ID = 'sifter-opt-in';
 const MENU_ID = 'sifter-hide-this';
@@ -20,8 +22,8 @@ const MENU_ID = 'sifter-hide-this';
 /** Fingerprints are cyrb53(...).toString(36): base-36, at most 11 digits in practice. */
 const FINGERPRINT_RE = /^[0-9a-z]{1,16}$/;
 
-/** Content scripts may only read their own site's context and record overrides for it. */
-const CONTENT_SCRIPT_REQUESTS = new Set<BgRequest['type']>(['sifter:getContext', 'sifter:setOverride']);
+/** Content scripts may only read their own site's context, and record overrides and the learned profile id for it. */
+const CONTENT_SCRIPT_REQUESTS = new Set<BgRequest['type']>(['sifter:getContext', 'sifter:setOverride', 'sifter:setSelf']);
 
 export default defineBackground(() => {
   // Hard rule 4: content scripts must never be able to read stored API keys.
@@ -132,6 +134,14 @@ async function handle(msg: BgRequest): Promise<unknown> {
       }
       await setOverride(siteKey(msg.hostname), msg.fp, msg.action);
       return { ok: true };
+    case 'sifter:setSelf': {
+      if (msg.id !== null && (typeof msg.id !== 'string' || !SELF_ID_RE.test(msg.id))) return { error: 'invalid id' };
+      const key = siteKey(msg.hostname);
+      // Only a change writes: the page re-learns on every visit, and each write re-decides open tabs.
+      if ((await loadSettings()).sites[key]?.self === (msg.id ?? undefined)) return { ok: true };
+      await updateSettings((s) => withSelf(s, key, msg.id));
+      return { ok: true };
+    }
     case 'sifter:setSiteEnabled': {
       const key = siteKey(msg.hostname);
       // Opt-in hosts become match patterns, so they keep the real hostname (minus
@@ -201,6 +211,7 @@ async function getContext(hostname: string): Promise<SiteContext> {
     customSelectors: selectorsFor(rules, key),
     mutedWords: settings.mutedWords,
     offRules: siteOffRules(settings, key),
+    self: settings.sites[key]?.self,
   };
 }
 

@@ -6,6 +6,7 @@ import { nearTracker } from '../src/content/near';
 import { hideTrace } from '../src/content/trace';
 import { viewportTracker } from '../src/content/viewport';
 import { defaultContext, type BgRequest, type SiteContext, type TabRequest } from '../src/messages';
+import { learnSelf, learnsOn } from '../src/self';
 import { LAUNCH_MATCHES } from '../src/sites';
 
 /** Backoff between retries of a service-worker message that may still be waking up. */
@@ -36,6 +37,10 @@ async function withRetry<T>(send: () => Promise<T>, delaysMs: number[]): Promise
  */
 const PROBE_EVENT = 'sifter:probe';
 type Probe = { alive: boolean };
+
+/** When to look for the viewer's own profile links, and the waits between later tries (the rail can render after the feed). */
+const SELF_FIRST_TRY_MS = 1500;
+const SELF_RETRY_DELAYS_MS = [3000, 10_000];
 
 /** How long a refresh waits for the re-decide to finish before answering the popup. */
 const SETTLE_CAP_MS = 1000;
@@ -109,6 +114,24 @@ export default defineContentScript({
     });
     scanner = live;
     live.start();
+
+    // Learn the viewer's profile id (adapter `self`) once the page chrome is in, off
+    // the scroll path: one query of the rail, a few tries, then stop. A new id (another
+    // account) replaces the stored one; the settings broadcast then re-decides the page.
+    const adapter = adapterFor(hostname);
+    const self = adapter?.self;
+    if (adapter && self) {
+      const tryLearn = (delays: number[]) => {
+        const id = learnsOn(adapter, location.pathname) ? learnSelf(document, self) : null;
+        if (id) {
+          if (id !== context.self) void send({ type: 'sifter:setSelf', hostname, id }).catch(() => undefined);
+          return;
+        }
+        const [next, ...rest] = delays;
+        if (next !== undefined) setTimeout(() => tryLearn(rest), next);
+      };
+      setTimeout(() => tryLearn(SELF_RETRY_DELAYS_MS), SELF_FIRST_TRY_MS);
+    }
 
     let resumeTimer: ReturnType<typeof setTimeout> | undefined;
     // A context plus whether it is paused right now: the same pausedUntil means

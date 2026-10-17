@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { browser } from 'wxt/browser';
 import { MAX_WORDS } from '../rules/filters';
+import { SELF_ID_RE } from '../self';
 import { HOSTNAME_RE, siteKey } from '../sites';
 import type { CategoryToggles } from '../types';
 
@@ -28,6 +29,12 @@ export const SiteSettingSchema = z.object({
    * costs this field, not the whole sites map.
    */
   rules: z.record(z.string().max(32), z.literal(false)).optional().catch(undefined),
+  /**
+   * The viewer's profile id, learned from the page (adapter `self`): posts that link
+   * to it are never hidden as suggested. Local only; "Forget" in the options page
+   * drops it, and it is learned again on the next visit.
+   */
+  self: z.string().regex(SELF_ID_RE).optional().catch(undefined),
 });
 
 /** Caps on what storage (or a backup file) may hold, so a hostile file can't stall every page. */
@@ -165,6 +172,14 @@ export function isSiteEnabled(settings: Settings, key: string, isLaunchSite: boo
 /** The categories in force on one site: the global toggles with that site's overrides on top. */
 export function siteCategories(settings: Settings, key: string): CategoryToggles {
   return { ...settings.categories, ...(settings.sites[key]?.categories ?? {}) };
+}
+
+/** Set or forget the viewer's profile id on one site. Leaves the site's other settings alone. */
+export function withSelf(settings: Settings, key: string, id: string | null): Settings {
+  const site = { ...settings.sites[key] };
+  if (id === null) delete site.self;
+  else site.self = id;
+  return { ...settings, sites: { ...settings.sites, [key]: site } };
 }
 
 /** Suggested rule ids switched off on one site. */

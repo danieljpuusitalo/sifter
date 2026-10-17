@@ -291,6 +291,23 @@ test('sifter:setOverride rejects a malformed fingerprint or action instead of st
   expect(Object.keys((stored['overrides'] as Record<string, Record<string, unknown>>)['linkedin.com'] ?? {})).toEqual(['abc123']);
 });
 
+test('sifter:setSelf stores a well-formed profile id, rejects anything else, and forgets on null', async ({ context, page }) => {
+  const [sw] = context.serviceWorkers();
+  const id = new URL(sw!.url()).host;
+  await page.goto(`chrome-extension://${id}/popup.html`);
+  const send = (msg: unknown) => page.evaluate((m) => chrome.runtime.sendMessage(m), msg);
+  const self = async () => {
+    const stored = await sw!.evaluate(async () => chrome.storage.local.get('settings'));
+    return (stored as { settings?: { sites?: Record<string, { self?: string }> } }).settings?.sites?.['linkedin.com']?.self;
+  };
+  await expect(send({ type: 'sifter:setSelf', hostname: 'www.linkedin.com', id: 'test-viewer' })).resolves.toEqual({ ok: true });
+  expect(await self()).toBe('test-viewer');
+  await expect(send({ type: 'sifter:setSelf', hostname: 'www.linkedin.com', id: 'a"]{}' })).resolves.toEqual({ error: 'invalid id' });
+  expect(await self(), 'a rejected id leaves the stored one').toBe('test-viewer');
+  await expect(send({ type: 'sifter:setSelf', hostname: 'www.linkedin.com', id: null })).resolves.toEqual({ ok: true });
+  expect(await self()).toBeUndefined();
+});
+
 test('switching a site off shows everything on it', async ({ context, page }) => {
   await page.goto('https://x.com/');
   await expect(page.locator('.sifter-hidden')).toHaveCount(2);

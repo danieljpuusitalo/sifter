@@ -5,6 +5,7 @@ import { changeSignature, fingerprint } from '../fingerprint';
 import type { PageState, ScanPerf, SiteContext } from '../messages';
 import { mutedWordHit, mutedWordPattern, tooBroad } from '../rules/filters';
 import { decideTier0 } from '../rules/tier0';
+import { selfMatch, type SelfMatch } from '../self';
 import type { BlockCategory, HideCategory, OverrideAction } from '../types';
 import { keepInPlace } from './anchor';
 import { Hider, PLACEHOLDER_ATTR } from './hider';
@@ -186,6 +187,7 @@ const EMPTY_PERF: OwnPerf = {
   approachScans: 0,
   approachPromotes: 0,
   laneReleases: 0,
+  selfKept: 0,
   laneRecalled: 0,
   laneMs: 0,
   laneMaxMs: 0,
@@ -234,6 +236,8 @@ export class Scanner {
   private plainSelector: string | null = null;
   private muted: RegExp | null = null;
   private offRules: ReadonlySet<string> = new Set();
+  /** The viewer's profile (adapter `self` plus the learned id): units linking to it skip the suggested rules. */
+  private self: SelfMatch | null = null;
   /** The context's categories, with "suggested" off on pages outside the adapter's feed paths. */
   private categories: SiteContext['categories'];
   /** Compiled `suggestedPaths`; null means suggested applies on every page. */
@@ -379,6 +383,7 @@ export class Scanner {
     this.categories = categories;
     // Older service workers answer without offRules while the extension updates.
     this.offRules = new Set(this.ctx.offRules ?? []);
+    this.self = selfMatch(this.deps.adapter?.self, this.ctx.self);
     const blocks: Block[] = [];
     for (const b of this.deps.adapter?.blocks ?? []) {
       if (categories[b.category] && !(b.rule && this.offRules.has(b.rule))) blocks.push(b);
@@ -1219,7 +1224,7 @@ export class Scanner {
   /** One born unit's lane verdict: a hide, 'abstain' (a marker, but decide() might not hide), or null (no marker). */
   private laneRead(u: Element, adapter: Adapter, baseUrl: string, hasOverrides: boolean, suggestedOn: boolean): LaneHit | 'abstain' | null {
     const { categories } = this;
-    const marker = detectMarker(u, adapter, baseUrl, { suggested: categories.suggested && suggestedOn, offRules: this.offRules });
+    const marker = detectMarker(u, adapter, baseUrl, { suggested: categories.suggested && suggestedOn, offRules: this.offRules, self: this.self });
     if (!marker) return null;
     // What decide() would skip (an empty shell, a label something else already hid)
     // the lane leaves to it: never a hide decide() would not make.
@@ -1328,6 +1333,8 @@ export class Scanner {
       marker = detectMarker(unit, adapter, baseUrl, {
         suggested: categories.suggested && !this.isOpened(unit),
         offRules: this.offRules,
+        self: this.self,
+        onSelf: () => this.perf.selfKept++,
       });
       text = unitText(unit, adapter);
       // Something other than Sifter (another ad blocker's cosmetic filter, invisible

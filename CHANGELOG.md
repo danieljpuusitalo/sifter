@@ -7,6 +7,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - The options page shows Sifter's version and a "Report a site that broke" link.
+- LinkedIn posts that mention you stay visible, even when a connection's like or
+  comment would otherwise hide them as suggested, so a post you're tagged in opens
+  normally from a notification or the feed. Sifter learns your profile link from
+  LinkedIn's left sidebar and keeps it only on your device; Options, "Your
+  exceptions", shows it with a Forget button. Sponsored posts still hide.
 
 ### Fixed
 

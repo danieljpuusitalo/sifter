@@ -47,12 +47,14 @@ function site(start: string) {
   document.head.innerHTML = `<style>${style}</style>`;
   document.body.innerHTML = '<main><div data-testid="mainFeed" role="list"></div></main>';
   let path = start;
+  let search = '';
   const queue: Array<() => void> = [];
   scanner = new Scanner({
     doc: document,
     hostname: 'www.linkedin.com',
     baseUrl: 'https://www.linkedin.com/feed/',
     path: () => path,
+    search: () => search,
     adapter: adapterFor('www.linkedin.com'),
     context: defaultContext('linkedin.com', { categories: { sponsored: true, suggested: true, custom: true } }),
     persistOverride: () => {},
@@ -72,8 +74,9 @@ function site(start: string) {
     s,
     drain,
     /** One mutation batch: the URL changes, the old posts go, the new ones arrive. */
-    go: async (to: string, html: string) => {
+    go: async (to: string, html: string, query = '') => {
       path = to;
+      search = query;
       root.replaceChildren();
       root.insertAdjacentHTML('beforeend', html);
       await observed();
@@ -118,6 +121,109 @@ describe('in-app navigation: the batch that carries the new path', () => {
     expect(f.hidden(1009)).toBe(false);
     f.drain();
     expect(f.hidden(1009)).toBe(false);
+  });
+});
+
+// A notification opens /feed/?highlightedUpdateUrn=..., the opened post first. Only it
+// skips the suggested rules; the feed LinkedIn loads under it is filtered as usual.
+// Fixture gold: 1009 and 1012 are suggested.
+describe('in-app navigation to a notification link', () => {
+  const HIGHLIGHT = '?highlightedUpdateUrn=urn%3Ali%3Aactivity%3A1&origin=Y';
+
+  it('positive control: with no param, a suggested post on top is hidden before paint', async () => {
+    const f = site('/notifications/');
+    await f.go('/feed/', card(1009) + card(1001) + card(1012));
+    expect(f.hidden(1009)).toBe(true);
+    expect(f.hidden(1012)).toBe(true);
+  });
+
+  it('the opened post is kept; suggested and ads below it are hidden before paint', async () => {
+    const f = site('/notifications/');
+    await f.go('/feed/', card(1009) + card(1002) + card(1012), HIGHLIGHT);
+    expect(f.hidden(1009), 'the opened post').toBe(false);
+    expect(f.hidden(1002), 'an ad below it').toBe(true);
+    expect(f.hidden(1012), 'suggested below it').toBe(true);
+    f.drain();
+    expect(f.hidden(1009)).toBe(false);
+    expect(f.hidden(1002) && f.hidden(1012)).toBe(true);
+    expect(f.perf().laneReleases).toBe(0);
+  });
+
+  it('posts loaded later under the same link are filtered, the opened post still kept', async () => {
+    const f = site('/notifications/');
+    await f.go('/feed/', card(1009) + card(1001), HIGHLIGHT);
+    f.drain();
+    await f.append(card(1012) + card(1002));
+    expect(f.hidden(1012) && f.hidden(1002)).toBe(true);
+    f.drain();
+    expect(f.hidden(1009)).toBe(false);
+    expect(f.hidden(1012)).toBe(true);
+  });
+
+  it('an opened post the feed had hidden as suggested is not put back hidden', async () => {
+    const f = site('/feed/');
+    await f.append(card(1009));
+    f.drain();
+    expect(f.hidden(1009), 'positive control').toBe(true);
+    await f.go('/notifications/', card(1001));
+    f.drain();
+    await f.go('/feed/', card(1009) + card(1012), HIGHLIGHT);
+    expect(f.hidden(1009)).toBe(false);
+    expect(f.hidden(1012)).toBe(true);
+    f.drain();
+    expect(f.hidden(1009)).toBe(false);
+    expect(f.perf().laneReleases).toBe(0);
+  });
+
+  it('Home keeps the param: the re-rendered feed is filtered, its new top post included', async () => {
+    const f = site('/notifications/');
+    await f.go('/feed/', card(1009) + card(1001), HIGHLIGHT);
+    f.drain();
+    expect(f.hidden(1009), 'positive control: the opened post is kept').toBe(false);
+    await f.go('/feed/', card(1012) + card(1001) + card(1009), HIGHLIGHT); // same URL: a re-render
+    expect(f.hidden(1012), 'the new top post').toBe(true);
+    expect(f.hidden(1009), 'the opened post, wherever it is now').toBe(false);
+    f.drain();
+    expect(f.hidden(1012)).toBe(true);
+    expect(f.hidden(1009)).toBe(false);
+  });
+
+  it('the opened post unmounted far above does not hand its exemption to the next post', async () => {
+    const f = site('/notifications/');
+    await f.go('/feed/', card(1009) + card(1012), HIGHLIGHT);
+    f.drain();
+    expect(f.hidden(1012), 'positive control').toBe(true);
+    f.unitOf(1009)!.parentElement!.remove();
+    const touch = document.createElement('span');
+    touch.textContent = ' 12 reactions'; // the site updates the post: it is re-decided
+    f.unitOf(1012)!.appendChild(touch);
+    await new Promise((r) => setTimeout(r, 0));
+    f.drain();
+    expect(f.hidden(1012)).toBe(true);
+    expect(f.perf().laneReleases).toBe(0);
+  });
+
+  it('a second notification pins its own post, not the first one\'s', async () => {
+    const f = site('/notifications/');
+    await f.go('/feed/', card(1009) + card(1012), HIGHLIGHT);
+    f.drain();
+    expect(f.hidden(1009), 'positive control').toBe(false);
+    await f.go('/notifications/', card(1001));
+    f.drain();
+    await f.go('/feed/', card(1012) + card(1009), HIGHLIGHT);
+    expect(f.hidden(1012), 'the post this notification opened').toBe(false);
+    expect(f.hidden(1009), 'the last one\'s, now just a suggested post').toBe(true);
+    f.drain();
+    expect(f.hidden(1012)).toBe(false);
+    expect(f.hidden(1009)).toBe(true);
+  });
+
+  it('an ad on top is still hidden under the param', async () => {
+    const f = site('/notifications/');
+    await f.go('/feed/', card(1002) + card(1009), HIGHLIGHT);
+    expect(f.hidden(1002)).toBe(true);
+    f.drain();
+    expect(f.hidden(1002)).toBe(true);
   });
 });
 

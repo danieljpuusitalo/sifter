@@ -232,16 +232,25 @@ declare const __sifterProbe: { start(c: unknown): void; reset(): void; stop(): P
 declare const __dist: { down: number; up: number };
 
 type ProfNode = { id: number; parent?: number; callFrame: { functionName: string; url: string; lineNumber: number }; children?: number[] };
-type Profile = { nodes: ProfNode[]; samples: number[]; timeDeltas: number[] };
+type Profile = { nodes: ProfNode[]; samples: number[]; timeDeltas: number[]; startTime: number | null };
 
 /** The isolate-wide sampled profile a trace carries (ProfileChunk events), merged per profile id; the busiest one wins. */
 function traceProfile(events: Ev[]): Profile | null {
   const byId = new Map<string, Profile>();
   for (const e of events) {
+    // The Profile event carries the start time, on the trace clock, that timeDeltas count from.
+    if (e.name === 'Profile') {
+      const id = String((e as unknown as { id: string }).id);
+      const p = byId.get(id) ?? { nodes: [], samples: [], timeDeltas: [], startTime: null };
+      const start = (e.args as { data?: { startTime?: number } }).data?.startTime;
+      if (typeof start === 'number') p.startTime = start;
+      byId.set(id, p);
+      continue;
+    }
     if (e.name !== 'ProfileChunk') continue;
     const data = (e.args as { data?: { cpuProfile?: { nodes?: ProfNode[]; samples?: number[] }; timeDeltas?: number[] } }).data;
     const id = String((e as unknown as { id: string }).id);
-    const p = byId.get(id) ?? { nodes: [], samples: [], timeDeltas: [] };
+    const p = byId.get(id) ?? { nodes: [], samples: [], timeDeltas: [], startTime: null };
     p.nodes.push(...(data?.cpuProfile?.nodes ?? []));
     p.samples.push(...(data?.cpuProfile?.samples ?? []));
     p.timeDeltas.push(...(data?.timeDeltas ?? []));
@@ -255,7 +264,7 @@ function traceProfile(events: Ev[]): Profile | null {
  * leaf frame (DOM calls show as the native leaf under our function), and
  * inclusive time by our own functions. Only stacks with a chrome-extension frame count.
  */
-function profileSummary(p: Profile) {
+function profileSummary(p: Profile, window?: { ts: number; end: number }) {
   const byId = new Map(p.nodes.map((n) => [n.id, n]));
   const parent = new Map<number, number>();
   for (const n of p.nodes) {
@@ -267,7 +276,11 @@ function profileSummary(p: Profile) {
   const self = new Map<string, number>();
   const incl = new Map<string, number>();
   let total = 0;
+  let at = p.startTime ?? 0;
   for (let i = 0; i < p.samples.length; i++) {
+    at += p.timeDeltas[i] ?? 0;
+    // With a window (one call's span), only the samples taken inside it.
+    if (window && (p.startTime === null || at < window.ts || at >= window.end)) continue;
     const dt = (p.timeDeltas[i + 1] ?? p.timeDeltas[i] ?? 0) / 1000;
     const stack: ProfNode[] = [];
     for (let id: number | undefined = p.samples[i]; id !== undefined; id = parent.get(id)) stack.push(byId.get(id)!);
@@ -335,6 +348,41 @@ function pct(xs: number[], p: number): number {
   return +s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))]!.toFixed(1);
 }
 
+/**
+ * One extension call taken apart: self time per trace event name inside it (what is
+ * left on the call itself is its own JS), and each forced recalc with its element count
+ * and the top of its stack. Names and file:line only, never page content.
+ */
+function callAnatomy(mt: Ev[], call: Ev) {
+  const end = call.ts + call.dur!;
+  const inside = mt.filter((e) => e !== call && e.ts >= call.ts && e.ts < end);
+  const self = new Map<string, number>([[`(own JS) ${call.name}`, call.dur! / 1000]]);
+  const open: { e: Ev; key: string }[] = [{ e: call, key: `(own JS) ${call.name}` }];
+  const recalcs: { ms: number; elements: number | null; at: string }[] = [];
+  for (const e of inside) {
+    while (open.length > 1 && open[open.length - 1]!.e.ts + open[open.length - 1]!.e.dur! <= e.ts) open.pop();
+    const parent = open[open.length - 1]!;
+    self.set(parent.key, (self.get(parent.key) ?? 0) - e.dur! / 1000);
+    self.set(e.name, (self.get(e.name) ?? 0) + e.dur! / 1000);
+    open.push({ e, key: e.name });
+    if (e.name === 'UpdateLayoutTree' || e.name === 'RecalculateStyles' || e.name === 'Layout') {
+      const st = (e.args as { beginData?: { stackTrace?: { functionName: string; lineNumber: number; url: string }[] } }).beginData?.stackTrace ?? [];
+      recalcs.push({
+        ms: +(e.dur! / 1000).toFixed(2),
+        elements: typeof e.args?.elementCount === 'number' ? e.args.elementCount : null,
+        at: `${e.name} <- ${st.slice(0, 3).map((f) => `${f.functionName || '(anon)'}:${f.lineNumber}`).join(' <- ')}`,
+      });
+    }
+  }
+  return {
+    entry: `${call.name}:${call.args?.data?.functionName || '(anon)'}`,
+    ms: +(call.dur! / 1000).toFixed(2),
+    window: { ts: call.ts, end },
+    selfByName: [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k, ms]) => ({ k, ms: +ms.toFixed(2) })),
+    recalcs: recalcs.sort((a, b) => b.ms - a.ms).slice(0, 6),
+  };
+}
+
 /** Main-thread attribution from a trace file. */
 export function analyse(file: string) {
   const raw = JSON.parse(readFileSync(file, 'utf8')) as { traceEvents?: Ev[] } | Ev[];
@@ -366,6 +414,10 @@ export function analyse(file: string) {
   // script share one heap, so whoever allocates when new space fills pays the
   // scavenge (one 20 ms "onMutations" call on 2026-10-04 was 19.9 ms of MinorGC).
   const nestedGc = { ms: 0, n: 0, max: 0 };
+  // Incremental marking steps (V8.GCIncrementalMarking) come with no MajorGC around them:
+  // 35 ms of one 38 ms decide pass on 2026-10-17 was marking, uncounted by name.
+  const isGc = (e: Ev) => e.name === 'MinorGC' || e.name === 'MajorGC' || e.name.startsWith('V8.GC') || e.name.startsWith('BlinkGC.');
+  let gcEnd = 0;
   // Elements each forced recalc restyled: one big count is the page's pending recalc paid
   // early, many small ones that each cost a lot would be style computed on demand.
   const forcedEls: number[] = [];
@@ -374,8 +426,13 @@ export function analyse(file: string) {
   let callGc = 0;
   let callMaxNet = 0;
   let openExt: Ev | null = null;
+  // The call behind callMaxNet, taken apart after the loop (`worstCall`).
+  let worstExt: Ev | null = null;
   const closeCall = () => {
-    if (openExt) callMaxNet = Math.max(callMaxNet, openExt.dur! / 1000 - callGc);
+    if (openExt && openExt.dur! / 1000 - callGc > callMaxNet) {
+      callMaxNet = openExt.dur! / 1000 - callGc;
+      worstExt = openExt;
+    }
     callGc = 0;
   };
   const forcers = new Map<string, { ms: number; n: number }>();
@@ -402,7 +459,13 @@ export function analyse(file: string) {
           forcers.set(key, f);
         }
       }
-      if (e.name === 'MinorGC' || e.name === 'MajorGC') {
+      if (isGc(e)) {
+        // Outermost only: MinorGC wraps V8.GCScavenger wraps V8.GC_SCAVENGER, and so on.
+        if (e.ts < gcEnd) {
+          stack.push(e);
+          continue;
+        }
+        gcEnd = e.ts + e.dur!;
         nestedGc.ms += e.dur! / 1000;
         nestedGc.n++;
         nestedGc.max = Math.max(nestedGc.max, e.dur! / 1000);
@@ -433,6 +496,7 @@ export function analyse(file: string) {
     stack.push(e);
   }
   closeCall();
+  const worstCall = worstExt ? callAnatomy(mt, worstExt) : null;
   // Extension time per top-level task: the number a user can feel in one frame.
   const perTask: number[] = [];
   let si = 0;
@@ -471,6 +535,7 @@ export function analyse(file: string) {
       forcedLayout: { ms: +nestedLayout.ms.toFixed(1), n: nestedLayout.n, max: +nestedLayout.max.toFixed(2) },
       gcInside: { ms: +nestedGc.ms.toFixed(1), n: nestedGc.n, max: +nestedGc.max.toFixed(2) },
       callMaxNetOfGc: +callMaxNet.toFixed(2),
+      worstCall,
       forcedStyleElements: forcedEls.length
         ? { p50: pct(forcedEls, 50), p95: pct(forcedEls, 95), max: pct(forcedEls, 100), total: forcedEls.reduce((a, b) => a + b, 0) }
         : null,
@@ -729,9 +794,22 @@ async function runOnce(withExt: boolean) {
     if (PROFILE_MODE) {
       // Sampling costs time itself: a profile run names hot functions, a plain run times them.
       // The CDP Profiler domain only sees the main world; the trace's sampler sees the isolate.
+      // Its counters still say which call was worst; that call's samples name what filled it.
       const raw = JSON.parse(readFileSync(file, 'utf8')) as { traceEvents?: Ev[] } | Ev[];
       const prof = traceProfile(Array.isArray(raw) ? raw : (raw.traceEvents ?? []));
-      return { mode: withExt ? 'on' : 'off', pattern: PATTERN, distance, load, profile: prof ? profileSummary(prof) : null, traceFile: file };
+      const trace = analyse(file);
+      const w = trace.ext.worstCall?.window;
+      return {
+        mode: withExt ? 'on' : 'off',
+        pattern: PATTERN,
+        distance,
+        load,
+        scanner,
+        trace,
+        profile: prof ? profileSummary(prof) : null,
+        worstCallProfile: prof && w ? profileSummary(prof, w) : null,
+        traceFile: file,
+      };
     }
     const frames = (await page.evaluate(() => (window as unknown as { __frames: number[] }).__frames)).slice(10);
     if (frames.length < SECONDS * 20) console.warn(`[live] only ${frames.length} frames: the tab was throttled, discard this run`);

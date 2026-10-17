@@ -140,12 +140,57 @@ No `src/` change came out of it.
   - **Debounced pass:** net of GC, the longest call is 12–15 ms in 3 of 4 runs. Most of it
     is one forced recalc of 5–13 ms that restyles only 3–69 elements: the page's pending
     `:has()` work, paid early. It runs in `requestIdleCallback`, after paint.
-  - **Unexplained:** one run had `maxDecideMs` 38.1, 38.4 net of GC, while its largest
-    forced style was 9.9 ms. A `SIFTER_NOMINIFY` `--profile` run would name it. Not done.
+  - **The 38 ms decide pass is GC too.** It had looked unexplained (38.4 ms "net of GC",
+    largest forced style 9.9 ms). The trace shows 35.0 of its 38.4 ms is
+    `V8.GC_MC_INCREMENTAL`, with 3.2 ms of Sifter's own JS. A second trace shows the same
+    pattern: 40 of 45 ms. Incremental-marking steps come with no `MajorGC` around them,
+    so the bench's GC netting missed them.
+    - **Fixed in `bench/live.ts`:** GC is any `MinorGC`/`MajorGC`/`V8.GC*`/`BlinkGC.*`
+      event, counted outermost-only so nested scavenger events aren't counted twice.
+    - **New `ext.worstCall`:** the longest call net of GC, broken down as self time per
+      trace event name (own JS, GC, style, layout), plus its recalcs with element counts
+      and the Sifter stack that forced each.
+    - **New `worstCallProfile` in `--profile` mode:** CPU samples inside that call only.
+      Profile mode now also returns the scanner and trace summaries.
+  - **The other slow calls** are a single `UpdateLayoutTree` of 15–50 ms that restyles
+    16–21 elements: LinkedIn's `:has()` selectors matching. The page's next recalc
+    afterwards is often 0.0–0.2 ms (the work moved), but sometimes 14–34 ms.
+- **Long page recalcs under collapse + suggested: feed geometry, not Sifter's DOM.**
+  - Recalcs over 16 ms per minute, collapse + suggested: 0–20 off vs 44–358 on. Recalc
+    p99 rises from 8–12 ms to 16–33 ms. Ads-only runs are level.
+  - **A 90 s pair with the same DOM** (70.6k elements, 253 vs 263 units) still showed 18
+    vs 119 per minute. So the cause is not DOM size.
+  - **Blur control:** same 51–52 units hidden, same DOM and scroll distance, but blur
+    instead of collapse. Long recalcs went 11 → 23 and 0 → 3.7 per minute. So the cause
+    is not Sifter's stylesheet or classes either.
+  - **What causes it:** the collapse geometry. Short collapsed bars put many posts in
+    view at once, the feed end is reached constantly, and LinkedIn loads and renders
+    faster.
+  - **Over-50 ms frames per unit loaded** (off → on):
+
+    | Run | Off | On |
+    |---|---|---|
+    | Collapse + suggested 1 | 1.76 | 1.78 |
+    | Collapse + suggested 2 | 0.76 | 0.87 |
+    | Collapse + suggested 3 | 1.17 | 0.86 |
+    | Collapse + suggested, 90 s | 2.37 | 1.04 |
+    | Ads only 1 | 0.76 | 0.84 |
+    | Ads only 2 | 0.45 | 1.23 |
+    | Blur 1 / 2 | 1.60 / 0.81 | 0.90 / 0.82 |
+
+    - Per second, collapse on-runs have 2–3× the long frames, because LinkedIn loads
+      about 2.8× the posts in the same time. Per post loaded, jank is level or better.
+    - **Caveat:** ads-only 2 is worse with Sifter on (1.23 vs 0.45). This is one run, so
+      it's unresolved.
+    - **Tentative conclusion:** collapse makes the user consume the feed faster, so
+      LinkedIn renders more per second. That's a product consequence of hide mode and bar
+      height (Daniel's call), not Sifter's own work.
 - **Proposed for Daniel: a rule-7 wording change.** It is his call, as the lane's
   exemption was on 2026-10-08.
   - Give the debounced pass the same "one longest unit read" exemption the lane has.
-  - Stop billing GC that lands inside a call against the 8 ms.
+  - Stop billing GC that lands inside a call against the 8 ms, including incremental
+    marking. The data now backs this: every raw breach over 30 ms traced so far is
+    mostly GC.
 - **Virtual-feed 50 ms frame: closed.** `bench:scroll --virtual --pattern all --runs 5`,
   cpu 4, Edge:
   - All 5 runs OK. `visibleSifter` 0 and `remountFlips` 0 in every run.

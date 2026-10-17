@@ -2,6 +2,7 @@ import { COLLAPSE_CLASS, HIDDEN_CLASS, PLACEHOLDER_ATTR } from './content/hider'
 import { normaliseText } from './fingerprint';
 import { MARKER_WORDS, hasLineEnding, hasMarkerLine, hasWordLine, isAdClickUrl, isMarkerText } from './rules/markers';
 import type { Adapter } from './adapters/schema';
+import { mentionsSelf, type SelfMatch } from './self';
 import type { UnitPayload } from './types';
 
 const MAX_TEXT = 600;
@@ -508,6 +509,10 @@ export type DetectOptions = {
   suggested?: boolean;
   /** Suggested rule ids switched off on this site. */
   offRules?: ReadonlySet<string>;
+  /** The viewer's profile: a unit linking to it is never a suggested hit (src/self.ts). */
+  self?: SelfMatch | null;
+  /** Called when `self` kept a unit a suggested rule matched. */
+  onSelf?: () => void;
 };
 
 const NO_RULES: ReadonlySet<string> = new Set();
@@ -566,7 +571,15 @@ export function detectMarker(unit: Element, adapter: Adapter | null, base: strin
     const hit = genericLabelHit(unit, cache);
     if (hit) return sponsored('label', hit);
   }
-  if (opts.suggested && adapter?.suggested) return detectSuggested(unit, adapter, labels ?? [], opts.offRules ?? NO_RULES, cache);
+  if (opts.suggested && adapter?.suggested) {
+    const hit = detectSuggested(unit, adapter, labels ?? [], opts.offRules ?? NO_RULES, cache);
+    // Checked after the match, so only suggested hits pay the query.
+    if (hit && opts.self && mentionsSelf(unit, opts.self)) {
+      opts.onSelf?.();
+      return null;
+    }
+    return hit;
+  }
   return null;
 }
 

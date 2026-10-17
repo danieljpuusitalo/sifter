@@ -87,9 +87,10 @@ export const AdapterSchema = z.object({
    */
   suggestedPaths: z.array(z.string().min(1)).optional(),
   /**
-   * Query-parameter names whose presence turns "suggested" off on a feed path: the
-   * page was opened to show one specific post (LinkedIn notification links are
-   * /feed/?highlightedUpdateUrn=...). Only names are read, never values.
+   * Query-parameter names that mean the page was opened to show one specific post
+   * (LinkedIn notification links are /feed/?highlightedUpdateUrn=...): its first
+   * unit, the opened post, skips the suggested rules; the rest of the feed is filtered
+   * as usual. Only names are read, never values.
    */
   suggestedOffParams: z.array(z.string().min(1)).optional(),
   /**

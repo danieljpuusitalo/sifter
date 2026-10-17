@@ -1,5 +1,114 @@
 # Sifter checkpoint
 
+**Landed 2026-10-17:** #36, #37 and #35 are merged into `main` in that order. Statuses below that say "open" or "not merged" predate that.
+
+**LinkedIn in-app navigation (2026-10-17, PR #36 `fix/spa-navigation-lane`; PR #35
+`feat/linkedin-self-mentions` also open, neither merged).** Daniel asked for real-usage
+scenarios tested live (read-only, counts only, page-world probe that reports shapes).
+
+- **Fixed in #36:**
+  - Back to the feed, or Home from Notifications or a company page, painted the feed's
+    ads and suggested posts uncovered first. The batch that carries the new path returned
+    before the lane. Live: Notifications → Home had 6 flashes, 2 of them ads.
+  - A post the reader had shown came back hidden after company → Back, because the path
+    change cleared mount memory. 16 of 18 `componentkey`s survive the round trip.
+  - Covered by `tests/unit/navigation.test.ts` (7 cases, mutation-proved).
+- **Checked live and safe:** the photo overlay (a dialog, URL stays `/feed/`, 0 flashes).
+  So is feed → profile → Back on 1.2.0, apart from the two defects above.
+- **Re-checked live on the combined build (#35 + #36), read-only:**
+  - Notifications → Home: 5/5 matching posts covered at insert, 0 flashes. Before: 6.
+  - Company → Back: 5/5 covered at insert, 0 flashes.
+  - Show survives company → Back: found by `componentkey`, Hide bar back, 0 flashes. The
+    probe counted that one shown ad as uncovered, which is its positive control.
+  - Notification open: the opened post stays visible. Below-the-fold ads were covered by
+    the first frame (lane carry), not at insert, which is by design.
+- **Timing caveat:** the MCP tab was drawn at 1 fps (frame gaps of exactly 1000 ms), so
+  the measured frame counts are inflated. Re-time with Chrome in the foreground.
+- **Notification latch: fixed, branch `fix/notification-latch` (PR stacked on #36).**
+  Daniel left the call to me ("use your brain"), and I picked option (a), pinned.
+  - **The cost, measured:** the whole page went unfiltered. Under the opened post, 3
+    liked-by posts showed. Home keeps `highlightedUpdateUrn`, so the reloaded feed stayed
+    unfiltered too.
+  - **Now:** only the opened post skips the suggested rules, and ads are hidden as always.
+    The opened post is the page's first unit, pinned by `componentkey` the first time it
+    is found. Home's re-render and the top unmounting on a long scroll therefore can't
+    pass the exemption to another post. A path change ends the latch and clears the pin.
+  - **Evidence for "first unit":** on 4 of 4 mention notifications, the only unit linking
+    to the reader's profile was unit 0 of 9. The URN can't identify the post: it appears
+    in all 9 units, never in a permalink path.
+  - **Residual risk:** if LinkedIn ever puts another unit first, that unit gets the
+    exemption. For mention notifications, #35's self exemption backs it up.
+  - **Tests:** 9 cases in `navigation.test.ts` and 7 in `suggested-paths.test.ts`, all
+    mutation-proved: lane, decide, recall, pin, pin reset, and first-unit lookup.
+  - `bench:scroll --cpu 1`: `laneBilledMaxMs` 3.4–3.5 ms trips the 2 ms line, and so does
+    the parent commit (3.4 ms on run 1). This predates the change. With no param, the
+    new code returns on its first comparison.
+- **Live build:** `~/sifter-v1.0.0`, from local unpushed branch `tmp/live-combined`
+  (#37 + a merge of #35), backup in `~/sifter-v1.0.0.bak-2026-10-17-pr36`. Delete the
+  branch once #35, #36 and #37 are merged.
+- **More scenarios, live, read-only, counts only:**
+  - **Plain `/feed/`:** 13 and 18 units, every ad and activity post covered. The other
+    covered posts were 2nd-degree authors with a Connect button (the `follow` rule, as
+    designed), not false hides.
+  - **Service worker idle (~45 s), then a new tab:** 0 uncovered of 8 units. Two tabs at
+    once: 0 uncovered in either (8 and 18 units).
+  - **Search results (`/search/results/content/`):** 6 units, 0 covered. Suggested stays
+    off away from the feed. No ad was served, so sponsored on search is still untested.
+  - **`pnpm canary --ext ~/sifter-v1.0.0`:** 9 ok, 0 warn, 0 fail. Threads served no ad.
+  - **Notification link:** the measured layout matched the *old* page-wide latch. The tab
+    was still running the previous build, so the latch is unconfirmed live until Daniel
+    reloads Sifter in chrome://extensions.
+- **Still untested:**
+  - **Orphan handoff** and **the latch on the new build**: both need Daniel's reload with a
+    LinkedIn tab open.
+  - **Narrow window:** `resize_window` left `innerWidth` at 1064.
+  - **True background tab:** the MCP forces `document.hidden` false on the tab it scripts.
+  - **Long session, Dutch UI, dark mode:** Dutch and dark mode are LinkedIn settings, so
+    they are Daniel's to change.
+
+**Performance audit of the combined build (2026-10-17, `tmp/live-combined` vs `main`).**
+Daniel asked for it. Native Edge, plugged in, off-run frame p50 16.7 ms, so not throttled.
+
+- **Verdict: #35, #36 and #37 add no measurable cost.** Every difference below is within
+  the run-to-run spread, or present on `main` too.
+- **`bench:scroll`, synthetic feed:**
+
+  | Run | Combined | Main |
+  |---|---|---|
+  | LinkedIn cpu1 maxSlice | 2.1–3.9 | 2.5–3.6 |
+  | LinkedIn cpu1 laneBilled | 1.4–1.5 | 1.2–1.5 |
+  | LinkedIn cpu4 laneBilled | 1.9 / 2.5 | 7.8 / 7.0 |
+  | Facebook cpu1 laneBilled | 1.2 / 2.2 | 1.4 / 1.2 |
+
+  The Facebook 2.2 ms is the one trip of the 2 ms line. The virtual feed has an
+  intermittent ~50 ms worst frame and a 10 ms slice at 4x on both builds (`main` 51.7 ms in
+  1 of 3). It coincides with `remountFlips` toFull 1. Not caused by the PRs.
+- **`bench:live`, real LinkedIn feed, suggested on, on-runs alternated:**
+
+  | Build | Sifter ms/s | p99 | max task |
+  |---|---|---|---|
+  | Main | 15.4 / 19.2 | 9.4 / 17.4 | 40 / 41 |
+  | Combined | 19.6 / 13.2 / 21.2 | 10.2 / 4.6 / 12.8 | 71 / 43 / 65 |
+
+  The 65 and 71 ms max tasks hold 35–50 ms GC pauses, so they are noise.
+- **Open, and on `main` too: hard rule 7 is breached on the live feed.**
+  - `maxDecideMs` is 35–72 ms and `laneMaxMs` 10–70 ms on both builds, worse than the
+    13–28 ms recorded earlier. `laneBilledMaxMs` ranges 3–38 ms (combined 33.1 / 3.4 / 3.9,
+    main 3 / 18.4).
+  - **Where it goes:** a `SIFTER_NOMINIFY` trace puts all forced style in
+    `UpdateLayoutTree <- renderedWithin <- labelText <- readLabel`, about 106 ms over 13
+    calls. That is the page's pending style recalc, paid early.
+  - **A Layout read too:** `renderedWithin`'s `getComputedStyle` walk forced Layout (1.2 ms,
+    n=2; `main` 6 ms, n=5). The lane is meant never to read layout.
+  - Neither is started. It is the next perf item if Daniel wants it.
+- **Stability probe, reverse pattern, both modes:** 0 Sifter-blamed visible or residual
+  jumps. The two 250 px moves are LinkedIn's own and appear with Sifter off. All 108
+  collapses came from the lane and were below the viewport. The on-run consumed far more
+  feed (128 units vs 28), a known effect.
+- **Trap fixed in PR #38:** Edge 155 disables any `--load-extension` build on
+  `.dev-profile-edge` (disable reason `1 << 24`), so `bench:live` on-runs timed out.
+  `bench:live` now loads the build over CDP, as the canary does. `bench:scroll` uses an
+  empty profile and was never affected.
 **LinkedIn: posts that mention you stay visible (2026-10-17, branch `feat/linkedin-self-mentions`).**
 Daniel reported that a post he was tagged in hid when he opened it from a notification ("X
 celebrates this"). The report was against a stale unpacked 1.1.1 copy. 1.2.0's

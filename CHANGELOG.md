@@ -13,6 +13,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   LinkedIn's left sidebar and keeps it only on your device; Options, "Your
   exceptions", shows it with a Forget button. Sponsored posts still hide.
 
+### Fixed
+
+- LinkedIn: going Back to the feed, or Home from Notifications or a company
+  page, no longer shows the feed's ads and suggested posts for a moment before
+  hiding them. A post you had shown stays shown when you come back to it.
+- LinkedIn: opening a post from a notification keeps that post visible, but no
+  longer stops Sifter hiding suggested posts in the rest of the feed. Before,
+  the whole page went unfiltered, and stayed that way after pressing Home.
+
 ## [1.2.0] - 2026-10-11
 
 ### Changed

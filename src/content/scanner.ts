@@ -246,8 +246,13 @@ export class Scanner {
   private readonly search: () => string;
   /** Compiled `suggestedOffParams`; null when the adapter has none. */
   private readonly offParams: string[] | null;
-  /** The path an off-param was seen on: suggested stays off there until the path changes, even if the param is stripped. */
+  /**
+   * The path an off-param was seen on: the page's first unit is exempt from suggested
+   * there until the path changes, even if the param is stripped (see `isOpened`).
+   */
   private offParamPath: string | null = null;
+  /** The opened post's `unitKey` value, pinned the first time it is found under the latch. */
+  private openedKey: string | null = null;
   /** The path the categories were compiled for: a change is an in-app navigation. */
   private lastPath = '';
   /** One throwing unit must not spam the console: warn once per page. */
@@ -336,13 +341,44 @@ export class Scanner {
     return this.offParams.some((name) => params.has(name));
   }
 
+  /**
+   * Under an off-param, whether `u` is the post the reader opened: the page's first
+   * unit (LinkedIn puts the highlighted post first: live, 2026-10-17, on 4 of 4 mention
+   * notifications the post naming the reader was unit 0 of 9, and the only one). Only
+   * it skips the suggested rules. Turning suggested off for the whole page also
+   * unfiltered the rest of it, and Home keeps the param, so the latch lasted the
+   * whole session. The param's value can't name the post: it is in every unit's links.
+   *
+   * The first unit found is pinned by its `unitKey`: Home re-renders the feed under the
+   * same URL, and a long scroll unmounts the top of it, and neither may hand the
+   * exemption to whichever post is first next. Attributes only, one query that stops
+   * at the first match until the pin is set.
+   */
+  private isOpened(u: Element): boolean {
+    const adapter = this.deps.adapter;
+    if (this.offParamPath === null || !adapter) return false;
+    const key = adapter.unitKey;
+    if (key && this.openedKey !== null) return u.getAttribute(key) === this.openedKey;
+    let first: Element | null;
+    try {
+      first = this.deps.doc.querySelector(adapter.unitSelector);
+    } catch {
+      return false;
+    }
+    if (first && key) this.openedKey = first.getAttribute(key);
+    return u === first;
+  }
+
   /** Derive what the context implies once, not per unit. */
   private compileContext(): void {
     const { customSelectors, mutedWords } = this.ctx;
     this.lastPath = this.path();
-    if (this.offParamPath !== this.lastPath) this.offParamPath = null;
+    if (this.offParamPath !== this.lastPath) {
+      this.offParamPath = null;
+      this.openedKey = null;
+    }
     if (this.offParamPath === null && this.offParamPresent()) this.offParamPath = this.lastPath;
-    const onFeed = (!this.feedPaths || this.feedPaths.some((re) => re.test(this.lastPath))) && this.offParamPath === null;
+    const onFeed = !this.feedPaths || this.feedPaths.some((re) => re.test(this.lastPath));
     const categories = { ...this.ctx.categories, suggested: this.ctx.categories.suggested && onFeed };
     this.categories = categories;
     // Older service workers answer without offRules while the extension updates.
@@ -402,12 +438,17 @@ export class Scanner {
     if (traced) for (const u of traced) this.deps.trace?.wrote(u, 'user', this.now());
   }
 
-  /** New settings from the popup or options: re-decide everything on the page. */
-  applyContext(ctx: SiteContext): void {
+  /**
+   * New settings from the popup or options, or an in-app navigation (`navigated`):
+   * re-decide everything on the page.
+   */
+  applyContext(ctx: SiteContext, navigated = false): void {
     this.ctx = ctx;
     this.compileContext();
-    // New settings or a new page: a post hidden under the old ones may not be now.
-    this.memory?.clear();
+    // New settings: a post hidden under the old ones may not be now. A navigation keeps
+    // the settings, so a post that comes back on Back returns as it left, shown ones
+    // too; only `suggested` depends on the path, and the lane skips that recall where it is off.
+    if (!navigated) this.memory?.clear();
     const traced = this.deps.trace ? this.hider.trackedHides() : null;
     this.hider.setMode(ctx.hideMode);
     if (traced) for (const u of traced) this.deps.trace?.wrote(u, 'mode', this.now());
@@ -591,8 +632,12 @@ export class Scanner {
     // Reading the location is a string, not a DOM read, so this costs nothing per batch.
     // A param that newly appears on the same path (feed -> a highlighted post) re-decides too;
     // one that disappears does not (see offParamPath).
+    // The batch that carries the new path usually carries the new page's units too
+    // (Back to the feed, Home): they get the lane like any other batch, or they paint
+    // uncovered until the re-decide reaches them.
     if (this.feedPaths && (this.path() !== this.lastPath || (this.offParamPath === null && this.offParamPresent()))) {
-      this.applyContext(this.ctx);
+      this.applyContext(this.ctx, true);
+      if (this.lane && this.active) this.prepaint(records);
       return;
     }
     if (this.lane && this.active) this.prepaint(records);
@@ -1112,7 +1157,9 @@ export class Scanner {
       for (const u of born) {
         if (this.hider.isHidden(u) || this.userShown.has(u) || this.seen.has(u)) continue;
         const p = this.memory.get(u);
-        if (!p) continue;
+        // Remembered on the feed, re-mounted where suggested is off for it (another page,
+        // or the post a notification opened): read afresh.
+        if (!p || (p.category === 'suggested' && (!this.categories.suggested || this.isOpened(u)))) continue;
         known.add(u);
         this.laneLooked.add(u);
         // A tag stays at full height in its slot: decide() tags it again, as a late hide.
@@ -1137,7 +1184,7 @@ export class Scanner {
       let hit: LaneHit | 'abstain' | null;
       const r0 = this.now();
       try {
-        hit = this.laneRead(u, adapter, baseUrl, hasOverrides);
+        hit = this.laneRead(u, adapter, baseUrl, hasOverrides, !this.isOpened(u));
       } catch {
         hit = 'abstain';
       }
@@ -1175,9 +1222,9 @@ export class Scanner {
   }
 
   /** One born unit's lane verdict: a hide, 'abstain' (a marker, but decide() might not hide), or null (no marker). */
-  private laneRead(u: Element, adapter: Adapter, baseUrl: string, hasOverrides: boolean): LaneHit | 'abstain' | null {
+  private laneRead(u: Element, adapter: Adapter, baseUrl: string, hasOverrides: boolean, suggestedOn: boolean): LaneHit | 'abstain' | null {
     const { categories } = this;
-    const marker = detectMarker(u, adapter, baseUrl, { suggested: categories.suggested, offRules: this.offRules, self: this.self });
+    const marker = detectMarker(u, adapter, baseUrl, { suggested: categories.suggested && suggestedOn, offRules: this.offRules, self: this.self });
     if (!marker) return null;
     // What decide() would skip (an empty shell, a label something else already hid)
     // the lane leaves to it: never a hide decide() would not make.
@@ -1284,7 +1331,7 @@ export class Scanner {
     let custom: string | null;
     try {
       marker = detectMarker(unit, adapter, baseUrl, {
-        suggested: categories.suggested,
+        suggested: categories.suggested && !this.isOpened(unit),
         offRules: this.offRules,
         self: this.self,
         onSelf: () => this.perf.selfKept++,

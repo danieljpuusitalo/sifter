@@ -131,14 +131,23 @@ for (const site of SITES) {
   });
 }
 
-// A notification link opens /feed/?highlightedUpdateUrn=...: the feed path, but the page
-// exists to show one post, so suggested must not hide it (the param NAME decides).
+// A notification link opens /feed/?highlightedUpdateUrn=...: the feed path, with the
+// post the reader opened first (the param NAME decides). That post must not be hidden
+// as suggested; the rest of the feed below it is filtered as usual. Live (2026-10-17):
+// turning suggested off for the whole page left 3 liked-by posts showing under the
+// opened one, and Home keeps the param, so the whole reloaded feed stayed unfiltered.
 describe('linkedin suggestedOffParams', () => {
   const site = SITES[0]!;
   const HIGHLIGHT = '?highlightedUpdateUrn=urn%3Ali%3Aactivity%3A1&highlightedUpdateType=X&origin=Y';
+  /** Fixture gold: 1009 is suggested ("X likes this"). As the opened post, it goes first. */
+  const OPENED = '[componentkey^="update-card-focus1009"]';
+  const opened = (doc: Document) => doc.querySelector(OPENED)!;
+  const isHidden = (u: Element) => u.classList.contains(HIDDEN_CLASS);
 
   function scanWith(path: () => string, search: () => string): { doc: Document; scanner: Scanner } {
     const doc = load(site);
+    const wrap = opened(doc).parentElement!;
+    wrap.parentElement!.prepend(wrap);
     const scanner = new Scanner({
       doc,
       hostname: site.host,
@@ -158,50 +167,59 @@ describe('linkedin suggestedOffParams', () => {
     await new Promise((r) => setTimeout(r, 0));
   };
 
-  it('with the param on /feed/, suggested is kept and sponsored is still hidden', () => {
+  it('positive control: with no param, the suggested post on top is hidden like the rest', () => {
+    const { doc, scanner } = scanWith(() => '/feed/', () => '');
+    expect(doc.querySelector('[role="listitem"]'), 'the opened post is first').toBe(opened(doc));
+    expect(isHidden(opened(doc))).toBe(true);
+    expect(hidden(doc, 'suggested')).toBe(total(doc, 'suggested'));
+    scanner.stop();
+  });
+
+  it('with the param on /feed/, the opened post is kept; the feed below it is still filtered', () => {
     const { doc, scanner } = scanWith(() => '/feed/', () => HIGHLIGHT);
-    expect(total(doc, 'suggested')).toBeGreaterThan(0);
+    expect(total(doc, 'suggested')).toBeGreaterThan(1);
     expect(total(doc, 'sponsored')).toBeGreaterThan(0);
-    expect(hidden(doc, 'suggested')).toBe(0);
+    expect(isHidden(opened(doc))).toBe(false);
+    expect(hidden(doc, 'suggested'), 'every other suggested post').toBe(total(doc, 'suggested') - 1);
     expect(hidden(doc, 'sponsored')).toBe(total(doc, 'sponsored'));
     scanner.stop();
   });
 
-  it('an unrelated param does not turn suggested off', () => {
+  it('an unrelated param exempts nothing', () => {
     const { doc, scanner } = scanWith(() => '/feed/', () => '?trk=x');
+    expect(isHidden(opened(doc))).toBe(true);
     expect(hidden(doc, 'suggested')).toBe(total(doc, 'suggested'));
-    expect(total(doc, 'suggested')).toBeGreaterThan(0);
     scanner.stop();
   });
 
-  it('a param that appears later on the same path (SPA nav to the highlighted post) releases suggested', async () => {
+  it('a param that appears later on the same path (SPA nav to the highlighted post) releases the opened post only', async () => {
     let search = '';
     const { doc, scanner } = scanWith(() => '/feed/', () => search);
     expect(hidden(doc, 'suggested')).toBe(total(doc, 'suggested'));
-    expect(total(doc, 'suggested')).toBeGreaterThan(0);
     search = HIGHLIGHT;
     await rescan(doc);
-    expect(hidden(doc, 'suggested')).toBe(0);
+    expect(isHidden(opened(doc))).toBe(false);
+    expect(hidden(doc, 'suggested')).toBe(total(doc, 'suggested') - 1);
     expect(hidden(doc, 'sponsored')).toBe(total(doc, 'sponsored'));
     scanner.stop();
   });
 
-  it('a param stripped later on the same path keeps suggested off', async () => {
+  it('a param stripped later on the same path keeps the opened post', async () => {
     let search = HIGHLIGHT;
     const { doc, scanner } = scanWith(() => '/feed/', () => search);
-    expect(hidden(doc, 'suggested')).toBe(0);
+    expect(isHidden(opened(doc))).toBe(false);
     search = '';
     await rescan(doc);
-    expect(hidden(doc, 'suggested')).toBe(0);
-    expect(hidden(doc, 'sponsored')).toBe(total(doc, 'sponsored'));
+    expect(isHidden(opened(doc))).toBe(false);
+    expect(hidden(doc, 'suggested')).toBe(total(doc, 'suggested') - 1);
     scanner.stop();
   });
 
-  it('a path change ends the latch: back on /feed/ with no param, suggested is hidden again', async () => {
+  it('a path change ends the latch: back on /feed/ with no param, the top post is hidden again', async () => {
     let path = '/feed/';
     let search = HIGHLIGHT;
     const { doc, scanner } = scanWith(() => path, () => search);
-    expect(hidden(doc, 'suggested')).toBe(0);
+    expect(isHidden(opened(doc))).toBe(false);
     search = '';
     path = '/feed/update/x';
     await rescan(doc);

@@ -64,6 +64,50 @@ scenarios tested live (read-only, counts only, page-world probe that reports sha
   - **Long session, Dutch UI, dark mode:** Dutch and dark mode are LinkedIn settings, so
     they are Daniel's to change.
 
+**Performance audit of the combined build (2026-10-17, `tmp/live-combined` vs `main`).**
+Daniel asked for it. Native Edge, plugged in, off-run frame p50 16.7 ms, so not throttled.
+
+- **Verdict: #35, #36 and #37 add no measurable cost.** Every difference below is within
+  the run-to-run spread, or present on `main` too.
+- **`bench:scroll`, synthetic feed:**
+
+  | Run | Combined | Main |
+  |---|---|---|
+  | LinkedIn cpu1 maxSlice | 2.1–3.9 | 2.5–3.6 |
+  | LinkedIn cpu1 laneBilled | 1.4–1.5 | 1.2–1.5 |
+  | LinkedIn cpu4 laneBilled | 1.9 / 2.5 | 7.8 / 7.0 |
+  | Facebook cpu1 laneBilled | 1.2 / 2.2 | 1.4 / 1.2 |
+
+  The Facebook 2.2 ms is the one trip of the 2 ms line. The virtual feed has an
+  intermittent ~50 ms worst frame and a 10 ms slice at 4x on both builds (`main` 51.7 ms in
+  1 of 3). It coincides with `remountFlips` toFull 1. Not caused by the PRs.
+- **`bench:live`, real LinkedIn feed, suggested on, on-runs alternated:**
+
+  | Build | Sifter ms/s | p99 | max task |
+  |---|---|---|---|
+  | Main | 15.4 / 19.2 | 9.4 / 17.4 | 40 / 41 |
+  | Combined | 19.6 / 13.2 / 21.2 | 10.2 / 4.6 / 12.8 | 71 / 43 / 65 |
+
+  The 65 and 71 ms max tasks hold 35–50 ms GC pauses, so they are noise.
+- **Open, and on `main` too: hard rule 7 is breached on the live feed.**
+  - `maxDecideMs` is 35–72 ms and `laneMaxMs` 10–70 ms on both builds, worse than the
+    13–28 ms recorded earlier. `laneBilledMaxMs` ranges 3–38 ms (combined 33.1 / 3.4 / 3.9,
+    main 3 / 18.4).
+  - **Where it goes:** a `SIFTER_NOMINIFY` trace puts all forced style in
+    `UpdateLayoutTree <- renderedWithin <- labelText <- readLabel`, about 106 ms over 13
+    calls. That is the page's pending style recalc, paid early.
+  - **A Layout read too:** `renderedWithin`'s `getComputedStyle` walk forced Layout (1.2 ms,
+    n=2; `main` 6 ms, n=5). The lane is meant never to read layout.
+  - Neither is started. It is the next perf item if Daniel wants it.
+- **Stability probe, reverse pattern, both modes:** 0 Sifter-blamed visible or residual
+  jumps. The two 250 px moves are LinkedIn's own and appear with Sifter off. All 108
+  collapses came from the lane and were below the viewport. The on-run consumed far more
+  feed (128 units vs 28), a known effect.
+- **Trap fixed in PR #38:** Edge 155 disables any `--load-extension` build on
+  `.dev-profile-edge` (disable reason `1 << 24`), so `bench:live` on-runs timed out.
+  `bench:live` now loads the build over CDP, as the canary does. `bench:scroll` uses an
+  empty profile and was never affected.
+
 **Release pipeline for store updates (2026-10-11, branch `ops/store-pipeline`).** Daniel asked
 for updates after store launch to be easy, possibly daily. The routine is now `pnpm release
 patch`, then merge (`docs/RELEASING.md`).

@@ -1,5 +1,34 @@
 # Sifter checkpoint
 
+**LinkedIn in-app navigation (2026-10-17, PR #36 `fix/spa-navigation-lane`; PR #35
+`feat/linkedin-self-mentions` also open, neither merged).** Daniel asked for real-usage
+scenarios tested live (read-only, counts only, page-world probe that reports shapes).
+
+- **Fixed in #36:**
+  - Back to the feed, or Home from Notifications or a company page, painted the feed's
+    ads and suggested posts uncovered first. The batch that carries the new path returned
+    before the lane. Live: Notifications → Home had 6 flashes, 2 of them ads.
+  - A post the reader had shown came back hidden after company → Back, because the path
+    change cleared mount memory. 16 of 18 `componentkey`s survive the round trip.
+  - Covered by `tests/unit/navigation.test.ts` (7 cases, mutation-proved).
+- **Checked live and safe:** the photo overlay (a dialog, URL stays `/feed/`, 0 flashes).
+  So is feed → profile → Back on 1.2.0, apart from the two defects above.
+- **Not yet re-checked live:** the combined build (#35 + #36). It's staged in
+  `~/sifter-v1.0.0`, built from local unpushed branch `tmp/live-combined`. The previous
+  copy is in `~/sifter-v1.0.0.bak-2026-10-17-pr35`. Daniel has to reload it in
+  chrome://extensions first. Delete `tmp/live-combined` after that check.
+- **Timing caveat:** the MCP tab was drawn at 1 fps (frame gaps of exactly 1000 ms), so
+  the measured frame counts are inflated. Re-time with Chrome in the foreground.
+- **Daniel's call, not implemented: the notification latch.** After a notification, Home
+  keeps `highlightedUpdateUrn`, so suggested hiding stays off for the whole reloaded feed.
+  Options:
+  - (a) Scope the off-param to the first feed unit. The opened post was first in 2 of 2.
+  - (b) End the latch when the unit that was first at latch time disconnects.
+  - (c) Drop the off-param and rely on #35's self exemption.
+- **Untested scenarios:** extension reload with the tab open (orphan handoff), service
+  worker idle wake, two tabs, background tab, search page, narrow window, long session,
+  Dutch UI, dark mode, and navigation on the other sites.
+
 **Release pipeline for store updates (2026-10-11, branch `ops/store-pipeline`).** Daniel asked
 for updates after store launch to be easy, possibly daily. The routine is now `pnpm release
 patch`, then merge (`docs/RELEASING.md`).

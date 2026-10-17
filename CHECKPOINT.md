@@ -41,12 +41,28 @@ scenarios tested live (read-only, counts only, page-world probe that reports sha
   - `bench:scroll --cpu 1`: `laneBilledMaxMs` 3.4–3.5 ms trips the 2 ms line, and so does
     the parent commit (3.4 ms on run 1). This predates the change. With no param, the
     new code returns on its first comparison.
-- **Live build:** `~/sifter-v1.0.0`, from local unpushed branch `tmp/live-combined`;
-  backup in `~/sifter-v1.0.0.bak-2026-10-17-pr35`. Delete the branch once #35, #36 and
-  the latch PR are merged.
-- **Untested scenarios:** extension reload with the tab open (orphan handoff), service
-  worker idle wake, two tabs, background tab, search page, narrow window, long session,
-  Dutch UI, dark mode, and navigation on the other sites.
+- **Live build:** `~/sifter-v1.0.0`, from local unpushed branch `tmp/live-combined`
+  (#37 + a merge of #35), backup in `~/sifter-v1.0.0.bak-2026-10-17-pr36`. Delete the
+  branch once #35, #36 and #37 are merged.
+- **More scenarios, live, read-only, counts only:**
+  - **Plain `/feed/`:** 13 and 18 units, every ad and activity post covered. The other
+    covered posts were 2nd-degree authors with a Connect button (the `follow` rule, as
+    designed), not false hides.
+  - **Service worker idle (~45 s), then a new tab:** 0 uncovered of 8 units. Two tabs at
+    once: 0 uncovered in either (8 and 18 units).
+  - **Search results (`/search/results/content/`):** 6 units, 0 covered. Suggested stays
+    off away from the feed. No ad was served, so sponsored on search is still untested.
+  - **`pnpm canary --ext ~/sifter-v1.0.0`:** 9 ok, 0 warn, 0 fail. Threads served no ad.
+  - **Notification link:** the measured layout matched the *old* page-wide latch. The tab
+    was still running the previous build, so the latch is unconfirmed live until Daniel
+    reloads Sifter in chrome://extensions.
+- **Still untested:**
+  - **Orphan handoff** and **the latch on the new build**: both need Daniel's reload with a
+    LinkedIn tab open.
+  - **Narrow window:** `resize_window` left `innerWidth` at 1064.
+  - **True background tab:** the MCP forces `document.hidden` false on the tab it scripts.
+  - **Long session, Dutch UI, dark mode:** Dutch and dark mode are LinkedIn settings, so
+    they are Daniel's to change.
 
 **Release pipeline for store updates (2026-10-11, branch `ops/store-pipeline`).** Daniel asked
 for updates after store launch to be easy, possibly daily. The routine is now `pnpm release

@@ -115,13 +115,18 @@ type Ev = {
   args?: { name?: string; data?: { url?: string; functionName?: string; frame?: string } } & Record<string, unknown>;
 };
 
+/**
+ * Edge 155 on the dev profile disables a `--load-extension` build at once (disable
+ * reason 1 << 24, even from a path it has never seen), while an empty profile still
+ * loads it (2026-10-17). So the build goes in through CDP, as in `bench/canary.ts`.
+ */
 async function launch(withExt: boolean): Promise<BrowserContext> {
-  return chromium.launchPersistentContext(PROFILE, {
+  const context = await chromium.launchPersistentContext(PROFILE, {
     executablePath: EDGE,
     headless: false,
     viewport: null,
     args: [
-      ...(withExt ? [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`] : ['--disable-extensions']),
+      ...(withExt ? ['--enable-unsafe-extension-debugging'] : ['--disable-extensions']),
       '--disable-sync',
       // A tab that loses focus drops to 1 fps rAF and its trace is meaningless.
       '--disable-backgrounding-occluded-windows',
@@ -133,6 +138,13 @@ async function launch(withExt: boolean): Promise<BrowserContext> {
     ],
     ignoreDefaultArgs: ['--disable-extensions', '--enable-automation'],
   });
+  if (withExt) {
+    const cdp = await context.browser()!.newBrowserCDPSession();
+    // Backslashes fail here with "File path cannot be resolved".
+    // Keep the session open: detaching it unloads the build.
+    await cdp.send('Extensions.loadUnpacked', { path: EXT.replaceAll('\\', '/') });
+  }
+  return context;
 }
 
 /**

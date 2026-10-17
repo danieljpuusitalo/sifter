@@ -1,6 +1,6 @@
 # Sifter checkpoint
 
-**Landed 2026-10-17:** #36, #37 and #35 are merged into `main` in that order. Statuses below that say "open" or "not merged" predate that.
+**Landed 2026-10-17:** #36, #37, #35 and #38 are merged into `main` in that order. Statuses below that say "open" or "not merged" predate that.
 
 **LinkedIn in-app navigation (2026-10-17, PR #36 `fix/spa-navigation-lane`; PR #35
 `feat/linkedin-self-mentions` also open, neither merged).** Daniel asked for real-usage
@@ -61,8 +61,10 @@ scenarios tested live (read-only, counts only, page-world probe that reports sha
 - **Still untested:**
   - **Orphan handoff** and **the latch on the new build**: both need Daniel's reload with a
     LinkedIn tab open.
-  - **Narrow window:** `resize_window` left `innerWidth` at 1064.
-  - **True background tab:** the MCP forces `document.hidden` false on the tab it scripts.
+  - **Narrow window:** done 2026-10-17, see the follow-up below.
+  - **True background tab:** still untested. The MCP forces `document.hidden` false on
+    the tab it scripts. Under Playwright, a second window or a minimized window stays
+    `visible` too, even without Playwright's own anti-backgrounding flags.
   - **Long session, Dutch UI, dark mode:** Dutch and dark mode are LinkedIn settings, so
     they are Daniel's to change.
 
@@ -91,7 +93,7 @@ Daniel asked for it. Native Edge, plugged in, off-run frame p50 16.7 ms, so not 
   | Combined | 19.6 / 13.2 / 21.2 | 10.2 / 4.6 / 12.8 | 71 / 43 / 65 |
 
   The 65 and 71 ms max tasks hold 35–50 ms GC pauses, so they are noise.
-- **Open, and on `main` too: hard rule 7 is breached on the live feed.**
+- **Hard rule 7 on the live feed, on `main` too. Followed up the same day, below.**
   - `maxDecideMs` is 35–72 ms and `laneMaxMs` 10–70 ms on both builds, worse than the
     13–28 ms recorded earlier. `laneBilledMaxMs` ranges 3–38 ms (combined 33.1 / 3.4 / 3.9,
     main 3 / 18.4).
@@ -100,7 +102,73 @@ Daniel asked for it. Native Edge, plugged in, off-run frame p50 16.7 ms, so not 
     calls. That is the page's pending style recalc, paid early.
   - **A Layout read too:** `renderedWithin`'s `getComputedStyle` walk forced Layout (1.2 ms,
     n=2; `main` 6 ms, n=5). The lane is meant never to read layout.
-  - Neither is started. It is the next perf item if Daniel wants it.
+
+**Follow-up on the open audit items (2026-10-17, branch `bench/style-attribution`).**
+Plan: measure whether the forced style is moved or added work, and fix only added work.
+No `src/` change came out of it.
+
+- **New `bench:live` instruments:**
+  - `--invalidations` adds the invalidation-tracking trace category and counts what
+    scheduled each style invalidation, and how many came from an extension stack. The
+    trace buffer fills in about 4 s, so treat its counts as a sample.
+  - Each result carries a count-only `dom` snapshot (elements, units,
+    `content-visibility: auto`, container queries).
+  - `ext.callMaxNetOfGc` is the longest Sifter call minus the GC inside it.
+  - `ext.forcedStyleElements` gives the elements restyled per forced recalc.
+  - **Trap fixed:** the on-run timed out waiting for the service worker, which can start
+    and go idle before Playwright sees it. `launch()` now takes the id from
+    `Extensions.loadUnpacked`.
+- **Moved, not added. Four clean off/on pairs, suggested on:**
+
+  | Pair | DOM elements | Style ms/s | per 10k elements | Busy ms/s |
+  |---|---|---|---|---|
+  | Suggested 1 | 16.8k → 43.3k | 82 → 131 | 49 → 30 | 454 → 453 |
+  | Suggested 2 | 17.1k → 46.5k | 90 → 133 | 53 → 29 | 511 → 452 |
+  | Ads only 1 | 16.8k → 23.1k | 78 → 57 | 46 → 25 | 403 → 399 |
+  | Ads only 2 | 17.0k → 20.3k | 68 → 68 | 40 → 34 | 402 → 408 |
+
+  - The higher raw style cost with suggested on comes from feed growth. Collapsing 137–155
+    posts makes LinkedIn load about 2.8× the units in half the scroll distance. Per
+    element, style is lower with Sifter on, and the busy time is flat.
+  - **Invalidations:** 81–86% of recalcs are "affected by `:has()`", which is LinkedIn's
+    own CSS. 20 of 199 scheduled invalidations and 90 of 5,978 recalcs had an extension
+    stack. `content-visibility: auto` counted 0, container queries 2. Branch (b) of the
+    plan, per-subtree recalcs, is ruled out.
+- **What the rule-7 counters hold:**
+  - **Lane:** the raw max of 51.9 / 40.7 ms holds 47.6 / 39.2 ms of GC. `laneBilled` is
+    1.9–3.2 ms.
+  - **Debounced pass:** net of GC, the longest call is 12–15 ms in 3 of 4 runs. Most of it
+    is one forced recalc of 5–13 ms that restyles only 3–69 elements: the page's pending
+    `:has()` work, paid early. It runs in `requestIdleCallback`, after paint.
+  - **Unexplained:** one run had `maxDecideMs` 38.1, 38.4 net of GC, while its largest
+    forced style was 9.9 ms. A `SIFTER_NOMINIFY` `--profile` run would name it. Not done.
+- **Proposed for Daniel: a rule-7 wording change.** It is his call, as the lane's
+  exemption was on 2026-10-08.
+  - Give the debounced pass the same "one longest unit read" exemption the lane has.
+  - Stop billing GC that lands inside a call against the 8 ms.
+- **Virtual-feed 50 ms frame: closed.** `bench:scroll --virtual --pattern all --runs 5`,
+  cpu 4, Edge:
+  - All 5 runs OK. `visibleSifter` 0 and `remountFlips` 0 in every run.
+  - On-run `maxSliceScroll` was 4.3–10.2 ms.
+  - Worst frames, off: 37.6 / 49.9 / 33.3 / 19.7 / 17.7. On: 50 / 36.4 / 20 / 66.6 / 32.8.
+    The off-runs have them too.
+  - The toFull flip did not reproduce. Runs 1–2 had frame p50 33.3 ms: battery saver at
+    17%, plugged in after.
+- **Narrow window, 776×808 viewport, live, counts only:**
+  - **At load:** every matching unit is covered. `matchUncoveredInView` is 0, against 2
+    with Sifter off, which is the positive control. 0 self-mention hides, 0 duplicate
+    placeholders.
+  - **Scrolling:** LinkedIn's narrow layout loads no further units with Sifter on or off.
+    3 units after 1.4k / 2.1k px, and `main` was scrolled to its end. So narrow covers
+    load only.
+- **Cold-load flash, every width:**
+  - In 6 of 7 fresh launches with Sifter on, 2–3 matching units showed uncovered for 3–7 frames before
+    being covered: sponsored, activity and follow. The wide control had 0 at load and 1
+    one-frame flash while scrolling.
+  - This is the first-visit flash accepted in v1: no `document_start` CSS, and the
+    content script injects at idle, after the page has painted.
+  - That decision predates the lane, which can't run before the script exists. Whether it
+    still holds is Daniel's call.
 - **Stability probe, reverse pattern, both modes:** 0 Sifter-blamed visible or residual
   jumps. The two 250 px moves are LinkedIn's own and appear with Sifter off. All 108
   collapses came from the lane and were below the viewport. The on-run consumed far more

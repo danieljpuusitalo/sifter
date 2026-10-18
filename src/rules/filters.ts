@@ -126,7 +126,7 @@ type Compound = { tag: boolean; id: boolean; cls: boolean; attr: boolean; specif
 /** What one compound selector (`div.x[a=b]:has(.y)`) is made of, at its own top level. */
 function compoundOf(c: string): Compound {
   const out: Compound = { tag: false, id: false, cls: false, attr: false, specificAttr: false, pseudo: false, hasArgs: [] };
-  const ident = /^(?:\\.|[\w\u0080-￿-])+/;
+  const ident = /^(?:\\.|[^\x00-\x7f]|[\w-])+/;
   let i = 0;
   if (c[0] === '*') i = 1;
   else if (ident.test(c)) {

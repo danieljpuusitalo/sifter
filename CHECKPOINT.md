@@ -23,7 +23,7 @@
 
 **Store-readiness audit (2026-10-18, `main` at `1102acc`, v1.2.0; `main` is 19 commits ahead of the tag).** The verdict was **not ready to submit yet**. The code and tests were healthy, but three privacy and listing blockers remained, all of them text. Sifter isn't in the store yet, and no `CWS_*` secrets exist.
 
-**Status: every finding below is fixed on `fix/store-readiness`** (stacked on #39, pushed, not merged), except the contact email, the trader declaration and the dashboard steps, which are Daniel's.
+**Status: every finding below is fixed on `fix/store-readiness`** (stacked on #39, pushed, not merged), except the trader declaration and the dashboard steps, which are Daniel's. Contact email: Daniel chose his personal address over the work one (2026-10-18); PRIVACY.md carries it.
 - **What landed:**
   - One commit per code item, from `3b71c9f` (the aria gate) to `f276b01` (the profile-id consent).
   - `9528953` covers the docs, manifest and icon.

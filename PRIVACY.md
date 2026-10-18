@@ -73,4 +73,4 @@ Changes to this policy are recorded in the
 
 ## Contact
 
-Questions: daniel@4impact.vc
+Questions: daniel.jpuusitalo@gmail.com

@@ -1,0 +1,78 @@
+<!doctype html>
+<!--
+  Store-image feed, used only by scripts/store-assets.mjs. Not a test fixture: it
+  carries no data-gold and the eval never reads it. It reuses the LinkedIn fixture's
+  unit structure (listitem + componentkey, label in p[componentkey] > span) so the
+  real LinkedIn adapter runs on it, and dresses it as a neutral feed that is not any
+  real site's design. Every name, company and post is invented and generic.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Feed (store image)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=block" rel="stylesheet" />
+    <style>
+      :root { --ink: #1d2320; --muted: #6b716d; --line: #e6e2da; }
+      html { background: #efebe3; }
+      body { margin: 0; font-family: 'Figtree', system-ui, sans-serif; color: var(--ink); font-size: 15px; }
+      .col { max-width: 600px; margin: 0 auto; padding: 14px 16px; }
+      [role='listitem'] { background: #fff; border-radius: 12px; margin: 0 0 12px; padding: 16px 18px; box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04); color: var(--muted); }
+      [role='listitem'] p { margin: 0; }
+      .hd { display: grid; grid-template-columns: 44px 1fr; column-gap: 12px; align-items: center; }
+      .hd::before { content: attr(data-i); grid-row: span 2; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font-weight: 600; font-size: 15px; color: #fff; background: var(--av, #7a8f86); }
+      .hd.co::before { border-radius: 10px; }
+      .hd p:first-child span { font-weight: 600; color: var(--ink); font-size: 15px; }
+      .hd p + p span { font-size: 13px; color: var(--muted); }
+      .bd { margin-top: 12px; color: var(--ink); line-height: 1.5; }
+      .media { margin-top: 12px; height: 132px; border-radius: 8px; background: var(--m); }
+      .cta { display: inline-block; margin-top: 12px; padding: 7px 14px; border: 1px solid var(--ink); border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--ink); text-decoration: none; }
+      .act { display: flex; gap: 22px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; font-weight: 500; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="col">
+        <div data-testid="mainFeed" role="list">
+          <div role="listitem" componentkey="update-card-focus2001FeedType_MAIN_FEED_RELEVANCE">
+            <div class="hd" data-i="AM" style="--av: #5b7d9a"><p componentkey="s-1"><span>Alex Morgan</span></p><p componentkey="s-2"><span>Product designer · 3h</span></p></div>
+            <div class="bd"><p componentkey="s-3"><span>Shipped the new onboarding flow today. Three weeks of careful testing, and even more careful copywriting. Thank you, team.</span></p></div>
+            <div class="act"><span>Like</span><span>Comment</span><span>Share</span></div>
+          </div>
+          <div role="listitem" componentkey="update-card-focus2002FeedType_MAIN_FEED_RELEVANCE">
+            <div class="hd co" data-i="A" style="--av: #c4553b"><p componentkey="s-4"><span>Acme Cloud</span></p><p componentkey="s-5"><span>Promoted</span></p></div>
+            <div class="bd"><p componentkey="s-6"><span>Cut your cloud bill in half. Start a free trial today.</span></p></div>
+            <div class="media" style="--m: linear-gradient(120deg, #f1c9a5, #c4553b)"></div>
+            <a class="cta" href="https://acme.example/">Learn more</a>
+          </div>
+          <div role="listitem" componentkey="update-card-focus2003FeedType_MAIN_FEED_RELEVANCE">
+            <div class="hd" data-i="JC" style="--av: #8a6bb0"><p componentkey="s-7"><span>Jamie Chen</span></p><p componentkey="s-8"><span>Engineering manager · 1d</span></p></div>
+            <div class="bd"><p componentkey="s-9"><span>Some news: I have been promoted to engineering manager. Thanks to everyone who helped along the way.</span></p></div>
+            <div class="act"><span>Like</span><span>Comment</span><span>Share</span></div>
+          </div>
+          <div role="listitem" componentkey="update-card-focus2004FeedType_MAIN_FEED_RELEVANCE">
+            <div class="hd co" data-i="N" style="--av: #2f7d6d"><p componentkey="s-10"><span>Nimbus Analytics</span></p><p componentkey="s-11"><span>Promoted</span></p></div>
+            <div class="bd"><p componentkey="s-12"><span>All your dashboards in one place. Book a demo.</span></p></div>
+            <a class="cta" href="https://nimbus.example/">Book a demo</a>
+          </div>
+          <div role="listitem" componentkey="update-card-focus2005FeedType_MAIN_FEED_RELEVANCE">
+            <div class="hd" data-i="SR" style="--av: #b07a3b"><p componentkey="s-13"><span>Sam Rivera</span></p><p componentkey="s-14"><span>Writer · 2d</span></p></div>
+            <div class="bd"><p componentkey="s-15"><span>Reading list for the weekend: three short essays on writing clearly about technical work.</span></p></div>
+            <div class="media" style="--m: linear-gradient(160deg, #dfe7e2, #9fb8ad)"></div>
+            <div class="act"><span>Like</span><span>Comment</span><span>Share</span></div>
+          </div>
+          <div role="listitem" componentkey="update-card-focus2006FeedType_MAIN_FEED_RELEVANCE">
+            <div class="hd" data-i="TB" style="--av: #4f6b5f"><p componentkey="s-16"><span>Taylor Brooks</span></p><p componentkey="s-17"><span>Growth lead · 2d</span></p></div>
+            <div class="bd"><p componentkey="s-18"><span>Giveaway time! Comment below and tag three friends to win a free course.</span></p></div>
+            <div class="act"><span>Like</span><span>Comment</span><span>Share</span></div>
+          </div>
+          <div role="listitem" componentkey="update-card-focus2007FeedType_MAIN_FEED_RELEVANCE">
+            <div class="hd" data-i="RP" style="--av: #9a5b6f"><p componentkey="s-19"><span>Riley Park</span></p><p componentkey="s-20"><span>Researcher · 3d</span></p></div>
+            <div class="bd"><p componentkey="s-21"><span>Our paper on accessible charts is out. The short version: label the lines, not the legend.</span></p></div>
+            <div class="act"><span>Like</span><span>Comment</span><span>Share</span></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

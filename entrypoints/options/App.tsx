@@ -4,16 +4,12 @@ import { bg } from '../../src/bg';
 import { MAX_WORDS, mutedWordStem, parseRules, type RuleError } from '../../src/rules/filters';
 import { experimentalNote, LAUNCH_SITES, optInScriptMatches } from '../../src/sites';
 import {
-  clearOverrides,
   exportBackup,
-  importBackup,
   isSiteEnabled,
   loadOverrides,
   loadSettings,
   MAX_WORD_LEN,
   siteCategories,
-  updateSettings,
-  withSelf,
   type Overrides,
   type Settings,
 } from '../../src/storage/settings';
@@ -424,10 +420,10 @@ function Exceptions(props: { overrides: Overrides; settings: Settings; onChange:
       return { key, shown: vals.filter((v) => v === 'not-ad').length, hidden: vals.filter((v) => v === 'hide').length };
     })
     .filter((r) => r.shown + r.hidden > 0);
-  const clear = (key: string | null) => void clearOverrides(key).then(props.onChange, props.onError);
+  const clear = (key: string | null) => void bg({ type: 'sifter:clearOverrides', key }).then(props.onChange, props.onError);
   // The profile Sifter learned on a site (adapter `self`): posts that mention it stay visible.
   const selves = Object.entries(props.settings.sites).flatMap(([key, s]) => (s.self ? [{ key, id: s.self }] : []));
-  const forget = (key: string) => void updateSettings((s) => withSelf(s, key, null)).then(props.onChange, props.onError);
+  const forget = (key: string) => void bg({ type: 'sifter:setSelf', hostname: key, id: null }).then(props.onChange, props.onError);
   return (
     <section>
       <h2>Your exceptions</h2>
@@ -494,7 +490,7 @@ function Backup(props: { onChange: () => void }) {
       return;
     }
     try {
-      await importBackup(JSON.parse(await file.text()));
+      await bg({ type: 'sifter:importBackup', backup: JSON.parse(await file.text()) });
       setStatus({ ok: true, text: 'Settings restored.' });
       props.onChange();
     } catch (e) {

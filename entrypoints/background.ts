@@ -1,5 +1,6 @@
 import { browser, type Browser } from 'wxt/browser';
 import { defineBackground } from 'wxt/utils/define-background';
+import { authorize, runAdmin } from '../src/bg-requests';
 import { isBgRequest, type BgRequest, type SiteContext, type TabRequest } from '../src/messages';
 import { parseRules, selectorsFor } from '../src/rules/filters';
 import { HOSTNAME_RE, injectTargetMatches, isLaunchHost, LAUNCH_MATCHES, LAUNCH_SITES, optInScriptMatches } from '../src/sites';
@@ -21,9 +22,6 @@ const MENU_ID = 'sifter-hide-this';
 
 /** Fingerprints are cyrb53(...).toString(36): base-36, at most 11 digits in practice. */
 const FINGERPRINT_RE = /^[0-9a-z]{1,16}$/;
-
-/** Content scripts may only read their own site's context, and record overrides and the learned profile id for it. */
-const CONTENT_SCRIPT_REQUESTS = new Set<BgRequest['type']>(['sifter:getContext', 'sifter:setOverride', 'sifter:setSelf']);
 
 export default defineBackground(() => {
   // Hard rule 4: content scripts must never be able to read stored API keys.
@@ -81,7 +79,7 @@ export default defineBackground(() => {
 
   browser.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
     if (!isBgRequest(msg)) return false;
-    const checked = authorize(msg, sender);
+    const checked = authorize(msg, sender, { id: browser.runtime.id, baseUrl: browser.runtime.getURL('/') });
     if (!checked) {
       sendResponse({ error: 'not allowed' });
       return false;
@@ -90,24 +88,6 @@ export default defineBackground(() => {
     return true; // async response
   });
 });
-
-/**
- * Extension pages may send anything. A content script runs inside a site's page,
- * which could be compromised, so it may only ask about its own site: the hostname
- * comes from the sender's URL, never from the message.
- */
-function authorize(msg: BgRequest, sender: Browser.runtime.MessageSender): BgRequest | null {
-  if (sender.id !== browser.runtime.id) return null;
-  if (sender.url?.startsWith(browser.runtime.getURL('/'))) return msg;
-  if (!CONTENT_SCRIPT_REQUESTS.has(msg.type) || !sender.url) return null;
-  let hostname: string;
-  try {
-    hostname = new URL(sender.url).hostname;
-  } catch {
-    return null;
-  }
-  return { ...msg, hostname } as BgRequest;
-}
 
 async function broadcastRefresh(): Promise<void> {
   const tabs = await browser.tabs.query({});
@@ -192,6 +172,9 @@ async function handle(msg: BgRequest): Promise<unknown> {
       return updateSettings((s) => ({ ...s, hideMode: msg.mode }));
     case 'sifter:setFilters':
       return updateSettings((s) => ({ ...s, mutedWords: msg.mutedWords, rulesText: msg.rulesText }));
+    case 'sifter:importBackup':
+    case 'sifter:clearOverrides':
+      return runAdmin(msg);
   }
 }
 

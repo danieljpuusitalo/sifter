@@ -35,7 +35,10 @@ export type BgRequest =
   /** Options page: the global category toggles, the hide-mode radio, and the filters form. */
   | { type: 'sifter:setCategory'; category: BlockCategory; value: boolean }
   | { type: 'sifter:setHideMode'; mode: HideMode }
-  | { type: 'sifter:setFilters'; mutedWords: string[]; rulesText: string };
+  | { type: 'sifter:setFilters'; mutedWords: string[]; rulesText: string }
+  /** Options page: restore a backup file's contents (validated by the worker), and forget exceptions for one site or all (null). */
+  | { type: 'sifter:importBackup'; backup: unknown }
+  | { type: 'sifter:clearOverrides'; key: string | null };
 
 /** Popup -> content script in the active tab. */
 export type TabRequest =

@@ -131,6 +131,17 @@ describe('detectMarker, structural and link markers', () => {
     ).toBeNull());
   it('hits an exact aria-label', () =>
     expect(detectMarker(unit('<div><span aria-label="Sponsored"></span>text</div>'), null, 'https://x.example/')?.kind).toBe('aria'));
+  it('returns the aria-label element as node, so the scanner can check it is rendered', () => {
+    const u = unit('<div><span aria-label="Sponsored"></span>text</div>');
+    expect(detectMarker(u, null, 'https://x.example/')?.node).toBe(u.querySelector('span'));
+  });
+  it('an aria-label "Ad" on a photo is not a marker on an adapter site (hard rule 6)', () => {
+    const x = adapterFor('x.com') as Adapter;
+    const tweet = '<article data-testid="tweet"><div data-testid="tweetText"><span>New sign.</span></div><div data-testid="tweetPhoto" aria-label="Ad"><img alt="Ad"></div></article>';
+    expect(detectMarker(unit(tweet), x, 'https://x.com/')).toBeNull();
+    // positive control: the same markup on a generic opt-in site is a hit
+    expect(detectMarker(unit(tweet), null, 'https://x.example/')?.kind).toBe('aria');
+  });
   it('ignores a non-marker aria-label', () =>
     expect(detectMarker(unit('<div><span aria-label="Why this ad?"></span>text</div>'), null, 'https://x.example/')).toBeNull());
   it('finds a standalone label on a generic site', () =>

@@ -68,6 +68,17 @@
               </div>
             </div>
             <div data-testid="cellInnerDiv" style="position: relative">
+              <!-- Organic tweet whose photo alt text is "Ad": X renders alt text as the
+                   photo container's aria-label. Must not hide. -->
+              <div data-gold="none">
+                <article data-testid="tweet" role="article" tabindex="0">
+                  <div data-testid="User-Name"><a href="/petra_h"><span>Petra Holm</span></a><span>@petra_h · 3d</span></div>
+                  <div data-testid="tweetText"><span>New sign for the market stall.</span></div>
+                  <div data-testid="tweetPhoto" aria-label="Ad"><img alt="Ad" src="data:," /></div>
+                </article>
+              </div>
+            </div>
+            <div data-testid="cellInnerDiv" style="position: relative">
               <div data-gold="sponsored">
                 <div data-testid="placementTracking">
                   <article data-testid="tweet" role="article" tabindex="0">

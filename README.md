@@ -72,7 +72,7 @@ Works in Chrome 116 or newer and in other Chromium browsers such as Edge and Bra
 | X | yes | "Who to follow" | yes |
 | Instagram | yes | yes | sponsored: yes · suggested: yes (English; NL/DE/FR unchecked) |
 | Facebook **(experimental)** | partial | partial | right-rail ads and the Stories bar: yes · "Follow" suggestions: yes · some "Suggested for you" posts and feed ads still get through (English only) |
-| Threads | yes | – | runs without hiding organic posts; no ad has shown up yet to confirm the ad path |
+| Threads **(experimental)** | yes | – | runs without hiding organic posts; no ad has shown up yet to confirm the ad path |
 
 Each site's rules are written and checked for its main feed, and for Google's
 results page. Other parts of the same site are not checked and may not be covered:
@@ -90,7 +90,8 @@ field in `src/adapters/` records exactly what was checked and when.
 **Experimental** means Sifter runs there and hides what it can, but coverage is
 known to be partial. Facebook changes its markup often, renders its labels in ways
 that are hard to read reliably, and serves different post shapes to different
-accounts, so some sponsored and suggested posts get through. The popup and the
+accounts, so some sponsored and suggested posts get through. Threads is tagged
+because no ad has shown up there yet, so its ad path is unconfirmed. The popup and the
 settings page show the same tag. It is on by default like every other site, and
 turning it off is one switch.
 

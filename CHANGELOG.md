@@ -4,6 +4,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-18
+
 ### Changed
 
 - The store summary no longer lists the supported sites; the Chrome Web Store

@@ -4,6 +4,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-18
+
 ### Added
 
 - The options page shows Sifter's version and a "Report a site that broke" link.

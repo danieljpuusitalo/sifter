@@ -1,4 +1,3 @@
-import { Fragment } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { browser } from 'wxt/browser';
 import { adapterFor } from '../../src/adapters/index';
@@ -248,8 +247,7 @@ function Sites(props: { settings: Settings; onChange: () => void; onError: (e: u
               const own = settings.sites[key]?.categories ?? {};
               const eff = siteCategories(settings, key);
               return (
-                <Fragment key={key}>
-                <tr class={on ? '' : 'off'}>
+                <tr key={key} class={on ? '' : 'off'}>
                   <th scope="row">
                     {nameOf(key)}
                     {experimentalNote(key) && (
@@ -286,19 +284,12 @@ function Sites(props: { settings: Settings; onChange: () => void; onError: (e: u
                     </td>
                   ))}
                 </tr>
-                {adapterFor(key)?.self && (
-                  <tr class="note">
-                    <td colSpan={2 + CATEGORIES.length}>
-                      <span class="muted small">{SELF_DISCLOSURE}</span>
-                    </td>
-                  </tr>
-                )}
-                </Fragment>
               );
             })}
           </tbody>
         </table>
       </div>
+      {keys.some((key) => adapterFor(key)?.self) && <p class="muted small self-note">{SELF_DISCLOSURE}</p>}
       <p class="muted small">
         To add another site, open it and choose {'"Hide ads on <site>"'} in the Sifter popup. Sites you add use general
         detection: they look for elements whose whole text is "Sponsored", "Ad" or similar.

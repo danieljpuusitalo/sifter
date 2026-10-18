@@ -300,6 +300,10 @@ test('sifter:setSelf stores a well-formed profile id, rejects anything else, and
     const stored = await sw!.evaluate(async () => chrome.storage.local.get('settings'));
     return (stored as { settings?: { sites?: Record<string, { self?: string }> } }).settings?.sites?.['linkedin.com']?.self;
   };
+  // Kept only while suggested is on: with it off the id is ignored (answered ok, nothing stored).
+  await expect(send({ type: 'sifter:setSelf', hostname: 'www.linkedin.com', id: 'test-viewer' })).resolves.toEqual({ ok: true });
+  expect(await self(), 'suggested is off').toBeUndefined();
+  await patchSettings(context, { categories: { sponsored: true, suggested: true, custom: true } });
   await expect(send({ type: 'sifter:setSelf', hostname: 'www.linkedin.com', id: 'test-viewer' })).resolves.toEqual({ ok: true });
   expect(await self()).toBe('test-viewer');
   await expect(send({ type: 'sifter:setSelf', hostname: 'www.linkedin.com', id: 'a"]{}' })).resolves.toEqual({ error: 'invalid id' });

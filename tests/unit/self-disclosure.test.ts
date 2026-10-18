@@ -30,9 +30,10 @@ describe('options page: the profile-link disclosure', () => {
     expect(toggle.checked, 'positive control: suggested is off, so this is shown before turning it on').toBe(false);
     expect(document.querySelector('ul.cards li:nth-child(2)')?.textContent).toContain(SELF_DISCLOSURE);
     expect(document.querySelector('ul.cards li:nth-child(1)')?.textContent).not.toContain(SELF_DISCLOSURE);
-    const notes = [...document.querySelectorAll('table.sites tr.note')];
+    // under the per-site table, where LinkedIn's Suggested select is
+    const notes = [...document.querySelectorAll('.self-note')];
     expect(notes).toHaveLength(1);
-    expect(notes[0]!.previousElementSibling?.textContent).toContain('LinkedIn');
     expect(notes[0]!.textContent).toBe(SELF_DISCLOSURE);
+    expect(document.querySelector('table.sites')!.compareDocumentPosition(notes[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

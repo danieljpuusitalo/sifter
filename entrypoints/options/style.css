@@ -1,7 +1,9 @@
 .options { max-width: 760px; margin: 0 auto; padding: 40px 16px 64px; display: flex; flex-direction: column; gap: 36px; }
 .options h1 { font-size: 22px; display: flex; align-items: center; gap: 10px; }
 .lede { margin-top: 6px; color: var(--muted); }
+.options > *, section { min-width: 0; }
 section { display: flex; flex-direction: column; gap: 12px; }
+.muted, .error, .lede { overflow-wrap: anywhere; }
 section h2 { font-size: 16px; }
 .small { font-size: 12px; }
 .badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--muted); vertical-align: 1px; }
@@ -34,10 +36,12 @@ select {
 select:disabled { opacity: 0.5; }
 @media (max-width: 480px) {
   .sites th, .sites td { padding: 6px 5px; }
-  .sites select { font-size: 11px; padding: 2px; max-width: 86px; }
+  table.sites { table-layout: fixed; }
+  .sites tbody th { overflow-wrap: anywhere; }
+  .sites select { font-size: 11px; padding: 2px; width: 100%; min-width: 0; }
 }
-.filters { display: grid; gap: 16px; }
-.field { display: grid; gap: 4px; }
+.filters { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.field { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; min-width: 0; }
 textarea {
   font: inherit;
   font-size: 13px;
@@ -48,14 +52,16 @@ textarea {
   padding: 8px 10px;
   resize: vertical;
   width: 100%;
+  max-width: 100%;
   margin-top: 4px;
 }
 textarea.mono, code { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; }
 code { font-size: 12px; background: color-mix(in srgb, var(--line) 60%, transparent); padding: 0 4px; border-radius: 4px; }
-.errors { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.errors { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+.errors li { overflow-wrap: anywhere; min-width: 0; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .exceptions { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.exceptions li { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.exceptions li { display: flex; justify-content: space-between; align-items: center; gap: 12px; overflow-wrap: anywhere; }
 label.button {
   border: 1px solid var(--line);
   border-radius: 6px;

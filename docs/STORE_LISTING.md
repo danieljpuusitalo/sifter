@@ -98,6 +98,8 @@ needs network for Google Fonts.
 - `screenshot-2-popup.png` (1280x800): the popup over that feed, with its real counts
 - `screenshot-3-options.png` (1280x800): settings: what to block, how hidden posts look, muted words
 - `promo-small-440x280.png`: small promo tile
+- `promo-marquee-1400x560.png`: marquee promo tile, with the shot-1 "with Sifter" feed
+- `store-icon-128x128.png`: store icon, a copy of `public/icon/128.png` (96 px of artwork in 16 px of padding, as the store asks)
 
 Privacy policy URL: https://danieljpuusitalo.github.io/sifter/privacy/ (built by
 `.github/workflows/pages.yml`; GitHub Pages only serves once the repo is public or

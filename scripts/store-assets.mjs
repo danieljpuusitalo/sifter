@@ -6,11 +6,13 @@
 //   screenshot-2-popup.png    1280x800  the popup over that feed, real counts
 //   screenshot-3-options.png  1280x800  the settings page, with example muted words
 //   promo-small-440x280.png   440x280   small promo tile
+//   promo-marquee-1400x560.png 1400x560 marquee promo tile
+//   store-icon-128x128.png    128x128   store icon (a copy of public/icon/128.png)
 //
 // The feed is served at the LinkedIn URL so the real LinkedIn adapter runs on it;
 // it is dressed as a neutral feed, not as LinkedIn. Captures are taken at 2x and
 // placed at 1x, so text stays sharp. Fonts come from Google Fonts at render time.
-import { mkdirSync, readFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { chromium } from '@playwright/test';
 
@@ -258,6 +260,35 @@ try {
     </div>`,
     `.tile { position:absolute; inset:0; background: ${GRAIN}, linear-gradient(150deg, #1f6f5c 0%, ${C.ink} 100%); }`,
   );
+
+  // Marquee promo tile: the same green, with the real "with Sifter" feed from shot 1
+  // running off the bottom edge.
+  await stage(
+    plain,
+    'promo-marquee-1400x560.png',
+    1400,
+    560,
+    `
+    <div class="tile"></div>
+    <div style="position:absolute;left:88px;top:112px;display:flex;align-items:center;gap:20px">
+      <div style="width:76px;height:76px;border-radius:17px;box-shadow:0 0 0 2px rgba(255,255,255,0.15)">${icon(76)}</div>
+      <div style="font-family:'Instrument Serif',serif;font-size:92px;line-height:1;color:#fff;letter-spacing:-1px">Sifter</div>
+    </div>
+    <div style="position:absolute;left:88px;top:236px;width:600px;font-family:'Instrument Serif',serif;font-size:46px;line-height:1.12;color:#fff">
+      Hides the sponsored posts<br><em style="color:${C.amber}">your ad blocker misses.</em>
+    </div>
+    <div style="position:absolute;left:88px;top:390px;width:600px;font-size:18px;line-height:1.5;color:rgba(232,239,233,0.78)">LinkedIn · Reddit · Google · X · Instagram · Facebook · Threads</div>
+    <div class="panel" style="left:${1400 - 88 - PW}px;top:${560 - PH + 4}px;width:${PW}px;height:${PH}px;border-radius:16px 16px 0 0;
+      box-shadow:0 0 0 1px rgba(255,255,255,0.12), 0 30px 80px -10px rgba(0,0,0,0.45)">
+      <img src="${png(after.shot)}" style="width:${PW}px;height:${PH}px">
+    </div>`,
+    `.tile { position:absolute; inset:0; background: ${GRAIN}, radial-gradient(90% 120% at 80% 0%, #2a7a66 0%, #1f6f5c 35%, ${C.ink} 100%); }`,
+  );
+
+  // Store icon: the 128 px manifest icon is already drawn to the store's spec (96 px of
+  // artwork in 16 px of transparent padding, scripts/render-icons.mjs).
+  copyFileSync(join(ROOT, 'public', 'icon', '128.png'), join(OUT, 'store-icon-128x128.png'));
+  console.log('wrote docs/store/store-icon-128x128.png');
 } finally {
   await context.close();
   await plain.close();

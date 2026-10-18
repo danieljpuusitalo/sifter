@@ -262,6 +262,19 @@ describe('Hider tag', () => {
     expect(h.marksContents(true), 'applied at once: never a tag, nothing to mark').toBe(false);
   });
 
+  it('prune puts the unit stylesheet back when the page reassigns adoptedStyleSheets', () => {
+    const { h } = lateHider();
+    h.hide(unit(), 'sponsored');
+    const mine = document.adoptedStyleSheets.find((sh) => Array.from(sh.cssRules).some((r) => r.cssText.includes(TAG_CLASS)));
+    expect(mine, 'positive control: the unit sheet is adopted after a hide').toBeDefined();
+    document.adoptedStyleSheets = [];
+    expect(document.adoptedStyleSheets).toHaveLength(0);
+    h.prune();
+    expect(document.adoptedStyleSheets).toEqual([mine]);
+    h.prune();
+    expect(document.adoptedStyleSheets, 'adopted once, not stacked').toEqual([mine]);
+  });
+
   it('the tag CSS places the placeholder at zero height and blurs the content, changing no layout', () => {
     const { h } = lateHider();
     h.hide(unit(), 'sponsored');

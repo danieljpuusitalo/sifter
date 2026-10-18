@@ -5,9 +5,10 @@ import { experimentalNote, LAUNCH_SITES } from '../../src/sites';
 // The tag has to say the same thing everywhere: the popup and options read
 // LAUNCH_SITES, the README is prose. Pin both so one cannot drift without the other.
 describe('experimental sites', () => {
-  it('Facebook is experimental, every other launch site is not', () => {
+  it('Facebook and Threads are experimental, every other launch site is not', () => {
     expect(experimentalNote('facebook.com')).toMatch(/get through/);
-    for (const s of LAUNCH_SITES.filter((s) => s.key !== 'facebook.com')) {
+    expect(experimentalNote('threads.com')).toMatch(/no ad has been seen/i);
+    for (const s of LAUNCH_SITES.filter((s) => s.key !== 'facebook.com' && s.key !== 'threads.com')) {
       expect(experimentalNote(s.key), s.key).toBeNull();
     }
     expect(experimentalNote('example.com')).toBeNull();

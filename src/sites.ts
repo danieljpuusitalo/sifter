@@ -105,7 +105,11 @@ export const LAUNCH_SITES: { key: string; name: string; experimental?: string }[
     name: 'Facebook',
     experimental: 'Facebook changes its markup often and hides its labels; some sponsored and suggested posts get through.',
   },
-  { key: 'threads.com', name: 'Threads' },
+  {
+    key: 'threads.com',
+    name: 'Threads',
+    experimental: 'No ad has been seen on Threads yet, so hiding there is unconfirmed; some sponsored posts may get through.',
+  },
 ];
 
 /** The experimental note for a site key, or null when the site is fully supported (or not a launch site). */

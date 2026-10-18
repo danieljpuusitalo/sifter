@@ -1,6 +1,6 @@
 import { browser, type Browser } from 'wxt/browser';
 import { defineBackground } from 'wxt/utils/define-background';
-import { authorize, runAdmin } from '../src/bg-requests';
+import { authorize, runAdmin, storeSelf } from '../src/bg-requests';
 import { isBgRequest, type BgRequest, type SiteContext, type TabRequest } from '../src/messages';
 import { parseRules, selectorsFor } from '../src/rules/filters';
 import { HOSTNAME_RE, injectTargetMatches, isLaunchHost, LAUNCH_MATCHES, LAUNCH_SITES, optInScriptMatches } from '../src/sites';
@@ -13,7 +13,6 @@ import {
   siteOffRules,
   siteKey,
   updateSettings,
-  withSelf,
 } from '../src/storage/settings';
 import { SELF_ID_RE } from '../src/self';
 
@@ -116,10 +115,7 @@ async function handle(msg: BgRequest): Promise<unknown> {
       return { ok: true };
     case 'sifter:setSelf': {
       if (msg.id !== null && (typeof msg.id !== 'string' || !SELF_ID_RE.test(msg.id))) return { error: 'invalid id' };
-      const key = siteKey(msg.hostname);
-      // Only a change writes: the page re-learns on every visit, and each write re-decides open tabs.
-      if ((await loadSettings()).sites[key]?.self === (msg.id ?? undefined)) return { ok: true };
-      await updateSettings((s) => withSelf(s, key, msg.id));
+      await storeSelf(msg.hostname, msg.id);
       return { ok: true };
     }
     case 'sifter:setSiteEnabled': {

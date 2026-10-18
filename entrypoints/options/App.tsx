@@ -1,6 +1,9 @@
+import { Fragment } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { browser } from 'wxt/browser';
+import { adapterFor } from '../../src/adapters/index';
 import { bg } from '../../src/bg';
+import { SELF_DISCLOSURE } from '../../src/self';
 import { MAX_WORDS, mutedWordStem, parseRules, type RuleError } from '../../src/rules/filters';
 import { experimentalNote, LAUNCH_SITES, optInScriptMatches } from '../../src/sites';
 import {
@@ -146,6 +149,7 @@ export function App() {
                 <span>
                   <strong>{c.label}</strong>
                   <span class="muted small block">{c.hint}</span>
+                  {c.cat === 'suggested' && <span class="muted small block">{SELF_DISCLOSURE}</span>}
                 </span>
               </label>
             </li>
@@ -244,7 +248,8 @@ function Sites(props: { settings: Settings; onChange: () => void; onError: (e: u
               const own = settings.sites[key]?.categories ?? {};
               const eff = siteCategories(settings, key);
               return (
-                <tr key={key} class={on ? '' : 'off'}>
+                <Fragment key={key}>
+                <tr class={on ? '' : 'off'}>
                   <th scope="row">
                     {nameOf(key)}
                     {experimentalNote(key) && (
@@ -281,6 +286,14 @@ function Sites(props: { settings: Settings; onChange: () => void; onError: (e: u
                     </td>
                   ))}
                 </tr>
+                {adapterFor(key)?.self && (
+                  <tr class="note">
+                    <td colSpan={2 + CATEGORIES.length}>
+                      <span class="muted small">{SELF_DISCLOSURE}</span>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               );
             })}
           </tbody>

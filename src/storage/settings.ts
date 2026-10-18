@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { browser } from 'wxt/browser';
 import { MAX_WORDS } from '../rules/filters';
 import { SELF_ID_RE } from '../self';
-import { HOSTNAME_RE, siteKey } from '../sites';
+import { HOSTNAME_RE, LAUNCH_SITES, siteKey } from '../sites';
 import type { CategoryToggles } from '../types';
 
 // Everything persists to browser.storage.local (hard rule 11: the service worker
@@ -32,8 +32,9 @@ export const SiteSettingSchema = z.object({
   rules: z.record(z.string().max(32), z.literal(false)).optional().catch(undefined),
   /**
    * The viewer's profile id, learned from the page (adapter `self`): posts that link
-   * to it are never hidden as suggested. Local only; "Forget" in the options page
-   * drops it, and it is learned again on the next visit.
+   * to it are never hidden as suggested. Kept only while "suggested" is on for the
+   * site (`pruneSelf` drops it on every save and load when it is off, or the site is).
+   * Local only, never sent anywhere; "Forget" in the options page drops it too.
    */
   self: z.string().regex(SELF_ID_RE).optional().catch(undefined),
 });
@@ -156,7 +157,7 @@ export function defaultSettings(): Settings {
  */
 export function parseSettings(raw: unknown): Settings {
   const r = SettingsSchema.safeParse(raw && typeof raw === 'object' ? raw : {});
-  return r.success ? r.data : defaultSettings();
+  return pruneSelf(r.success ? r.data : defaultSettings());
 }
 
 export function parseOverrides(raw: unknown): Overrides {
@@ -173,6 +174,27 @@ export function isSiteEnabled(settings: Settings, key: string, isLaunchSite: boo
 /** The categories in force on one site: the global toggles with that site's overrides on top. */
 export function siteCategories(settings: Settings, key: string): CategoryToggles {
   return { ...settings.categories, ...(settings.sites[key]?.categories ?? {}) };
+}
+
+/** Whether "suggested" is in force on one site: the site is on, and its toggle (its own override, else the global one). */
+export function suggestedOn(settings: Settings, key: string): boolean {
+  const launch = LAUNCH_SITES.some((s) => s.key === key);
+  return isSiteEnabled(settings, key, launch) && siteCategories(settings, key).suggested;
+}
+
+/**
+ * Drop each site's learned profile id unless suggested is on there: the id exists only
+ * to keep posts that mention the viewer from being hidden as suggested, so it is not
+ * kept without that. Applied on every save and load, backup import included.
+ */
+export function pruneSelf(settings: Settings): Settings {
+  let sites = settings.sites;
+  for (const [key, site] of Object.entries(settings.sites)) {
+    if (site.self === undefined || suggestedOn(settings, key)) continue;
+    const { self: _dropped, ...rest } = site;
+    sites = { ...sites, [key]: rest };
+  }
+  return sites === settings.sites ? settings : { ...settings, sites };
 }
 
 /** Set or forget the viewer's profile id on one site. Leaves the site's other settings alone. */
@@ -210,7 +232,7 @@ export async function loadSettings(): Promise<Settings> {
 }
 
 export async function saveSettings(s: Settings): Promise<void> {
-  await browser.storage.local.set({ [KEYS.settings]: SettingsSchema.parse(s) });
+  await browser.storage.local.set({ [KEYS.settings]: pruneSelf(SettingsSchema.parse(s)) });
 }
 
 export function updateSettings(fn: (s: Settings) => Settings): Promise<Settings> {
@@ -246,7 +268,7 @@ export function clearOverrides(key: string | null): Promise<void> {
 export const BackupSchema = z.object({
   app: z.literal('sifter'),
   version: z.literal(1),
-  settings: SettingsSchema,
+  settings: SettingsSchema.transform(pruneSelf),
   overrides: OverridesSchema,
 });
 export type Backup = z.infer<typeof BackupSchema>;

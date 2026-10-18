@@ -1,5 +1,6 @@
 import type { BgRequest } from './messages';
-import { BackupSchema, clearOverrides, importBackup } from './storage/settings';
+import { siteKey } from './sites';
+import { BackupSchema, clearOverrides, importBackup, loadSettings, suggestedOn, updateSettings, withSelf } from './storage/settings';
 
 // The service worker's request gate and the extension-page-only writes. Kept out
 // of entrypoints/background.ts so they can be tested without a service worker.
@@ -28,6 +29,19 @@ export function authorize(msg: BgRequest, sender: Sender, self: { id: string; ba
     return null;
   }
   return { ...msg, hostname } as BgRequest;
+}
+
+/**
+ * Record the viewer's profile id for a site, or forget it (null). While suggested is
+ * off there, a learned id is ignored: nothing needs it, so it is never stored.
+ */
+export async function storeSelf(hostname: string, id: string | null): Promise<void> {
+  const key = siteKey(hostname);
+  const stored = await loadSettings();
+  if (id !== null && !suggestedOn(stored, key)) return;
+  // Only a change writes: the page re-learns on every visit, and each write re-decides open tabs.
+  if (stored.sites[key]?.self === (id ?? undefined)) return;
+  await updateSettings((s) => withSelf(s, key, id));
 }
 
 export type AdminRequest = Extract<BgRequest, { type: 'sifter:importBackup' | 'sifter:clearOverrides' }>;

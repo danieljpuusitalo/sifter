@@ -118,20 +118,34 @@ export default defineContentScript({
     // Learn the viewer's profile id (adapter `self`) once the page chrome is in, off
     // the scroll path: one query of the rail, a few tries, then stop. A new id (another
     // account) replaces the stored one; the settings broadcast then re-decides the page.
+    // Only while suggested is on here: it is the one thing the id is for. If it is turned
+    // on later, the broadcast starts the same few tries (no polling).
     const adapter = adapterFor(hostname);
     const self = adapter?.self;
-    if (adapter && self) {
+    let current = context;
+    const learnWanted = (ctx: SiteContext) => ctx.enabled && ctx.categories.suggested;
+    let learning = false;
+    const startLearning = () => {
+      if (!adapter || !self || learning || !learnWanted(current)) return;
+      learning = true;
       const tryLearn = (delays: number[]) => {
+        if (!learnWanted(current)) {
+          learning = false;
+          return;
+        }
         const id = learnsOn(adapter, location.pathname) ? learnSelf(document, self) : null;
         if (id) {
-          if (id !== context.self) void send({ type: 'sifter:setSelf', hostname, id }).catch(() => undefined);
+          learning = false;
+          if (id !== current.self) void send({ type: 'sifter:setSelf', hostname, id }).catch(() => undefined);
           return;
         }
         const [next, ...rest] = delays;
         if (next !== undefined) setTimeout(() => tryLearn(rest), next);
+        else learning = false;
       };
       setTimeout(() => tryLearn(SELF_RETRY_DELAYS_MS), SELF_FIRST_TRY_MS);
-    }
+    };
+    startLearning();
 
     let resumeTimer: ReturnType<typeof setTimeout> | undefined;
     // A context plus whether it is paused right now: the same pausedUntil means
@@ -145,7 +159,9 @@ export default defineContentScript({
       const key = keyOf(ctx);
       if (key !== applied) {
         applied = key;
+        current = ctx;
         live.applyContext(ctx);
+        startLearning();
       }
       // Answer with the re-decided page, not a half-done one; but never hang the popup.
       await Promise.race([live.settled(), new Promise((r) => setTimeout(r, SETTLE_CAP_MS))]);

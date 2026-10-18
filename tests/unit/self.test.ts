@@ -194,6 +194,8 @@ describe('settings: the learned id', () => {
     const s = parseSettings({ sites: { 'linkedin.com': { enabled: false, self: 'a"]{}' } } });
     expect(s.sites['linkedin.com']?.self).toBeUndefined();
     expect(s.sites['linkedin.com']?.enabled).toBe(false);
-    expect(parseSettings({ sites: { 'linkedin.com': { self: ME } } }).sites['linkedin.com']?.self).toBe(ME);
+    // kept only while suggested is on (src/storage/settings.ts pruneSelf)
+    const on = { sponsored: true, suggested: true, custom: true };
+    expect(parseSettings({ categories: on, sites: { 'linkedin.com': { self: ME } } }).sites['linkedin.com']?.self).toBe(ME);
   });
 });

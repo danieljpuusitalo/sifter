@@ -109,6 +109,46 @@ describe('element rules', () => {
     expect(errors.map((e) => e.line)).toEqual([1, 2]);
     expect(errors[0]?.reason).toMatch(/most of the page/);
   });
+  it('rejects a subject that names nothing particular (page-wide pseudo-classes and universal attributes)', () => {
+    const bad = [
+      ':root',
+      '[class]',
+      'div[class]',
+      'div[role]',
+      '[aria-label]',
+      'a[href]',
+      'div:not(.x)',
+      ':is(body)',
+      ':where(*)',
+      ':has(.x)',
+      'div:has(div)',
+      '.feed :not(.x)',
+      '*:has(.x)',
+      'html.dark',
+      '.x, :root',
+    ];
+    for (const b of bad) expect(tooBroad(b), b).toBe(true);
+    // positive controls: the same shapes with something particular in the subject
+    const ok = [
+      'aside.sponsored',
+      '.ad-slot',
+      'div[data-ad]',
+      'a[href*="doubleclick"]',
+      'div[role="banner"]',
+      '[aria-label^="Ad"]',
+      '#ad',
+      'div.x:not(.y)',
+      'div:has(> span.sponsored)',
+      '.feed div',
+      'body .promo',
+      'div[data-a="]"]',
+    ];
+    for (const o of ok) expect(tooBroad(o), o).toBe(false);
+    const { rules, errors } = parseRules('##:root\n##[class]\n##.fine', validCss);
+    expect(rules).toEqual([{ site: '', selector: '.fine' }]);
+    expect(errors.map((e) => e.line)).toEqual([1, 2]);
+    expect(errors[0]?.reason).toMatch(/no class, id or specific attribute/);
+  });
   it('caps the number of rules', () => {
     const text = Array.from({ length: MAX_RULES + 5 }, (_, i) => `##.r${i}`).join('\n');
     const { rules, errors } = parseRules(text, validCss);
@@ -260,6 +300,12 @@ describe('scanner: blocks, custom rules, context menu', () => {
     expect(hidden('#promo-box')).toBe(true);
     expect(hidden('body')).toBe(false);
     expect(document.querySelectorAll(`.${HIDDEN_CLASS}, [data-sifter-placeholder]`).length).toBeLessThan(4);
+  });
+  it('a stored page-wide subject (:root, [class], div:not(.x)) is skipped by the scanner too', () => {
+    setup('x.com', xPage, { customSelectors: [':root', '[class]', 'div:not(.zzz)', '#promo-box'] });
+    expect(hidden('#promo-box')).toBe(true); // positive control: the scoped rule still hides
+    expect(document.documentElement.classList.contains(HIDDEN_CLASS)).toBe(false);
+    expect(document.querySelectorAll(`.${HIDDEN_CLASS}`).length).toBe(1);
   });
   it('muted words hide the post as custom, and the placeholder says which word', () => {
     setup('x.com', xPage, { mutedWords: ['plain'] });

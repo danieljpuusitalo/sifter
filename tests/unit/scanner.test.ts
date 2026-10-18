@@ -371,6 +371,50 @@ describe('Scanner', () => {
     }
   });
 
+  it('a slice that throws outside decide/apply resets the scanner: no reschedule, and the next mutation still scans', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Throws once, in the collect phase (outside decideSafely/applySafely).
+    const prune = vi.spyOn(Hider.prototype, 'prune').mockImplementationOnce(() => {
+      throw new Error('boom');
+    });
+    vi.useFakeTimers();
+    try {
+      document.head.innerHTML = `<style>${style}</style>`;
+      document.body.innerHTML = body;
+      const scanner = new Scanner({
+        doc: document,
+        hostname: 'www.linkedin.com',
+        baseUrl: 'https://www.linkedin.com/',
+        adapter: adapterFor('www.linkedin.com'),
+        context: ctx(),
+        persistOverride: () => {},
+      });
+      const byKey = (k: string) => document.querySelector(`[componentkey^="update-card-focus${k}"]`) as HTMLElement;
+      scanner.start();
+      await vi.advanceTimersByTimeAsync(300);
+      // The throw happened, was logged once without page content, and nothing was rescheduled.
+      expect(prune).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toBe('[sifter] scan slice failed');
+      expect(byKey('1004').classList.contains(HIDDEN_CLASS)).toBe(false);
+
+      const feed = document.querySelector('[data-testid="mainFeed"]') as HTMLElement;
+      const extra = document.createElement('div');
+      extra.innerHTML =
+        '<div role="listitem" componentkey="update-card-focus2002xFeedType_MAIN_FEED_RELEVANCE" id="late"><div><p componentkey="z1"><span>Late Co</span></p><p componentkey="z2"><span>Promoted</span></p></div><p componentkey="z3"><span>New ad body.</span></p></div>';
+      feed.append(extra);
+      await vi.advanceTimersByTimeAsync(300);
+      // With `running` stuck true this never hides (the bug this fixes).
+      expect(document.getElementById('late')?.classList.contains(HIDDEN_CLASS)).toBe(true);
+      expect(byKey('1004').classList.contains(HIDDEN_CLASS)).toBe(true);
+      scanner.stop();
+    } finally {
+      vi.useRealTimers();
+      prune.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
   it('noUnitsMatched: false when units match (positive control); true when unitSelector finds none in a fat feed root', () => {
     const { scanner } = setup();
     expect(scanner.state().noUnitsMatched).toBe(false); // positive control: real units do match

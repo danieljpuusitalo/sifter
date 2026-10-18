@@ -894,8 +894,24 @@ export class Scanner {
    * one pass (DOM writes only). Interleaving reads and writes would make each read
    * after a hide lay the page out again. The decide loop stops *before* the unit
    * that would overrun, judged by this slice's average cost per unit.
+   *
+   * A throw outside `decideSafely`/`applySafely` (collect, prune) must not leave
+   * `running` stuck true, or `scanNow` never starts another slice. It resets the
+   * flags and does not reschedule, so a throw cannot loop; the next mutation or
+   * `scanNow` starts a fresh slice.
    */
   private runSlice(budget: number): void {
+    try {
+      this.runSliceBody(budget);
+    } catch (e) {
+      console.warn('[sifter] scan slice failed', e);
+      this.running = false;
+      this.releasing = false;
+      this.settle();
+    }
+  }
+
+  private runSliceBody(budget: number): void {
     if (!this.active) {
       this.dropQueue();
       this.running = false;

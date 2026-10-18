@@ -28,13 +28,19 @@ English
 
 ## Description
 
+**No lists of names anywhere in the listing.** The resubmitted 1.3.1 was rejected
+instantly (automated, Yellow Argon again) for the old first bullet, "LinkedIn, Reddit,
+X and Instagram, plus Facebook (...) and Threads (...)", even with the context. The
+supported sites are on the homepage and in the popup instead. The three label words
+and "Google Hotels, Flights or Maps" came out too, as the same shape.
+
 Ad blockers stop ads served by ad networks. They can't stop the ones a site serves
-itself, as posts in your feed. Those carry the site's own label ("Sponsored",
-"Promoted", "Ad"), and that label is what Sifter reads.
+itself, as posts in your feed. Those carry the site's own "Sponsored" label, and that
+label is what Sifter reads.
 
 WHAT IT HIDES
-• Sponsored posts on LinkedIn, Reddit, X and Instagram, plus Facebook (experimental: partial coverage) and Threads (experimental: no ad seen live yet)
-• Sponsored results and shopping ads on Google Search results pages (not Google Hotels, Flights or Maps)
+• Sponsored posts in the social feeds Sifter supports out of the box. The popup shows which, and the full list is on the project page
+• Sponsored results and shopping ads on search results pages
 • Optionally, suggested posts from accounts you don't follow (in your home feed only; profiles and pages you open are left alone)
 • Anything matching your own muted words or element rules
 

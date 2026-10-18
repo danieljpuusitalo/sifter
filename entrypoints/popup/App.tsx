@@ -1,8 +1,10 @@
 import { Fragment } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { browser } from 'wxt/browser';
+import { adapterFor } from '../../src/adapters/index';
 import { bg } from '../../src/bg';
 import type { PageState, SiteContext, TabRequest } from '../../src/messages';
+import { SELF_DISCLOSURE } from '../../src/self';
 import { experimentalNote } from '../../src/sites';
 import { loadSettings, siteKey, type Settings } from '../../src/storage/settings';
 import type { BlockCategory, HideCategory } from '../../src/types';
@@ -212,6 +214,7 @@ function Running(props: { tab: Tab; state: PageState; settings: Settings; onChan
                     {custom && <span class="muted small"> · this site only</span>}
                   </span>
                 </label>
+                {r.cat === 'suggested' && adapterFor(state.siteKey)?.self && <p class="muted small">{SELF_DISCLOSURE}</p>}
                 {r.cat === 'custom' && <FiltersNote words={settings.mutedWords.length} />}
                 {rules.map((rule) => (
                   <label key={rule.id} class="switch sub">

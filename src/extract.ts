@@ -496,11 +496,12 @@ export type MarkerHit = {
   /** The adapter's named suggested rule that matched, if any. */
   rule?: string;
   /**
-   * The element that triggered the hit, for kinds `structural`, `ad-link` and
-   * `rel`: the element `unit.querySelector(sel)` found (or the unit itself, when
-   * the unit matched the selector directly), or the anchor. Lets the scanner check
-   * whether that element is actually rendered before deciding to hide on it (label
-   * and aria kinds already go through `renderedWithin`, so they leave this unset).
+   * The element that triggered the hit, for kinds `structural`, `ad-link`, `rel`
+   * and a generic site's `aria-label`: the element `unit.querySelector(sel)` found
+   * (or the unit itself, when the unit matched the selector directly), or the
+   * anchor. Lets the scanner check whether that element is actually rendered before
+   * deciding to hide on it (label kinds and aria-labelledby go through
+   * `renderedWithin`, so they leave this unset).
    */
   node?: Element;
 };
@@ -550,9 +551,13 @@ export function detectMarker(unit: Element, adapter: Adapter | null, base: strin
     const rel = a.getAttribute('rel');
     if (rel && rel.split(/\s+/).includes('sponsored')) return sponsored('rel', 'rel=sponsored', a);
   }
-  for (const el of safeQueryAll(unit, '[aria-label]')) {
-    const v = el.getAttribute('aria-label') ?? '';
-    if (v.length <= MAX_MARKER_ATTR && isMarkerText(v)) return sponsored('aria', v);
+  // Only on generic opt-in sites. On X an image's alt text is rendered as the photo
+  // container's aria-label, so a user's alt "Ad" would otherwise hide the post (rule 6).
+  if (!adapter) {
+    for (const el of safeQueryAll(unit, '[aria-label]')) {
+      const v = el.getAttribute('aria-label') ?? '';
+      if (v.length <= MAX_MARKER_ATTR && isMarkerText(v)) return sponsored('aria', v, el);
+    }
   }
   const labelledBy = labelledByMarker(unit);
   if (labelledBy) return sponsored('aria', labelledBy);

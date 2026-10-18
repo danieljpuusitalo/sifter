@@ -1,3 +1,4 @@
+import '../zod-jitless';
 import { z } from 'zod';
 
 // Site adapters are JSON config, not code, so a broken site is a one-line fix

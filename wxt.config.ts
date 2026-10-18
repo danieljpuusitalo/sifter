@@ -15,7 +15,9 @@ export default defineConfig({
   }),
   manifest: {
     name: 'Sifter',
-    description: 'Hides the ads your ad blocker misses: sponsored posts and promoted results inside the feed.',
+    // The store shows this as the listing summary (132 characters max); keep it equal to
+    // docs/STORE_LISTING.md "Summary".
+    description: 'Hides the sponsored posts your ad blocker misses on LinkedIn, Reddit, Google, X, Instagram, Facebook and Threads.',
     // activeTab is not in the brief's list; it carries no install warning and is what
     // lets the popup read the current tab's hostname to offer "Hide ads on <site>".
     permissions: ['storage', 'scripting', 'activeTab', 'contextMenus'],

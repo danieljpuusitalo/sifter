@@ -21,7 +21,35 @@
    - Reload Sifter in `chrome://extensions` with LinkedIn open, to test the orphan handoff and the latch.
    - Dutch UI and dark mode. **Update 2026-10-18:** the extension has no i18n (no `_locales`); its UI is English only. "Dutch UI" can only mean LinkedIn's own language. Dark mode of the popup and options was rendered: clean.
 
-**Store-readiness audit (2026-10-18, `main` at `1102acc`, v1.2.0; `main` is 19 commits ahead of the tag).** The verdict is **not ready to submit yet**. The code and tests are healthy, but three privacy and listing blockers remain, and all three are text. Sifter isn't in the store yet, and no `CWS_*` secrets exist.
+**Store-readiness audit (2026-10-18, `main` at `1102acc`, v1.2.0; `main` is 19 commits ahead of the tag).** The verdict was **not ready to submit yet**. The code and tests were healthy, but three privacy and listing blockers remained, all of them text. Sifter isn't in the store yet, and no `CWS_*` secrets exist.
+
+**Status: every finding below is fixed on `fix/store-readiness`** (stacked on #39, pushed, not merged), except the trader declaration and the dashboard steps, which are Daniel's. Contact email: Daniel chose his personal address over the work one (2026-10-18); PRIVACY.md carries it.
+- **What landed:**
+  - One commit per code item, from `3b71c9f` (the aria gate) to `f276b01` (the profile-id consent).
+  - `9528953` covers the docs, manifest and icon.
+- **Gate:**
+  - verify: 544 passed, 5 skipped; eval tp=72 fp=0 fn=0.
+  - check:permissions: unchanged.
+  - e2e: 49 passed, 1 skipped. The previous run failed `stability.spec.ts` "a tag in a pinned rail" once; it passed twice alone, so it may be flaky.
+  - bench:scroll at cpu 1 and cpu 4, in Edge, plugged in: both OK.
+  - zip: 116 kB.
+- **New since the audit (CWS policy in force 2026-08-01):**
+  - Collected data must be strictly necessary, and must be prominently disclosed in the UI before collection. Data stored only on the device counts.
+  - The profile id is now learned only while Suggested is on for LinkedIn, and deleted when Suggested or the site goes off (`pruneSelf` runs on save, load and import).
+  - The switch carries a disclosure line, in the options page and the popup.
+  - PRIVACY.md now says "sends nothing anywhere" instead of "collects nothing". The privacy-tab answers are in `docs/STORE_LISTING.md`.
+- **A broken bundle was caught during the work:**
+  - The `tooBroad` commit put a raw U+FFFF in a regex. Chrome then refused to load the extension ("isn't UTF-8 encoded").
+  - It is fixed in `13b2a67`, and `tests/unit/source-encoding.test.ts` guards the source. Only e2e covers the built bundle.
+- **Residual:**
+  - Generic opt-in pages over 6000 elements: the first card set isn't recognised until the first append.
+  - A unit that later gains inner units keeps both as candidates.
+  - The content-script path that starts self-learning when Suggested is turned on mid-page has no unit or e2e test.
+  - The category name "Social Networking" is unverified. The store page sits behind a consent wall, so check it in the dashboard dropdown.
+- **Next:**
+  1. Merge #39 and this PR (Daniel).
+  2. `pnpm release minor`, then merge the release PR. That is the release.
+  3. Submit the v1.3.0 zip as Unlisted, by hand, per `docs/ROADMAP.md` Phase 4.
 
 - **Receipts, all green:**
   - `pnpm install --frozen-lockfile`: OK.

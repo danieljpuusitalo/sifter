@@ -175,6 +175,20 @@ const UNIT_CSS = `
 
 const unitSheets = new WeakMap<Document, CSSStyleSheet | null>();
 
+/**
+ * A page can reassign `document.adoptedStyleSheets` and drop our sheet, which would
+ * show every hidden unit again. The periodic prune puts it back.
+ */
+function reassertUnitStylesheet(doc: Document): void {
+  const sheet = unitSheets.get(doc);
+  if (!sheet) return;
+  try {
+    if (!doc.adoptedStyleSheets.includes(sheet)) doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, sheet];
+  } catch {
+    /* the fallback <style> path, or a frozen array: nothing more to do */
+  }
+}
+
 /** Installs the unit-hiding rules on `doc` once, adopted or as a fallback `<style>`. */
 function ensureUnitStylesheet(doc: Document): void {
   if (unitSheets.has(doc)) return;
@@ -484,6 +498,7 @@ export class Hider {
    * inside it, as its first child).
    */
   prune(): void {
+    reassertUnitStylesheet(this.doc);
     for (const u of [...this.tracked]) {
       const rec = this.records.get(u);
       if (!u.isConnected) {

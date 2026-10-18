@@ -3,7 +3,13 @@ import type { Adapter } from './adapters/schema';
 // The viewer's own profile id (an adapter's `self`), so a post that mentions them is
 // never hidden as suggested. Learned from links only the viewer's own page chrome
 // carries, kept in storage by the service worker, and only ever used as part of a
-// selector here: never sent anywhere, never logged.
+// selector here: never sent anywhere, never logged. It is learned, and kept, only
+// while "suggested" is on for the site (storage/settings.ts `pruneSelf`): without
+// that nothing needs it.
+
+/** Shown beside every control that turns "suggested" on, on a site whose adapter reads the viewer's id. */
+export const SELF_DISCLOSURE =
+  'On LinkedIn this also keeps your own profile link on this device, so posts that mention you are never hidden. It is never sent anywhere.';
 
 export type SelfConfig = NonNullable<Adapter['self']>;
 

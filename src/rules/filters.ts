@@ -97,20 +97,105 @@ function topLevelParts(selector: string): string[] {
   return parts.map((p) => p.trim());
 }
 
+/** Attributes nearly every element carries: naming one alone says nothing about which element is meant. */
+const UNIVERSAL_ATTRS = /^(class|id|style|role|title|lang|dir|tabindex|href|src|aria-.*)$/i;
+
+/** The index just past the `(`...`)` that opens at `from`, skipping quotes and escapes. */
+function parenEnd(s: string, from: number): number {
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = from; i < s.length; i++) {
+    const ch = s[i] as string;
+    if (ch === '\\') i++;
+    else if (quote) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '(') depth++;
+    else if (ch === ')' && --depth === 0) return i + 1;
+  }
+  return s.length;
+}
+
+/** The last compound of a (possibly leading-combinator) selector: after the last combinator outside brackets. */
+function subjectOf(part: string): string {
+  return part.split(/[\s>+~]+(?![^([]*[)\]])/).pop() ?? '';
+}
+
+type Compound = { tag: boolean; id: boolean; cls: boolean; attr: boolean; specificAttr: boolean; pseudo: boolean; hasArgs: string[] };
+
+/** What one compound selector (`div.x[a=b]:has(.y)`) is made of, at its own top level. */
+function compoundOf(c: string): Compound {
+  const out: Compound = { tag: false, id: false, cls: false, attr: false, specificAttr: false, pseudo: false, hasArgs: [] };
+  const ident = /^(?:\\.|[^\x00-\x7f]|[\w-])+/;
+  let i = 0;
+  if (c[0] === '*') i = 1;
+  else if (ident.test(c)) {
+    out.tag = true;
+    i = (ident.exec(c) as RegExpExecArray)[0].length;
+  }
+  while (i < c.length) {
+    const ch = c[i] as string;
+    if (ch === '\\') i += 2;
+    else if (ch === '#' || ch === '.') {
+      if (ch === '#') out.id = true;
+      else out.cls = true;
+      i += 1 + (ident.exec(c.slice(i + 1))?.[0].length ?? 0);
+    } else if (ch === '[') {
+      let j = i + 1;
+      let quote: string | null = null;
+      for (; j < c.length; j++) {
+        const q = c[j] as string;
+        if (q === '\\') j++;
+        else if (quote) {
+          if (q === quote) quote = null;
+        } else if (q === '"' || q === "'") quote = q;
+        else if (q === ']') break;
+      }
+      const inner = c.slice(i + 1, j);
+      const name = /^\s*([^\s~|^$*=\]]+)/.exec(inner)?.[1] ?? '';
+      out.attr = true;
+      if (/[~|^$*]?=/.test(inner.slice(name.length)) || !UNIVERSAL_ATTRS.test(name)) out.specificAttr = true;
+      i = j + 1;
+    } else if (ch === ':') {
+      out.pseudo = true;
+      const m = /^:{1,2}((?:\\.|[\w-])+)/.exec(c.slice(i));
+      i += m ? m[0].length : 1;
+      if (c[i] === '(') {
+        const end = parenEnd(c, i);
+        if (m?.[1]?.toLowerCase() === 'has') out.hasArgs.push(c.slice(i + 1, end - 1));
+        i = end;
+      }
+    } else i++;
+  }
+  return out;
+}
+
+/** Whether a compound names something particular: an id, a class, or an attribute that tells elements apart. */
+function specific(c: Compound): boolean {
+  if (c.id || c.cls || c.specificAttr) return true;
+  // `div:has(> span.sponsored)` is anchored by what it must contain; a bare `:has(.x)` matches every ancestor up to html.
+  return c.tag && c.hasArgs.length > 0 && c.hasArgs.every((arg) => topLevelParts(arg).every((p) => specific(compoundOf(subjectOf(p)))));
+}
+
 /**
- * A rule that would match most of a page: `*`, a bare tag name (`div`, `a`), or
- * anything whose subject is `html` or `body`. The scanner hides the innermost
- * match with a placeholder, so `##div` blanks every leaf of the feed and `##body`
- * the page; no user means that, and an ad blocker's filter syntax invites the
- * typo. Checked per comma-separated part, since the scanner joins rules with ", ".
+ * A rule that would match most of a page: `*`, a bare tag name (`div`, `a`),
+ * anything whose subject is `html` or `body`, or a subject with no id, class or
+ * telling attribute (`:root`, `[class]`, `div:not(.x)`, `:is(body)`, `:has(.x)`).
+ * The scanner hides the innermost match with a placeholder, so `##div` blanks
+ * every leaf of the feed and `##body` the page; no user means that, and an ad
+ * blocker's filter syntax invites the typo. Checked per comma-separated part,
+ * since the scanner joins rules with ", ".
  */
 export function tooBroad(selector: string): boolean {
   return topLevelParts(selector).some((part) => {
     if (!part) return true;
     if (/^\*$/.test(part) || /^[a-z][a-z0-9-]*$/i.test(part)) return true;
-    // The subject is the last compound: after the last combinator outside brackets.
-    const subject = part.split(/[\s>+~]+(?![^([]*[)\]])/).pop() ?? '';
-    return /^(html|body)(?![a-z0-9-])/i.test(subject) || subject === '*';
+    const subject = subjectOf(part);
+    if (/^(html|body)(?![a-z0-9-])/i.test(subject) || subject === '*') return true;
+    const c = compoundOf(subject);
+    // A bare tag with ancestors (`.feed div`) is left to the author; anything more must pin something down.
+    if (!c.id && !c.cls && !c.attr && !c.pseudo) return !c.tag;
+    return !specific(c);
   });
 }
 
@@ -144,7 +229,7 @@ export function parseRules(text: string, isValid: (selector: string) => boolean)
     } else if (!selector || !closed(selector) || !isValid(selector)) {
       errors.push({ line: i + 1, text: line, reason: 'the selector is not valid CSS' });
     } else if (tooBroad(selector)) {
-      errors.push({ line: i + 1, text: line, reason: 'the selector would hide most of the page (a bare tag, *, html or body)' });
+      errors.push({ line: i + 1, text: line, reason: 'the selector would hide most of the page (a bare tag, *, html or body, or no class, id or specific attribute to tell elements apart)' });
     } else if (rules.length >= MAX_RULES) {
       errors.push({ line: i + 1, text: line, reason: `more than ${MAX_RULES} rules` });
     } else {

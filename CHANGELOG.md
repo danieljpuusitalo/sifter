@@ -9,9 +9,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The options page shows Sifter's version and a "Report a site that broke" link.
 - LinkedIn posts that mention you stay visible, even when a connection's like or
   comment would otherwise hide them as suggested, so a post you're tagged in opens
-  normally from a notification or the feed. Sifter learns your profile link from
-  LinkedIn's left sidebar and keeps it only on your device; Options, "Your
-  exceptions", shows it with a Forget button. Sponsored posts still hide.
+  normally from a notification or the feed. Only while "Suggested" is on for
+  LinkedIn, Sifter learns your profile link from LinkedIn's left sidebar and
+  keeps it only on your device; the setting says so next to the switch, turning
+  "Suggested" off deletes it, and Options, "Your exceptions", shows it with a
+  Forget button. Sponsored posts still hide.
+- Threads is marked experimental, like Facebook: no ad has shown up there yet,
+  so its ad path is unconfirmed.
+
+### Changed
+
+- The privacy policy now lists everything Sifter stores, including the LinkedIn
+  profile id and why, and states Chrome Web Store Limited Use compliance.
+- The store summary names the supported sites; the 128px icon has the store's
+  16px padding.
 
 ### Fixed
 
@@ -21,6 +32,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - LinkedIn: opening a post from a notification keeps that post visible, but no
   longer stops Sifter hiding suggested posts in the rest of the feed. Before,
   the whole page went unfiltered, and stayed that way after pressing Home.
+- X and other supported sites: a photo whose description is just "Ad" no longer
+  hides an ordinary post.
+- A failure inside one scan no longer stops Sifter for the rest of the page.
+- Settings page: a save that fails says so, and the switches go back to what is
+  actually saved. Restoring a backup or pressing Forget can no longer lose a
+  change made at the same moment elsewhere.
+- Element rules that would match nearly everything on a page (`:root`,
+  `[class]`, `:is(body)`) are refused, with a reason.
+- Settings page fits a narrow window; a very long muted word or rule wraps.
+- Hidden posts stay hidden when a site replaces the page's stylesheets.
+- Sites you turned on yourself: posts added as you scroll are found even on long
+  pages, without re-reading the whole page each time.
 
 ## [1.2.0] - 2026-10-11
 

@@ -12,13 +12,60 @@
    - **Recommendation:** accept it. Before closing, rerun 2–3 ads-only off/on pairs: ads-only 2 (0.45 → 1.23) isn't explained by the collapse geometry.
    - **The alternative:** taller bars, or blur when many posts are hidden.
 3. **First-visit flash.** On a full load, 2–3 units show for 3–7 frames in 6 of 7 launches. `document_start` = no for v1 was Daniel's session-5 call.
+   - **Correction, 2026-10-18:** the content script already runs at `document_start` (`entrypoints/content.ts:66`). The 2026-10-17 note blamed injection at idle; that was wrong. The scanner starts only after the `getContext` round-trip to the service worker and `<body>`. In a fresh launch the worker is cold, so the likeliest cause is that round-trip losing the race with LinkedIn's first paint. This is unmeasured.
    - **Recommendation:** keep it, unless he notices the flash in real use.
-   - **If not:** a measured experiment with the script at `document_start`, letting the lane run from the first insert. Risk: settings arrive by message from a possibly cold service worker.
+   - **If not:** first time the `getContext` round-trip on a cold launch against the first unit insert, and only then decide on a fix.
    - **Ruled out:** selector-only CSS at load, because it conflicts with rule 6.
 4. **Manual checks, Daniel's:**
    - A true background tab: Playwright always reports the page as visible.
    - Reload Sifter in `chrome://extensions` with LinkedIn open, to test the orphan handoff and the latch.
-   - Dutch UI and dark mode.
+   - Dutch UI and dark mode. **Update 2026-10-18:** the extension has no i18n (no `_locales`); its UI is English only. "Dutch UI" can only mean LinkedIn's own language. Dark mode of the popup and options was rendered: clean.
+
+**Store-readiness audit (2026-10-18, `main` at `1102acc`, v1.2.0; `main` is 19 commits ahead of the tag).** The verdict is **not ready to submit yet**. The code and tests are healthy, but three privacy and listing blockers remain, and all three are text. Sifter isn't in the store yet, and no `CWS_*` secrets exist.
+
+- **Receipts, all green:**
+  - `pnpm install --frozen-lockfile`: OK.
+  - `pnpm verify`: 513 passed, 5 skipped; eval tp=72 fp=0 fn=0.
+  - `pnpm build`: zip 106.7 kB, 15 files, no source maps or dev files.
+  - `check:permissions`: unchanged, 4 permissions and 27 hosts.
+  - `test:e2e`: 49 passed, 1 skipped.
+  - `pnpm audit --prod`: 0 vulnerabilities.
+  - `pnpm canary`, live: PASS on linkedin, reddit, x, instagram, facebook and three Google queries, none missed on screen. Threads INFO: no ad was served.
+  - **Caveat:** the canary checks for misses, not false hides.
+- **Blockers, all text:**
+  1. **`PRIVACY.md` doesn't disclose the LinkedIn profile id that `main` stores** (`src/storage/settings.ts:37`, from #35). It is also in backups. The live Pages copy has the same gap. Add a bullet and bump "Last updated" before the next release. That release auto-submits once the secrets exist.
+  2. **No Limited Use statement.** Add the sentence "complies with the Chrome Web Store User Data Policy, including the Limited Use requirements" to `PRIVACY.md`.
+  3. **Privacy-tab data answers contradict each other.** `STORE_LISTING.md:52` says "collects no user data", but `ROADMAP.md:95` says "website content". Google's FAQ requires disclosure even of data handled only on the device. Declare "Website content" (local only, never sent). If 1.3.0 is the build submitted, also declare "Personally identifiable information" (local only), for the profile id.
+- **Should fix before submitting:**
+  - **Precision: the generic `aria-label` marker runs on every adapter** (`src/extract.ts:553-556`). Any `aria-label` that is exactly a marker word ("Ad", "Sponsored" and so on) hides the unit. The hit carries no `node`, so the foreign-hidden check never runs.
+    - **Plausible case:** X turns an image's alt text into `aria-label`, so a photo with alt "Ad" hides the tweet. This mapping isn't verified on a capture.
+    - **Nothing depends on this path:** no public fixture has a marker word in an `aria-label`, and the only test of it uses `adapter = null`.
+    - **Fix:** gate it to `!adapter`, like ad-click links. Pass `el` as `node`. Add a negative X fixture.
+  - **Manifest `description`** (`wxt.config.ts:18`): the dashboard shows it as the summary, and it names no sites. Use the drafted line in `STORE_LISTING.md:11`.
+  - **Category:** "Productivity" and "Social & Communication" are deprecated. Use "Social Media & Networking".
+  - **`scripting` justification:** add that it also registers opt-in sites and injects into already-open tabs after install.
+  - **Single-purpose statement:** add that it covers suggested posts and filters too.
+  - **Threads:** the listing calls it experimental, but the popup shows no badge (`src/sites.ts:108`). Make the two agree.
+  - **`ROADMAP.md` Phase 4 is missing items:**
+    - the trader/non-trader declaration (EU DSA);
+    - a verified contact email;
+    - language;
+    - support URL (suggested: the GitHub issues page);
+    - a host-permissions line.
+    - It also names a stale zip version.
+- **Low:**
+  - **Options page layout:** a 300-character muted word overflows the page sideways (`.errors li` needs `overflow-wrap:anywhere`). At 400 px the Sites table clips its last column.
+  - **`runSlice` has no try/finally:** one throw would leave `running` stuck and stop scanning for the page's life. No throwing path was found.
+  - **Options page errors:** `void bg(...)` calls are uncaught, so a failed save shows no error.
+  - **Lost settings writes:** a write from the options page can race one from the service worker (`importBackup`, Forget).
+  - **Generic opt-in sites:** they scan only the first 6000 elements, and do a full-document walk each pass.
+  - **`tooBroad`:** misses `:root` and `[class]`.
+  - **Zod's bundle:** it contains a `Function('')` probe (blocked by CSP, but scanners flag it). Zod's `jitless` silences it.
+  - **Icon:** the artwork fills 120 of 128 px; the guideline is 96 px.
+  - **Contact email:** `PRIVACY.md:43` publishes the work email. That's Daniel's call.
+- **Refuted:** "storage.local `setAccessLevel` is a no-op". Tested on the build in Chromium 153: `setAccessLevel` on `local` returns ok, and a content-script `chrome.storage.local.get` is denied ("Access to storage is not allowed from this context"). Versions near the manifest's minimum (116) are untested.
+- **Which zip:** fix the blockers first, run `pnpm release minor`, and submit the v1.3.0 zip from its GitHub Release, by hand (`docs/RELEASING.md:68`). The first reviewed build should already carry the profile-id disclosure.
+- **Daniel's, in the dashboard:** developer account and fee, trader declaration, contact email, then submit as Unlisted.
 
 **LinkedIn in-app navigation (2026-10-17, PR #36 `fix/spa-navigation-lane`; PR #35
 `feat/linkedin-self-mentions` also open, neither merged).** Daniel asked for real-usage

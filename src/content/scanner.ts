@@ -1,4 +1,4 @@
-import { findGenericUnits, innermost } from '../adapters/generic';
+import { findGenericUnits, findGenericUnitsIn, innermost } from '../adapters/generic';
 import type { Adapter } from '../adapters/schema';
 import { detectMarker, hasContent, labelReadCounts, mutedWordRendered, unitText } from '../extract';
 import { changeSignature, fingerprint } from '../fingerprint';
@@ -64,6 +64,8 @@ const PROMPT_IDLE_TIMEOUT_MS = 50;
 const DECIDE_COST_PRIOR_MS = 1;
 /** Past this many dirty nodes, one full collection is cheaper than mapping each. */
 const MAX_DIRTY = 1500;
+/** Generic units remembered before disconnected ones are dropped from the set. */
+const KNOWN_GENERIC_MAX = 2000;
 /** Distinct units counted for the popup; past this the count stops growing (memory). */
 const MAX_UNITS_SEEN = 5000;
 /** How far up from an anchor a module may sit before the walk gives up. */
@@ -197,6 +199,8 @@ const EMPTY_PERF: OwnPerf = {
 export class Scanner {
   private hider: Hider;
   private seen = new WeakMap<Element, Seen>();
+  /** Generic-site units found so far, so an incremental pass can drop an outer wrapper that holds one. */
+  private genericKnown = new Set<Element>();
   private userShown = new WeakSet<Element>();
   private hiddenFps = new Map<string, HideCategory>();
   private unitsSeen = new Set<string>();
@@ -834,14 +838,27 @@ export class Scanner {
 
   /** No adapter: units come from page structure, so re-derive them, then keep only new or changed ones. */
   private collectGeneric(root: Element, full: boolean, touched: Set<Node>, added: Set<Element>): Element[] {
-    const units = findGenericUnits(root);
-    if (full) return units;
+    if (full) {
+      const units = findGenericUnits(root);
+      for (const u of units) this.genericKnown.add(u);
+      return units;
+    }
+    // Incremental: only where the batch looked, so a feed past the full walk's cap still
+    // finds its newest card. Stale entries (nodes the site dropped) go before the set grows.
+    if (this.genericKnown.size > KNOWN_GENERIC_MAX) for (const k of this.genericKnown) if (!k.isConnected) this.genericKnown.delete(k);
+    const touchedEls = new Set<Element>();
+    touched.forEach((n) => {
+      const el = n.nodeType === 1 ? (n as Element) : n.parentElement;
+      if (el) touchedEls.add(el);
+    });
+    const units = findGenericUnitsIn(added, touchedEls, this.genericKnown);
+    for (const u of units) this.genericKnown.add(u);
     const set = new Set(units);
     const dirty = new Set<Element>();
     for (const u of units) if (!this.seen.has(u)) dirty.add(u);
     const mark = (n: Node) => {
       for (let el: Element | null = n.nodeType === 1 ? (n as Element) : n.parentElement; el; el = el.parentElement) {
-        if (set.has(el)) {
+        if (set.has(el) || this.seen.has(el)) {
           dirty.add(el);
           return;
         }

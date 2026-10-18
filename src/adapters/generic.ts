@@ -21,10 +21,10 @@ function signature(el: Element): string | null {
   return `${el.tagName}.${classes}`;
 }
 
-export function findGenericUnits(root: Element): Element[] {
+/** Units among the children of these containers, nested ones not yet reduced. */
+function candidatesIn(containers: Iterable<Element>): Set<Element> {
   const candidates = new Set<Element>();
-  const all = [root, ...Array.from(root.querySelectorAll('*')).slice(0, MAX_SCAN)];
-  for (const container of all) {
+  for (const container of containers) {
     if (container.childElementCount < MIN_GROUP) continue;
     const groups = new Map<string, Element[]>();
     for (const child of Array.from(container.children)) {
@@ -38,12 +38,63 @@ export function findGenericUnits(root: Element): Element[] {
       if (group.length < MIN_GROUP) continue;
       for (const child of group) {
         if (child.closest(SKIP_ANCESTORS)) continue;
-        if ((child.textContent ?? '').replace(/\s+/g, ' ').trim().length < MIN_TEXT) continue;
+        if ((child.textContent ?? '').replace(/s+/g, ' ').trim().length < MIN_TEXT) continue;
         candidates.add(child);
       }
     }
   }
-  return innermost(candidates);
+  return candidates;
+}
+
+export function findGenericUnits(root: Element): Element[] {
+  const all = [root, ...Array.from(root.querySelectorAll('*')).slice(0, MAX_SCAN)];
+  return innermost(candidatesIn(all));
+}
+
+/**
+ * The units a mutation batch can have added, without walking the page. A feed that
+ * has grown past `MAX_SCAN` elements has its newest cards beyond the cap of the full
+ * walk, so an incremental pass looks only where the batch looked: every added
+ * subtree, the container each added element joined (its siblings decide whether
+ * it is a card), and each touched element and its container. Candidates that hold
+ * a unit already `known` are dropped, as `innermost` would drop them on a full walk.
+ */
+export function findGenericUnitsIn(
+  added: Iterable<Element>,
+  touched: Iterable<Element>,
+  known: Iterable<Element>,
+): Element[] {
+  const addedSet = new Set(added);
+  const containers = new Set<Element>();
+  let budget = MAX_SCAN;
+  for (const el of addedSet) {
+    if (!el.isConnected) continue;
+    // A nested added element is covered by the subtree walk of the one above it.
+    let covered = false;
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      if (addedSet.has(p)) {
+        covered = true;
+        break;
+      }
+    }
+    if (el.parentElement) containers.add(el.parentElement);
+    if (covered) continue;
+    containers.add(el);
+    if (budget > 0) {
+      const inside = el.querySelectorAll('*');
+      for (const d of Array.from(inside).slice(0, budget)) containers.add(d);
+      budget -= inside.length;
+    }
+  }
+  for (const el of touched) {
+    if (!el.isConnected) continue;
+    containers.add(el);
+    if (el.parentElement) containers.add(el.parentElement);
+  }
+  const units = innermost(candidatesIn(containers));
+  const holds = (u: Element, k: Element) => u !== k && u.contains(k);
+  const knownList = [...known];
+  return units.filter((u) => !knownList.some((k) => holds(u, k)));
 }
 
 /**

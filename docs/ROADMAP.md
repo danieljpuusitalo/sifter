@@ -82,18 +82,25 @@ any scanner file was touched (none should be).
 ## Phase 4: submission (Daniel) [D]
 
 1. Chrome Web Store developer account: sign in, pay the $5 one-off fee, enable
-   2-Step Verification on the Google account.
-2. Take the zip from the **latest** GitHub Release (Phase 3.3); `v1.2.0` as of
-   2026-10-11. Submit the newest tag, not `v1.0.0`, which lacks every fix since.
+   2-Step Verification on the Google account. Account tab: set and verify the
+   contact email (the store won't publish without it), and make the EU trader /
+   non-trader declaration (Digital Services Act). Both are Daniel's.
+2. Take the zip from the **latest** GitHub Release (Phase 3.3). Submit the newest
+   tag, never an older one: `v1.2.0` predates the 2026-10-18 store-readiness fixes
+   (privacy disclosures, the profile-id consent, the X aria-label false hide), so
+   release 1.3.0 first (`pnpm release minor`, then merge the release PR).
 3. Developer Dashboard: **Add new item**, upload the zip.
-4. **Store listing tab:** paste title, summary and description from
-   `docs/STORE_LISTING.md`; category Productivity; upload the three screenshots
-   and the promo tile; icon comes from the manifest.
+4. **Store listing tab:** paste summary and description from
+   `docs/STORE_LISTING.md` (the summary must equal the manifest description);
+   category and language as listed there; upload the three screenshots and the
+   promo tile; icon comes from the manifest; support URL is GitHub issues.
 5. **Privacy tab:** single-purpose statement and one justification per
-   permission (`storage`, `scripting`, `activeTab`, `contextMenus`, optional
-   `https://*/*`) from `docs/STORE_LISTING.md`; data-use disclosures ("website
-   content", processed locally, not sold, not used for other purposes); privacy
-   policy URL from Phase 3.2. Declare "does not use remote code".
+   permission, host permissions included (`storage`, `scripting`, `activeTab`,
+   `contextMenus`, the launch-site hosts, optional `https://*/*`) from
+   `docs/STORE_LISTING.md`; "Privacy practices" there gives the exact data
+   categories to tick (Website content, Personally identifiable information,
+   both on-device only) and the three certifications; privacy policy URL from
+   Phase 3.2. Declare "does not use remote code".
 6. **Distribution tab:** Unlisted (Phase 1.4), all regions.
 7. **Submit for review.** Typical wait is a few days. Broad optional host
    permissions are the likeliest reviewer question; the justification already

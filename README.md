@@ -124,9 +124,12 @@ Sifter uses general detection: it hides elements whose whole visible label is
 
 ## Privacy
 
-Sifter collects nothing and sends nothing. It has no server, no account, no
-analytics and makes no network requests of its own. Settings and the fingerprints
-of posts you marked stay in your browser's extension storage. The full policy is
+Sifter sends nothing anywhere. It has no server, no account, no
+analytics and makes no network requests of its own. Settings, the fingerprints
+of posts you marked and, on LinkedIn while "Suggested" is on, your own profile id
+stay in your browser's extension storage. The profile id is there so a post that
+mentions or tags you is never hidden as suggested; turning "Suggested" off deletes
+it, and Options, "Your exceptions", shows it with a Forget button. The full policy is
 [PRIVACY.md](PRIVACY.md), also published at
 [danieljpuusitalo.github.io/sifter/privacy](https://danieljpuusitalo.github.io/sifter/privacy/).
 

@@ -10,8 +10,16 @@ else that asks for one. For an Unlisted listing this does not matter.
 ## Summary (132 characters max)
 Hides the sponsored posts your ad blocker misses on LinkedIn, Reddit, Google, X, Instagram, Facebook and Threads.
 
+This is also the manifest `description` (`wxt.config.ts`), which the store shows as
+the summary. Keep the two identical.
+
 ## Category
-Productivity (alternative: Social & Communication)
+Social Networking (under Lifestyle). Alternative: Functionality & UI. The old
+"Productivity" and "Social & Communication" are no longer top-level choices in the
+2024 category list. Confirm against the dashboard's dropdown when submitting.
+
+## Language
+English
 
 ## Description
 
@@ -35,21 +43,48 @@ YOU'RE IN CONTROL
 PRIVATE BY DESIGN
 • Runs entirely in your browser: no account, no server, no analytics
 • Makes no network requests of its own
+• Keeps your settings and exceptions on your device. On LinkedIn, with Suggested on, that includes your own profile link, so posts that mention you are never hidden
 • Never removes anything from the page, so feeds and infinite scroll keep working
 
 ## Single purpose (for review)
-Hide sponsored and promoted posts, and posts matching user-set filters, on the sites the user chooses.
+Declutter the user's feeds by hiding posts they did not ask to see: posts the site itself labels as sponsored or promoted, optionally posts it labels as suggested, and posts matching the user's own filters, on the sites the user chooses.
 
 ## Permission justifications (for review)
-- Host permissions (launch sites): read the page to find posts labelled as sponsored and hide them. Nothing is transmitted.
-- Optional host permissions (https://*/*): requested per site, only when the user chooses "Hide ads on" and the site's name in the popup.
-- storage: user settings and exceptions, stored locally.
-- scripting: inject the content script into a site the user has just turned on.
+- Host permissions (LinkedIn, Reddit, X/Twitter, Instagram, Facebook, Threads, Google Search and its country domains): read the page in the browser to find posts the site labels as sponsored, and hide them. Nothing is transmitted.
+- Optional host permissions (https://*/*): requested one site at a time, only when the user chooses "Hide ads on" and the site's name in the popup.
+- storage: the user's settings, filters and exceptions, stored on the device.
+- scripting: register Sifter's content script on a site the user has just turned on, and run it in tabs that were already open when Sifter was installed or updated, so the user doesn't have to reload them. Only Sifter's own packaged script is injected.
 - activeTab: read the current tab's hostname so the popup can offer to turn Sifter on there.
 - contextMenus: the "Hide this post with Sifter" menu item.
 
-## Data use disclosures
-Collects no user data. Does not sell or transfer data. No remote code.
+## Remote code
+No. Every script is in the package; nothing is fetched or evaluated at runtime.
+
+## Privacy practices (dashboard answers)
+Data handled on the device still has to be declared (User Data FAQ: disclosure applies
+"even when data is processed or stored locally"). Tick:
+
+- **Website content**: the text of posts on supported pages is read in the browser to
+  find the site's own labels and the user's filter matches; posts the user marks
+  "Not an ad" or hides are stored as a hash of their text. Never transmitted.
+- **Personally identifiable information**: on LinkedIn, only while the user has turned
+  "Suggested" on, the user's own profile id (the `/in/` part of their profile link) is
+  stored so posts that mention them are never hidden. The setting discloses this next
+  to the switch, before it is learned; turning "Suggested" off deletes it. Never
+  transmitted.
+
+Leave every other category unticked. Certify all three: not sold or transferred to
+third parties; not used for purposes unrelated to the single purpose; not used for
+creditworthiness or lending. The privacy policy states the Limited Use compliance.
+
+## Trader status (EU)
+The dashboard asks whether the publisher is a trader under the EU Digital Services
+Act. That is Daniel's declaration to make, not something to fill in from here; a
+trader must also show a verified address and phone number on the listing.
+
+## Support
+Support URL: https://github.com/danieljpuusitalo/sifter/issues
+Homepage URL: https://github.com/danieljpuusitalo/sifter (also the manifest `homepage_url`)
 
 ## Assets
 

@@ -4,6 +4,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The store summary no longer lists the supported sites; the Chrome Web Store
+  read the list as keyword spam. The listing's description still names them.
+
 ## [1.3.0] - 2026-10-18
 
 ### Added

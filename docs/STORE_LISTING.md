@@ -8,10 +8,15 @@ has no separate title field. The longer name above is for the README and anywher
 else that asks for one. For an Unlisted listing this does not matter.
 
 ## Summary (132 characters max)
-Hides the sponsored posts your ad blocker misses on LinkedIn, Reddit, Google, X, Instagram, Facebook and Threads.
+Hides the sponsored posts your ad blocker misses: the ones a site places in your feed or search results itself.
 
 This is also the manifest `description` (`wxt.config.ts`), which the store shows as
 the summary. Keep the two identical.
+
+**Name no sites here.** v1.3.0 was rejected on 2026-10-18 for "Keyword spam" (reference
+Yellow Argon), quoting the old summary's list of seven site names as "excessive and/or
+irrelevant keywords". The sites belong in the description, in a sentence that says
+what Sifter does on each.
 
 ## Category
 Social Networking (under Lifestyle). Alternative: Functionality & UI. The old

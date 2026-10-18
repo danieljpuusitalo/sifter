@@ -1,3 +1,4 @@
+import '../zod-jitless';
 import { z } from 'zod';
 import { browser } from 'wxt/browser';
 import { MAX_WORDS } from '../rules/filters';

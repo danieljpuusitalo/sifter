@@ -101,7 +101,14 @@ export function parseWords(text: string): { words: string[]; errors: RuleError[]
 export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [overrides, setOverrides] = useState<Overrides>({});
+  const [failure, setFailure] = useState<string | null>(null);
   const reload = () => Promise.all([loadSettings(), loadOverrides()]).then(([s, o]) => (setSettings(s), setOverrides(o)));
+  // A save the service worker refused: say so, and re-read storage so the switches
+  // show what was kept, not what was clicked.
+  const onError = (e: unknown) => {
+    setFailure(`Couldn't save that change: ${e instanceof Error ? e.message : String(e)}`);
+    void reload();
+  };
   useEffect(() => {
     void reload();
     // The popup or a page's "Not an ad" can change storage while this tab is open.
@@ -119,6 +126,11 @@ export function App() {
         </h1>
         <p class="lede">Hides the ads your ad blocker misses: sponsored posts and promoted results inside the feed.</p>
       </header>
+      {failure && (
+        <p class="error small" role="status">
+          {failure}
+        </p>
+      )}
 
       <section>
         <h2>What to block</h2>
@@ -132,7 +144,7 @@ export function App() {
                   checked={settings.categories[c.cat]}
                   onChange={(e) => {
                     const on = (e.currentTarget as HTMLInputElement).checked;
-                    void bg<Settings>({ type: 'sifter:setCategory', category: c.cat, value: on }).then(setSettings);
+                    void bg<Settings>({ type: 'sifter:setCategory', category: c.cat, value: on }).then((s) => (setFailure(null), setSettings(s)), onError);
                   }}
                 />
                 <span>
@@ -145,9 +157,9 @@ export function App() {
         </ul>
       </section>
 
-      <Sites settings={settings} onChange={reload} />
+      <Sites settings={settings} onChange={() => (setFailure(null), reload())} onError={onError} />
 
-      <Filters settings={settings} onSaved={setSettings} />
+      <Filters settings={settings} onSaved={(s) => (setFailure(null), setSettings(s))} onError={onError} />
 
       <section>
         <h2>How hidden posts look</h2>
@@ -159,7 +171,7 @@ export function App() {
                 type="radio"
                 name="hideMode"
                 checked={settings.hideMode === m.value}
-                onChange={() => void bg<Settings>({ type: 'sifter:setHideMode', mode: m.value }).then(setSettings)}
+                onChange={() => void bg<Settings>({ type: 'sifter:setHideMode', mode: m.value }).then((s) => (setFailure(null), setSettings(s)), onError)}
               />
               <span>
                 <strong>{m.label}</strong>
@@ -170,7 +182,7 @@ export function App() {
         </fieldset>
       </section>
 
-      <Exceptions overrides={overrides} settings={settings} onChange={reload} />
+      <Exceptions overrides={overrides} settings={settings} onChange={reload} onError={onError} />
 
       <Backup onChange={reload} />
 
@@ -192,7 +204,7 @@ export function App() {
   );
 }
 
-function Sites(props: { settings: Settings; onChange: () => void }) {
+function Sites(props: { settings: Settings; onChange: () => void; onError: (e: unknown) => void }) {
   const { settings } = props;
   const keys = [...LAUNCH_SITES.map((s) => s.key), ...settings.optInHosts.filter((h) => !LAUNCH_SITES.some((s) => s.key === h))];
   const nameOf = (key: string) => LAUNCH_SITES.find((s) => s.key === key)?.name ?? key;
@@ -207,10 +219,11 @@ function Sites(props: { settings: Settings; onChange: () => void }) {
   const granted = (key: string) => origins === null || optInScriptMatches([key], origins).length > 0;
 
   const setEnabled = (key: string, enabled: boolean) =>
-    void bg({ type: 'sifter:setSiteEnabled', hostname: key, enabled }).then(props.onChange);
+    void bg({ type: 'sifter:setSiteEnabled', hostname: key, enabled }).then(props.onChange, props.onError);
   const setCategory = (key: string, category: BlockCategory, value: string) =>
     void bg({ type: 'sifter:setSiteCategory', hostname: key, category, value: value === 'default' ? null : value === 'on' }).then(
       props.onChange,
+      props.onError,
     );
 
   return (
@@ -285,7 +298,7 @@ function Sites(props: { settings: Settings; onChange: () => void }) {
   );
 }
 
-function Filters(props: { settings: Settings; onSaved: (s: Settings) => void }) {
+function Filters(props: { settings: Settings; onSaved: (s: Settings) => void; onError: (e: unknown) => void }) {
   const [words, setWords] = useState(props.settings.mutedWords.join('\n'));
   const [rules, setRules] = useState(props.settings.rulesText);
   const [status, setStatus] = useState<string | null>(null);
@@ -316,15 +329,21 @@ function Filters(props: { settings: Settings; onSaved: (s: Settings) => void }) 
     prevStored.current = { words: storedWords, rules: storedRules };
   }, [storedWords, storedRules]);
 
-  const save = async () => {
-    const next = await bg<Settings>({ type: 'sifter:setFilters', mutedWords: wordList, rulesText: rules });
-    props.onSaved(next);
-    setStatus(`Saved. ${wordList.length} muted word${wordList.length === 1 ? '' : 's'}, ${parsed.rules.length} rule${parsed.rules.length === 1 ? '' : 's'}.`);
+  /** Whether it saved; a refusal goes to the page's error line and the typed text stays as unsaved edits. */
+  const save = async (): Promise<boolean> => {
+    try {
+      const next = await bg<Settings>({ type: 'sifter:setFilters', mutedWords: wordList, rulesText: rules });
+      props.onSaved(next);
+      setStatus(`Saved. ${wordList.length} muted word${wordList.length === 1 ? '' : 's'}, ${parsed.rules.length} rule${parsed.rules.length === 1 ? '' : 's'}.`);
+      return true;
+    } catch (e) {
+      props.onError(e);
+      return false;
+    }
   };
   const submit = async (e: Event) => {
     e.preventDefault();
-    await save();
-    setWords(wordList.join('\n'));
+    if (await save()) setWords(wordList.join('\n'));
   };
 
   // Live report, 2026-10-01: muted words typed and never saved looked like muted
@@ -398,17 +417,17 @@ function Filters(props: { settings: Settings; onSaved: (s: Settings) => void }) 
   );
 }
 
-function Exceptions(props: { overrides: Overrides; settings: Settings; onChange: () => void }) {
+function Exceptions(props: { overrides: Overrides; settings: Settings; onChange: () => void; onError: (e: unknown) => void }) {
   const rows = Object.entries(props.overrides)
     .map(([key, fps]) => {
       const vals = Object.values(fps);
       return { key, shown: vals.filter((v) => v === 'not-ad').length, hidden: vals.filter((v) => v === 'hide').length };
     })
     .filter((r) => r.shown + r.hidden > 0);
-  const clear = (key: string | null) => void clearOverrides(key).then(props.onChange);
+  const clear = (key: string | null) => void clearOverrides(key).then(props.onChange, props.onError);
   // The profile Sifter learned on a site (adapter `self`): posts that mention it stay visible.
   const selves = Object.entries(props.settings.sites).flatMap(([key, s]) => (s.self ? [{ key, id: s.self }] : []));
-  const forget = (key: string) => void updateSettings((s) => withSelf(s, key, null)).then(props.onChange);
+  const forget = (key: string) => void updateSettings((s) => withSelf(s, key, null)).then(props.onChange, props.onError);
   return (
     <section>
       <h2>Your exceptions</h2>

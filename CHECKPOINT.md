@@ -1,5 +1,10 @@
 # Sifter checkpoint
 
+**Live on the Chrome Web Store, 2026-10-19:** <https://chromewebstore.google.com/detail/sifter/bjmipjakmbcipmioiiboacddkjmbjfck>. The listing page reports version 1.3.1. It was submitted as Unlisted; whether it has since been flipped to Public isn't recorded here. The README's Install section now leads with the store link. Entries below that say "not in the store yet" predate this.
+- **Releases don't reach the store by themselves yet.** No `CWS_*` secrets exist (`gh secret list` is empty), so `release.yml` publishes the GitHub Release and skips the submit step. Until Daniel does the one-time CWS API setup in `docs/RELEASING.md`, every release has to be uploaded to the dashboard by hand.
+- **Still open from the roadmap:** Edge Add-ons (Phase 4.8), and Phase 5: Public visibility, launch channels, the adapter-breakage loop.
+- **Open PRs at this point:** #45 `docs/store-description` (the listing description without the site list, after the keyword-spam rejection) and #42 `store/screenshots`. Neither is merged.
+
 **Landed 2026-10-17:** #36, #37, #35 and #38 are merged into `main` in that order. Statuses below that say "open" or "not merged" predate that.
 
 **Open at the end of 2026-10-17: PR #39 `bench/style-attribution`.** It is bench and docs only, CI verify green. Not merged: Daniel hasn't asked. The evidence is in "Follow-up on the open audit items" below. None of the four decisions has been answered. Each has my recommendation:

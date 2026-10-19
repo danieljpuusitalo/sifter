@@ -51,9 +51,9 @@ Precision comes first: when Sifter is not sure, it leaves the post alone.
 
 ## Install
 
-**Chrome Web Store:** not yet listed. The link goes here once the store approves it.
+**Chrome Web Store:** [install Sifter](https://chromewebstore.google.com/detail/sifter/bjmipjakmbcipmioiiboacddkjmbjfck). The store updates it automatically.
 
-**Manual install, until then:**
+**Manual install** (a build the store hasn't approved yet, or a browser without store access):
 
 1. Download the zip from the [latest release](https://github.com/danieljpuusitalo/sifter/releases/latest).
 2. Unzip it.

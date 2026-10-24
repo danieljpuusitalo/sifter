@@ -1,5 +1,12 @@
 # Sifter checkpoint
 
+**Submitted to the Chrome Web Store 2026-10-18: v1.3.0, Unlisted, all regions, in review.** Daniel submitted `sifter-1.3.0-chrome.zip` from the v1.3.0 GitHub Release by hand. The listing text, privacy-tab answers and permission justifications are the ones in `docs/STORE_LISTING.md`. Declared data: Website content and PII, both local only. The dashboard warned the host permissions may mean an in-depth review.
+- **Store images:** PR #42 `store/screenshots` (three screenshots, small and marquee promo tiles, store icon, from `fixtures/store/feed.html`). Not merged. They are not in the zip, so they need no release.
+- **Next, once approved:**
+  - Add the store link to the README.
+  - Daniel, once: the CWS API setup in `docs/RELEASING.md` (5 GitHub secrets), so later releases submit themselves.
+- **If rejected:** the email names the policy. Fix that, bump with `pnpm release patch`, resubmit.
+
 **Landed 2026-10-17:** #36, #37, #35 and #38 are merged into `main` in that order. Statuses below that say "open" or "not merged" predate that.
 
 **Open at the end of 2026-10-17: PR #39 `bench/style-attribution`.** It is bench and docs only, CI verify green. Not merged: Daniel hasn't asked. The evidence is in "Follow-up on the open audit items" below. None of the four decisions has been answered. Each has my recommendation:

@@ -122,4 +122,20 @@ describe('findGenericUnits', () => {
     );
     expect(findGenericUnits(body)).toHaveLength(0);
   });
+
+  it('measures the text with its whitespace collapsed, so indentation does not make a short item a unit', () => {
+    // 20 characters of words, padded past 80 by the newlines and indentation of pretty-printed markup.
+    // The padding sits between the words: `trim()` already drops it at the edges.
+    const padded = `<li class="x"><b>short label,</b>\n${' '.repeat(90)}<i>no more</i></li>`;
+    expect(findGenericUnits(html(`<ul>${padded.repeat(6)}</ul>`))).toHaveLength(0);
+    // Positive control: the same shape with 80 characters of real text is a unit.
+    const real = `<li class="x">\n${' '.repeat(60)}${'word '.repeat(20)}\n${' '.repeat(60)}</li>`;
+    expect(findGenericUnits(html(`<ul>${real.repeat(6)}</ul>`))).toHaveLength(6);
+  });
+
+  it('counts the letter s as text', () => {
+    // The old pattern collapsed runs of "s" instead of whitespace.
+    const sss = `<li class="x">${'ab'.repeat(15)}${'s'.repeat(60)}</li>`;
+    expect(findGenericUnits(html(`<ul>${sss.repeat(6)}</ul>`))).toHaveLength(6);
+  });
 });

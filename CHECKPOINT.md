@@ -3,7 +3,16 @@
 **Live on the Chrome Web Store, 2026-10-19:** <https://chromewebstore.google.com/detail/sifter/bjmipjakmbcipmioiiboacddkjmbjfck>. The listing page reports version 1.3.1. It was submitted as Unlisted; whether it has since been flipped to Public isn't recorded here. The README's Install section now leads with the store link. Entries below that say "not in the store yet" predate this.
 - **Releases don't reach the store by themselves yet.** No `CWS_*` secrets exist (`gh secret list` is empty), so `release.yml` publishes the GitHub Release and skips the submit step. Until Daniel does the one-time CWS API setup in `docs/RELEASING.md`, every release has to be uploaded to the dashboard by hand.
 - **Still open from the roadmap:** Edge Add-ons (Phase 4.8), and Phase 5: Public visibility, launch channels, the adapter-breakage loop.
-- **Open PRs at this point:** #45 `docs/store-description` (the listing description without the site list, after the keyword-spam rejection) and #42 `store/screenshots`. Neither is merged.
+- **Open PRs (2026-11-15):** only #42 `store/screenshots`. It predates the merges below and conflicts with them in this file, so it needs a rebase; merging it is a visual call for Daniel. #45 `docs/store-description` and #46 `docs/store-live` were merged 2026-11-15.
+
+**Audit pass, 2026-11-15 (`perf/audit-2026-11`).**
+- **Fixed:** the generic extractor measured a unit's text with `/s+/g`, not `/\s+/g`. It collapsed runs of the letter "s" and left whitespace in, so an indented short item could pass the 80-character floor and text heavy in "s" could miss it. Two tests in `tests/unit/adapters.test.ts` fail on the old pattern.
+- **Trimmed:** `findGenericUnits` and `findGenericUnitsIn` no longer copy every element of the page to keep 6000; `isOwnMutation` no longer builds an array per mutation record.
+- **Found, not changed (needs a design call, it touches the re-enable path):** a site that is switched off or paused still builds the `Scanner`, attaches the subtree `MutationObserver` and the viewport scroll and gesture listeners (`entrypoints/content.ts:100-116`, `scanner.ts` `start()`). `scanNow` returns early, so the cost is the observer callback and listeners only. Not measured.
+- **Found, not changed:** `offParamPresent()` builds a `URLSearchParams` per mutation batch while the URL has a query; `laneRun` calls `Object.keys(overrides)` per lane run. Both small; bench before touching the lane.
+- **Dependencies:** `pnpm audit --prod` is clean. Minors are available (wxt, zod, vitest, Playwright, marked, web-ext); the majors (preact 11, happy-dom 21, @babel/core 8) are a separate decision. `softprops/action-gh-release@v2` in `release.yml` is the one action not pinned to a SHA.
+- **Untracked on Daniel's machine, deliberately not committed:** `docs/store/sifter-promo-1080p60.mp4` (6.2 MB) and `scripts/promo-video/` (`render.py` is Python, which this repo does not use; `scripts/readme-gif.mjs` is the Node pattern to port it to).
+- **This file is 1,700 lines.** Everything from "LinkedIn in-app navigation (2026-10-17" down is history and could move to an archive file.
 
 **Landed 2026-10-17:** #36, #37, #35 and #38 are merged into `main` in that order. Statuses below that say "open" or "not merged" predate that.
 

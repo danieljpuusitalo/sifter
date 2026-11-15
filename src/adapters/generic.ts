@@ -38,7 +38,7 @@ function candidatesIn(containers: Iterable<Element>): Set<Element> {
       if (group.length < MIN_GROUP) continue;
       for (const child of group) {
         if (child.closest(SKIP_ANCESTORS)) continue;
-        if ((child.textContent ?? '').replace(/s+/g, ' ').trim().length < MIN_TEXT) continue;
+        if ((child.textContent ?? '').replace(/\s+/g, ' ').trim().length < MIN_TEXT) continue;
         candidates.add(child);
       }
     }
@@ -47,7 +47,11 @@ function candidatesIn(containers: Iterable<Element>): Set<Element> {
 }
 
 export function findGenericUnits(root: Element): Element[] {
-  const all = [root, ...Array.from(root.querySelectorAll('*')).slice(0, MAX_SCAN)];
+  // Indexed, so a page of 50,000 elements does not copy all of them to keep 6000.
+  const found = root.querySelectorAll('*');
+  const all: Element[] = [root];
+  const n = Math.min(found.length, MAX_SCAN);
+  for (let i = 0; i < n; i++) all.push(found[i] as Element);
   return innermost(candidatesIn(all));
 }
 
@@ -82,7 +86,8 @@ export function findGenericUnitsIn(
     containers.add(el);
     if (budget > 0) {
       const inside = el.querySelectorAll('*');
-      for (const d of Array.from(inside).slice(0, budget)) containers.add(d);
+      const n = Math.min(inside.length, budget);
+      for (let i = 0; i < n; i++) containers.add(inside[i] as Element);
       budget -= inside.length;
     }
   }

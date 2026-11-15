@@ -9,6 +9,7 @@ import type { PageState } from '../src/messages';
 //   pnpm build && pnpm canary            every site, the built extension
 //   pnpm canary --sites linkedin,google  some sites
 //   pnpm canary --ext <unzipped dir>     a release build instead of .output/chrome-mv3
+//   pnpm canary --offscreen              window parked off the desktop (the scheduled run)
 //
 // Run it before writing a release, and whenever a site looks off. Sites change their
 // markup without notice; this is how a selector drift shows up here before it shows up
@@ -49,6 +50,8 @@ const PROFILE = resolve(arg('user-data', '.dev-profile-edge'));
 const EDGE = arg('browser', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe');
 const PORT = Number(arg('port', '9334'));
 const SECONDS = Number(arg('seconds', '20'));
+/** `--offscreen`: park the window off the desktop, for an unattended (scheduled) run. */
+const OFFSCREEN = process.argv.includes('--offscreen');
 
 type Site = { url: string; experimental?: boolean };
 const FEEDS: Record<string, Site> = {
@@ -100,6 +103,9 @@ async function startEdge(): Promise<ChildProcess> {
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
       '--window-size=1400,1000',
+      // Layout does not depend on where the window sits, and the two flags above keep an
+      // unseen window rendering, so the checks read the same off the desktop as on it.
+      ...(OFFSCREEN ? ['--window-position=-2400,-2400'] : []),
       'about:blank',
     ],
     { stdio: 'ignore' },

@@ -81,6 +81,10 @@ any scanner file was touched (none should be).
 
 ## Phase 4: submission (Daniel) [D]
 
+**Done 2026-10-19: live on the Chrome Web Store at v1.3.1**
+(<https://chromewebstore.google.com/detail/sifter/bjmipjakmbcipmioiiboacddkjmbjfck>).
+Step 8 (Edge Add-ons) is still open.
+
 1. Chrome Web Store developer account: sign in, pay the $5 one-off fee, enable
    2-Step Verification on the Google account. Account tab: set and verify the
    contact email (the store won't publish without it), and make the EU trader /

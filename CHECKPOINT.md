@@ -5,6 +5,13 @@
 - **Still open from the roadmap:** Edge Add-ons (Phase 4.8), and Phase 5: Public visibility, launch channels, the adapter-breakage loop.
 - **Open PRs (2026-11-15):** only #42 `store/screenshots`. It predates the merges below and conflicts with them in this file, so it needs a rebase; merging it is a visual call for Daniel. #45 `docs/store-description` and #46 `docs/store-live` were merged 2026-11-15.
 
+**The adapter-breakage loop, first half, 2026-11-15 (`ops/scheduled-canary`).** `pnpm canary` now also runs daily without anyone starting it.
+- **What runs:** Task Scheduler `SifterCanary`, 13:15, runs `~/.claude/ops/maint/sift-canary.ps1`. It downloads the zip from the latest GitHub release (cached per tag), so it tests what the store serves and not the working tree, and runs `bench/canary.ts --ext <that> --offscreen` on `.dev-profile-edge`. A FAIL gets one retry of the failing sites. It skips itself while the dev-profile window is open.
+- **How a break reaches a session:** the maintenance run (07:00, 14:00) reads `bench/results/canary-*.json`, newest row per site. FAIL is a high flag naming the site, a logged-out site is a medium flag, and no completed run for 80 hours is a medium flag. They show at session start for this project. Nothing is sent anywhere.
+- **First scheduled-style run, 2026-11-15, v1.3.1:** PASS on LinkedIn, Reddit, X, Instagram, Facebook and all three Google queries; Threads served no ad (INFO).
+- **Not built:** the automatic fix. A flag is a pointer; the selector change is still a session's work, on a branch, with a fixture. The canary cannot see a false hide.
+- **Still Daniel's:** keeping the dev profile logged in. A site that logs out stops being tested, and the flag says which.
+
 **Audit pass, 2026-11-15 (`perf/audit-2026-11`).**
 - **Fixed:** the generic extractor measured a unit's text with `/s+/g`, not `/\s+/g`. It collapsed runs of the letter "s" and left whitespace in, so an indented short item could pass the 80-character floor and text heavy in "s" could miss it. Two tests in `tests/unit/adapters.test.ts` fail on the old pattern.
 - **Trimmed:** `findGenericUnits` and `findGenericUnitsIn` no longer copy every element of the page to keep 6000; `isOwnMutation` no longer builds an array per mutation record.

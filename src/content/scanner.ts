@@ -1587,11 +1587,14 @@ function pathOf(url: string): string {
 function isOwnMutation(r: MutationRecord): boolean {
   if (r.type !== 'childList') return false;
   if (r.addedNodes.length + r.removedNodes.length === 0) return false;
-  for (const list of [r.addedNodes, r.removedNodes]) {
-    for (let i = 0; i < list.length; i++) {
-      const n = list[i];
-      if (!n || n.nodeType !== 1 || !(n as Element).hasAttribute(PLACEHOLDER_ATTR)) return false;
-    }
+  // Runs once per mutation record, in the observer callback: no array per record.
+  return allPlaceholders(r.addedNodes) && allPlaceholders(r.removedNodes);
+}
+
+function allPlaceholders(list: NodeList): boolean {
+  for (let i = 0; i < list.length; i++) {
+    const n = list[i];
+    if (!n || n.nodeType !== 1 || !(n as Element).hasAttribute(PLACEHOLDER_ATTR)) return false;
   }
   return true;
 }

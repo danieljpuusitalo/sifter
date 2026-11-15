@@ -1,0 +1,23 @@
+# Dependency upkeep arrives as pull requests, at most two a week, and each one
+# has to pass `verify` like any other change. Minor and patch bumps are grouped
+# so a quiet week is one PR; a major bump comes on its own because it needs reading.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    groups:
+      actions:
+        patterns: ['*']

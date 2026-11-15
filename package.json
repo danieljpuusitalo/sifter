@@ -33,7 +33,7 @@
     "@types/node": "^26.6.6",
     "happy-dom": "^21.0.4",
     "marked": "^18.2.0",
-    "preact": "^10.29.8",
+    "preact": "^11.2.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0",

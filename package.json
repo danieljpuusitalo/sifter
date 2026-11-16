@@ -27,7 +27,7 @@
     "canary": "tsx bench/canary.ts"
   },
   "devDependencies": {
-    "@babel/core": "^7.29.7",
+    "@babel/core": "^7.29.13",
     "@playwright/test": "^1.65.0",
     "@preact/preset-vite": "^2.10.6",
     "@types/node": "^26.6.6",
